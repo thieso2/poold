@@ -231,6 +231,11 @@ type Event struct {
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
+type Observation struct {
+	ID     int64  `json:"id"`
+	Status Status `json:"status"`
+}
+
 type Health struct {
 	Process        string     `json:"process"`
 	PoolTCP        string     `json:"pool_tcp"`

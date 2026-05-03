@@ -42,7 +42,7 @@ Set these in the environment or with `poold` flags:
 
 `POOLD_POLL_INTERVAL` is still accepted as a compatibility alias for the stable interval. `poold` wakes immediately for desired-state or plan updates, confirms commands after `POOLD_COMMAND_CONFIRM_DELAY`, and caps sleep at the next known plan boundary.
 
-`poolctl watch` prints compact event lines from the last hour, then tails live events. Use `poolctl watch --json` to see the full event JSON stream.
+`poolctl watch` prints compact event lines from the last hour, then tails live events. Use `poolctl watch --all-polls` to print every stored status poll, including polls suppressed from the event stream. Use `poolctl watch --json` to see the raw stream JSON.
 
 ## Builds
 
@@ -69,6 +69,8 @@ All endpoints require `Authorization: Bearer <token>`.
 - `GET /status`
 - `GET /events?after=<id>&limit=<n>`
 - `GET /events/stream`
+- `GET /observations?after=<id>&limit=<n>`
+- `GET /observations/stream`
 - `GET /desired-state`
 - `PUT /desired-state`
 - `GET /plans`

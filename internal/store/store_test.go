@@ -21,7 +21,8 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 		CurrentTemp: &current,
 		TargetTemp:  36,
 	}
-	if _, err := st.SaveObservation(ctx, status); err != nil {
+	observationID, err := st.SaveObservation(ctx, status)
+	if err != nil {
 		t.Fatal(err)
 	}
 	latest, ok, err := st.LatestStatus(ctx)
@@ -30,6 +31,13 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	}
 	if !ok || latest.CurrentTemp == nil || *latest.CurrentTemp != 32 {
 		t.Fatalf("latest = %+v, ok=%v", latest, ok)
+	}
+	observations, err := st.Observations(ctx, observationID-1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 1 || observations[0].ID != observationID || observations[0].Status.CurrentTemp == nil || *observations[0].Status.CurrentTemp != 32 {
+		t.Fatalf("observations = %+v", observations)
 	}
 
 	desired := pool.DesiredState{Heater: pool.BoolPtr(true)}

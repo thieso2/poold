@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -20,6 +21,17 @@ type client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+}
+
+type httpStatusError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e httpStatusError) Error() string {
+	return fmt.Sprintf("%s %s: %s", e.Method, e.Path, e.Body)
 }
 
 func main() {
@@ -71,13 +83,14 @@ func run(c client, args []string) error {
 
 func runWatch(c client, args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	jsonOutput := fs.Bool("json", false, "print raw event JSON")
-	fromStart := fs.Bool("from-start", false, "replay events from the beginning")
-	after := fs.Int64("after", -1, "start after event id")
+	jsonOutput := fs.Bool("json", false, "print raw stream JSON")
+	allPolls := fs.Bool("all-polls", false, "print every stored status poll instead of deduped events")
+	fromStart := fs.Bool("from-start", false, "replay records from the beginning")
+	after := fs.Int64("after", -1, "start after event or observation id")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return c.watch(watchOptions{JSON: *jsonOutput, FromStart: *fromStart, After: *after, History: time.Hour})
+	return c.watch(watchOptions{JSON: *jsonOutput, AllPolls: *allPolls, FromStart: *fromStart, After: *after, History: time.Hour})
 }
 
 func runSet(c client, args []string) error {
@@ -254,7 +267,12 @@ func (c client) doJSON(method, path string, body any, out any) error {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(string(respBody)))
+		return httpStatusError{
+			Method:     method,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(respBody)),
+		}
 	}
 	if out == nil {
 		return nil
@@ -264,12 +282,20 @@ func (c client) doJSON(method, path string, body any, out any) error {
 
 type watchOptions struct {
 	JSON      bool
+	AllPolls  bool
 	FromStart bool
 	After     int64
 	History   time.Duration
 }
 
 func (c client) watch(options watchOptions) error {
+	if options.AllPolls {
+		return c.watchPolls(options)
+	}
+	return c.watchEvents(options)
+}
+
+func (c client) watchEvents(options watchOptions) error {
 	location := poolctlLocation()
 	after, err := c.replayWatchHistory(options, time.Now(), func(event pool.Event) error {
 		printWatchEvent(event, options, location)
@@ -313,6 +339,61 @@ func (c client) watch(options watchOptions) error {
 	return scanner.Err()
 }
 
+func (c client) watchPolls(options watchOptions) error {
+	location := poolctlLocation()
+	after, err := c.replayPollHistory(options, time.Now(), func(observation pool.Observation) error {
+		printWatchObservation(observation, options, location)
+		return nil
+	})
+	if err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return fmt.Errorf("watch --all-polls requires a poold version with observation streaming")
+		}
+		return err
+	}
+	path := "/observations/stream"
+	if after > 0 {
+		path += "?after=" + strconv.FormatInt(after, 10)
+	}
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	streamClient := *c.http
+	streamClient.Timeout = 0
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("watch --all-polls requires a poold version with observation streaming")
+		}
+		return fmt.Errorf("watch: %s", strings.TrimSpace(string(body)))
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			raw := strings.TrimPrefix(line, "data: ")
+			if options.JSON {
+				fmt.Println(raw)
+			} else {
+				fmt.Println(formatWatchObservation(raw, location))
+			}
+		}
+	}
+	return scanner.Err()
+}
+
+func isHTTPStatus(err error, statusCode int) bool {
+	var statusErr httpStatusError
+	return errors.As(err, &statusErr) && statusErr.StatusCode == statusCode
+}
+
 func (c client) replayWatchHistory(options watchOptions, now time.Time, emit func(pool.Event) error) (int64, error) {
 	if options.After >= 0 {
 		return c.replayEventsAfter(options.After, func(event pool.Event) bool {
@@ -332,6 +413,28 @@ func (c client) replayWatchHistory(options watchOptions, now time.Time, emit fun
 	cutoff := now.Add(-history)
 	return c.replayEventsAfter(0, func(event pool.Event) bool {
 		return !event.CreatedAt.Before(cutoff)
+	}, emit)
+}
+
+func (c client) replayPollHistory(options watchOptions, now time.Time, emit func(pool.Observation) error) (int64, error) {
+	if options.After >= 0 {
+		return c.replayPollsAfter(options.After, func(observation pool.Observation) bool {
+			return true
+		}, emit)
+	}
+	if options.FromStart {
+		return c.replayPollsAfter(0, func(observation pool.Observation) bool {
+			return true
+		}, emit)
+	}
+
+	history := options.History
+	if history <= 0 {
+		history = time.Hour
+	}
+	cutoff := now.Add(-history)
+	return c.replayPollsAfter(0, func(observation pool.Observation) bool {
+		return !observation.Status.ObservedAt.Before(cutoff)
 	}, emit)
 }
 
@@ -365,6 +468,36 @@ func (c client) replayEventsAfter(after int64, include func(pool.Event) bool, em
 	}
 }
 
+func (c client) replayPollsAfter(after int64, include func(pool.Observation) bool, emit func(pool.Observation) error) (int64, error) {
+	if after < 0 {
+		after = 0
+	}
+	lastSeen := after
+	for {
+		var response struct {
+			Observations []pool.Observation `json:"observations"`
+		}
+		path := fmt.Sprintf("/observations?after=%d&limit=500", lastSeen)
+		if err := c.doJSON(http.MethodGet, path, nil, &response); err != nil {
+			return 0, err
+		}
+		if len(response.Observations) == 0 {
+			return lastSeen, nil
+		}
+		for _, observation := range response.Observations {
+			lastSeen = observation.ID
+			if include(observation) {
+				if err := emit(observation); err != nil {
+					return 0, err
+				}
+			}
+		}
+		if len(response.Observations) < 500 {
+			return lastSeen, nil
+		}
+	}
+}
+
 func printWatchEvent(event pool.Event, options watchOptions, location *time.Location) {
 	raw, err := json.Marshal(event)
 	if err != nil {
@@ -375,6 +508,18 @@ func printWatchEvent(event pool.Event, options watchOptions, location *time.Loca
 		return
 	}
 	fmt.Println(formatWatchEvent(string(raw), location))
+}
+
+func printWatchObservation(observation pool.Observation, options watchOptions, location *time.Location) {
+	raw, err := json.Marshal(observation)
+	if err != nil {
+		return
+	}
+	if options.JSON {
+		fmt.Println(string(raw))
+		return
+	}
+	fmt.Println(formatWatchObservation(string(raw), location))
 }
 
 func formatWatchEvent(raw string, location *time.Location) string {
@@ -416,6 +561,20 @@ func formatWatchEvent(raw string, location *time.Location) string {
 	}
 
 	return fmt.Sprintf("%s  %-7s %s", prefix, strings.ToUpper(event.Type), event.Message)
+}
+
+func formatWatchObservation(raw string, location *time.Location) string {
+	var observation pool.Observation
+	if err := json.Unmarshal([]byte(raw), &observation); err != nil {
+		return raw
+	}
+	prefix := fmt.Sprintf("%s  #%d", formatEventTime(observation.Status.ObservedAt, location), observation.ID)
+	return fmt.Sprintf(
+		"%s  POLL    %s  %s",
+		prefix,
+		formatTemperature(observation.Status),
+		formatEquipment(observation.Status),
+	)
 }
 
 func formatEventTime(t time.Time, location *time.Location) string {
@@ -573,7 +732,7 @@ func printJSON(value any) {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   poolctl status
-  poolctl watch [--json] [--from-start] [--after <event-id>]
+  poolctl watch [--json] [--all-polls] [--from-start] [--after <id>]
   poolctl set temp 36
   poolctl set heater on|off
   poolctl set filter on|off

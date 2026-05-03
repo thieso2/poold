@@ -191,6 +191,10 @@ func (s *Service) Events(ctx context.Context, afterID int64, limit int) ([]pool.
 	return s.store.Events(ctx, afterID, limit)
 }
 
+func (s *Service) Observations(ctx context.Context, afterID int64, limit int) ([]pool.Observation, error) {
+	return s.store.Observations(ctx, afterID, limit)
+}
+
 func (s *Service) EnforceLatest(ctx context.Context) error {
 	status, ok, err := s.store.LatestStatus(ctx)
 	if err != nil {

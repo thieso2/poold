@@ -22,6 +22,8 @@ func New(service *Service, token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.handleHealth)
 	mux.HandleFunc("GET /status", api.handleStatus)
+	mux.HandleFunc("GET /observations", api.handleObservations)
+	mux.HandleFunc("GET /observations/stream", api.handleObservationStream)
 	mux.HandleFunc("GET /events", api.handleEvents)
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
@@ -73,6 +75,17 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
+func (a *API) handleObservations(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	observations, err := a.service.Observations(r.Context(), after, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"observations": observations})
+}
+
 func (a *API) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -97,6 +110,40 @@ func (a *API) handleEventStream(w http.ResponseWriter, r *http.Request) {
 			body, _ := json.Marshal(event)
 			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", event.ID, event.Type, body)
 			after = event.ID
+		}
+		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *API) handleObservationStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		observations, err := a.service.Observations(r.Context(), after, 100)
+		if err != nil {
+			fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+			flusher.Flush()
+			return
+		}
+		for _, observation := range observations {
+			body, _ := json.Marshal(observation)
+			fmt.Fprintf(w, "id: %d\nevent: observation\ndata: %s\n\n", observation.ID, body)
+			after = observation.ID
 		}
 		flusher.Flush()
 		select {

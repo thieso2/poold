@@ -92,6 +92,41 @@ func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
 	return status, true, nil
 }
 
+func (s *Store) Observations(ctx context.Context, afterID int64, limit int) ([]pool.Observation, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, observed_at, status_json
+		FROM observations
+		WHERE id > ?
+		ORDER BY id ASC
+		LIMIT ?
+	`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var observations []pool.Observation
+	for rows.Next() {
+		var observation pool.Observation
+		var observedAt string
+		var body []byte
+		if err := rows.Scan(&observation.ID, &observedAt, &body); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(body, &observation.Status); err != nil {
+			return nil, err
+		}
+		if observation.Status.ObservedAt.IsZero() {
+			observation.Status.ObservedAt = decodeTime(observedAt)
+		}
+		observations = append(observations, observation)
+	}
+	return observations, rows.Err()
+}
+
 func (s *Store) AddEvent(ctx context.Context, typ, message string, data any) (pool.Event, error) {
 	createdAt := time.Now().UTC()
 	raw, err := marshalRaw(data)

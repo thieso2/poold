@@ -128,6 +128,30 @@ func TestEventsEndpoint(t *testing.T) {
 	}
 }
 
+func TestObservationsEndpoint(t *testing.T) {
+	handler, fake := testAPI(t)
+	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36, CurrentTemp: pool.IntPtr(32)}
+
+	rec := authed(handler, http.MethodGet, "/status", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = authed(handler, http.MethodGet, "/observations?after=0&limit=10", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Observations []pool.Observation `json:"observations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Observations) != 1 || response.Observations[0].Status.CurrentTemp == nil || *response.Observations[0].Status.CurrentTemp != 32 {
+		t.Fatalf("observations = %+v", response.Observations)
+	}
+}
+
 func testAPI(t *testing.T) (http.Handler, *fakePoolClient) {
 	t.Helper()
 	st, err := store.Open(context.Background(), t.TempDir()+"/poold.db")

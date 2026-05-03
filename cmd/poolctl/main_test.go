@@ -21,6 +21,16 @@ func TestFormatWatchEventObservation(t *testing.T) {
 	}
 }
 
+func TestFormatWatchObservation(t *testing.T) {
+	raw := `{"id":9,"status":{"observed_at":"2000-01-02T03:04:05Z","connected":true,"power":true,"filter":true,"heater":true,"jets":false,"bubbles":false,"sanitizer":false,"unit":"\u00b0C","current_temp":30,"preset_temp":36,"raw_data":"FFFF"}}`
+
+	got := formatWatchObservation(raw, time.UTC)
+	want := "2000-01-02 03:04:05  #9  POLL    30\u00b0C -> 36\u00b0C  power filter heater"
+	if got != want {
+		t.Fatalf("formatWatchObservation() = %q, want %q", got, want)
+	}
+}
+
 func TestFormatWatchEventStatusError(t *testing.T) {
 	raw := `{"id":85,"created_at":"2000-01-02T03:04:05Z","type":"status_error","message":"status refresh failed","data":{"error":"invalid status response: result=\"timeout\" type=2"}}`
 
@@ -92,5 +102,39 @@ func TestReplayWatchHistoryExplicitAfterReplaysFromAfterID(t *testing.T) {
 	}
 	if len(emitted) != 1 || emitted[0] != 43 {
 		t.Fatalf("emitted = %+v, want event 43", emitted)
+	}
+}
+
+func TestReplayPollHistoryDefaultsToLastHour(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/observations" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		after := r.URL.Query().Get("after")
+		switch after {
+		case "0":
+			fmt.Fprint(w, `{"observations":[{"id":1,"status":{"observed_at":"2026-05-03T10:00:00Z"}},{"id":2,"status":{"observed_at":"2026-05-03T11:30:00Z"}}]}`)
+		case "2":
+			fmt.Fprint(w, `{"observations":[]}`)
+		default:
+			t.Fatalf("unexpected after query %q", after)
+		}
+	}))
+	defer server.Close()
+
+	c := client{baseURL: server.URL, token: "test", http: server.Client()}
+	var emitted []int64
+	got, err := c.replayPollHistory(watchOptions{After: -1, History: time.Hour}, time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC), func(observation pool.Observation) error {
+		emitted = append(emitted, observation.ID)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Fatalf("after = %d, want latest observation id 2", got)
+	}
+	if len(emitted) != 1 || emitted[0] != 2 {
+		t.Fatalf("emitted = %+v, want only last-hour observation 2", emitted)
 	}
 }
