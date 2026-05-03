@@ -24,9 +24,9 @@ func TestDailyFilterWindow(t *testing.T) {
 		t.Fatalf("filter should be on inside window: %+v", on)
 	}
 
-	off := s.Evaluate(at(loc, 2026, 5, 4, 4, 0), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
-	if off.Desired.Filter == nil || *off.Desired.Filter {
-		t.Fatalf("filter should be off outside window: %+v", off)
+	outside := s.Evaluate(at(loc, 2026, 5, 4, 4, 0), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
+	if outside.Desired.Filter != nil {
+		t.Fatalf("filter should be unmanaged outside window: %+v", outside)
 	}
 }
 
@@ -71,9 +71,9 @@ func TestOvernightWindowUsesStartDay(t *testing.T) {
 		t.Fatalf("filter should stay on after midnight for Monday window: %+v", on)
 	}
 
-	off := s.Evaluate(at(loc, 2026, 5, 6, 0, 30), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
-	if off.Desired.Filter == nil || *off.Desired.Filter {
-		t.Fatalf("filter should be off when previous day was not included: %+v", off)
+	outside := s.Evaluate(at(loc, 2026, 5, 6, 0, 30), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
+	if outside.Desired.Filter != nil {
+		t.Fatalf("filter should be unmanaged when previous day was not included: %+v", outside)
 	}
 }
 

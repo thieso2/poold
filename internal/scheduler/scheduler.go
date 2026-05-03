@@ -154,7 +154,6 @@ func (s *Scheduler) readyByTimes(status pool.Status, plan pool.Plan) (time.Time,
 
 func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, plans []pool.Plan) (pool.DesiredState, bool, string) {
 	desired := base
-	seen := map[string]bool{}
 	activeCaps := map[string]bool{}
 
 	for _, plan := range plans {
@@ -162,19 +161,18 @@ func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, p
 			continue
 		}
 		capability := normalizeCapability(plan.Capability)
-		seen[capability] = true
 		if timeWindowActive(now, plan, s.config.Location) {
 			activeCaps[capability] = true
 		}
 	}
 
-	if len(seen) == 0 {
+	if len(activeCaps) == 0 {
 		return base, false, ""
 	}
-	for capability := range seen {
-		setCapability(&desired, capability, activeCaps[capability])
+	for capability := range activeCaps {
+		setCapability(&desired, capability, true)
 	}
-	return desired, true, "time window plan evaluated"
+	return desired, true, "time window plan active"
 }
 
 func timeWindowActive(now time.Time, plan pool.Plan, loc *time.Location) bool {

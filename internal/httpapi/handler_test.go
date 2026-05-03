@@ -136,6 +136,30 @@ func TestCommandsEndpoint(t *testing.T) {
 	}
 }
 
+func TestInactiveTimeWindowDoesNotUndoDirectFilterCommand(t *testing.T) {
+	loc := time.FixedZone("TEST", 2*60*60)
+	sched := scheduler.New(scheduler.Config{Location: loc})
+	status := pool.Status{Power: true, Filter: true, TargetTemp: 36}
+	eval := sched.Evaluate(
+		time.Date(2026, 5, 4, 16, 30, 0, 0, loc),
+		status,
+		pool.DesiredState{TargetTemp: pool.IntPtr(36)},
+		[]pool.Plan{{
+			ID:         "evening-filter",
+			Type:       pool.PlanTimeWindow,
+			Enabled:    true,
+			Capability: "filter",
+			From:       "18:00",
+			To:         "21:00",
+		}},
+	)
+	for _, command := range diffCommands(status, eval.Desired) {
+		if command.capability == "filter" {
+			t.Fatalf("inactive filter window should not undo direct filter command: %+v", command)
+		}
+	}
+}
+
 func TestPlansEndpoint(t *testing.T) {
 	handler, _ := testAPI(t)
 	body := []byte(`{"plans":[{"id":"filter","type":"time_window","enabled":true,"capability":"filter","from":"02:00","to":"04:00"}]}`)

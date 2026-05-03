@@ -187,6 +187,8 @@ Plan precedence is:
 
 Hardware constraints are applied before enforcement. For example, heater-on implies filter-on and power-on. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
+Time-window plans turn a capability on while the window is active. Outside the window, that capability returns to the stored desired state instead of being forced off.
+
 ## API
 
 All API endpoints except `GET /` require:
