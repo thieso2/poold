@@ -131,6 +131,7 @@ The web UI is embedded in the daemon and served by `GET /`. It has no frontend b
 It supports:
 
 - Current temperature, target temperature, connection state, equipment state, and last observation.
+- Fast pause/resume for short power breaks.
 - Direct power, filter, heater, jets, bubbles, and sanitizer commands.
 - Target temperature changes.
 - Desired-state editing with `Any`, `Off`, and `On` states.
@@ -141,6 +142,8 @@ It supports:
 - Recent events, polls, and command activity.
 
 The web shell itself is public, but all data and actions still require the bearer token.
+
+The pause control creates a temporary manual-override plan named `webui-pause` that forces power, filter, heater, jets, bubbles, and sanitizer off. Resume removes that plan so normal desired state and schedules can take over again.
 
 ## CLI
 

@@ -218,6 +218,38 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+.pause-strip {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 11px;
+  border: 1px solid #f0b8b3;
+  border-radius: 8px;
+  background: #fff8f7;
+}
+.pause-strip.active {
+  border-color: #f1c27d;
+  background: #fff6e8;
+}
+.pause-strip strong,
+.pause-strip span {
+  display: block;
+}
+.pause-strip span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.pause-actions {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 8px;
+}
+.pause-strip.active .pause-actions {
+  grid-template-columns: 1fr;
+}
+.pause-strip.active select {
+  display: none;
+}
 .control {
   display: flex;
   align-items: center;
@@ -437,6 +469,21 @@ h3 {
         <h2>Controls</h2>
         <span class="badge" id="busy">Ready</span>
       </div>
+      <div class="pause-strip" id="pauseStrip">
+        <div>
+          <strong id="pauseTitle">Power break</strong>
+          <span id="pauseDetail">Temporarily turns the pool off.</span>
+        </div>
+        <div class="pause-actions">
+          <select id="pauseMinutes">
+            <option value="15">15m</option>
+            <option value="30" selected>30m</option>
+            <option value="60">1h</option>
+            <option value="120">2h</option>
+          </select>
+          <button class="danger" id="pauseToggle">Pause</button>
+        </div>
+      </div>
       <div class="controls" id="controls"></div>
       <div class="temp-row">
         <button id="tempDown">-</button>
@@ -486,6 +533,7 @@ h3 {
 var caps = ["power", "filter", "heater", "jets", "bubbles", "sanitizer"];
 var capLabels = {power:"Power", filter:"Filter", heater:"Heater", jets:"Jets", bubbles:"Bubbles", sanitizer:"Sanitizer"};
 var days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+var pausePlanID = "webui-pause";
 var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
@@ -611,6 +659,7 @@ function loadPolls() {
 
 function renderAll() {
   renderStatus();
+  renderPause();
   renderControls();
   renderDesired();
   renderPlans();
@@ -619,6 +668,7 @@ function renderAll() {
 
 function renderLivePanels() {
   renderStatus();
+  renderPause();
   renderControls();
   renderActivity();
 }
@@ -635,9 +685,32 @@ function renderStatus() {
   $("subline").textContent = status.connected ? "Connected " + formatAge(status.observed_at) : "Pool daemon";
   $("connected").textContent = status.connected ? "Connected" : state.token ? "Disconnected" : "Token";
   $("connected").className = status.connected ? "badge ok" : state.token ? "badge bad" : "badge warn";
+  var pause = activePausePlan();
+  if (pause) {
+    $("stateBadge").textContent = "Paused";
+    $("stateBadge").className = "badge warn";
+    return;
+  }
   var active = activeCaps(status);
   $("stateBadge").textContent = active.length ? active.map(title).join(", ") : "Idle";
   $("stateBadge").className = active.length ? "badge ok" : "badge";
+}
+
+function renderPause() {
+  var plan = activePausePlan();
+  var strip = $("pauseStrip");
+  strip.classList.toggle("active", !!plan);
+  if (plan) {
+    $("pauseTitle").textContent = "Pool paused";
+    $("pauseDetail").textContent = "Resumes at " + formatDateTime(plan.expires_at);
+    $("pauseToggle").textContent = "Resume Now";
+    $("pauseToggle").className = "primary";
+  } else {
+    $("pauseTitle").textContent = "Power break";
+    $("pauseDetail").textContent = "Temporarily turns the pool off.";
+    $("pauseToggle").textContent = "Pause";
+    $("pauseToggle").className = "danger";
+  }
 }
 
 function renderControls() {
@@ -824,12 +897,49 @@ function commandTemp(value) {
   }, "Temperature set");
 }
 
-function updatePlans(plans) {
+function updatePlans(plans, message) {
   runAction(function() {
     return api("/plans", {method: "PUT", body: JSON.stringify({plans: plans})}).then(function(data) {
       state.plans = data.plans || [];
     });
-  }, "Plans saved");
+  }, message || "Plans saved");
+}
+
+function togglePause() {
+  if (activePausePlan()) {
+    return unpausePool();
+  }
+  pausePool();
+}
+
+function pausePool() {
+  if (!state.token) return toast("Token required", "bad");
+  var minutes = Number($("pauseMinutes").value || 30);
+  var expiresAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+  var plan = {
+    id: pausePlanID,
+    type: "manual_override",
+    name: "Pool paused",
+    enabled: true,
+    desired_state: {
+      power: false,
+      filter: false,
+      heater: false,
+      jets: false,
+      bubbles: false,
+      sanitizer: false
+    },
+    expires_at: expiresAt
+  };
+  updatePlans(state.plans.filter(function(existing) {
+    return existing.id !== pausePlanID;
+  }).concat([plan]), "Pool paused");
+}
+
+function unpausePool() {
+  updatePlans(state.plans.filter(function(plan) {
+    return plan.id !== pausePlanID;
+  }), "Pool resumed");
 }
 
 function saveDesired() {
@@ -879,6 +989,7 @@ function eventLine(event) {
 }
 
 function describePlan(plan) {
+  if (plan.id === pausePlanID) return "Pool paused until " + formatDateTime(plan.expires_at);
   if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + formatDateTime(plan.at);
   if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
   if (plan.type === "manual_override") return "Until " + formatDateTime(plan.expires_at);
@@ -909,6 +1020,16 @@ function localDateTime(date) {
   return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
 }
 
+function activePausePlan() {
+  var now = Date.now();
+  return state.plans.find(function(plan) {
+    return plan.id === pausePlanID &&
+      plan.enabled &&
+      plan.expires_at &&
+      new Date(plan.expires_at).getTime() > now;
+  });
+}
+
 function escapeHTML(value) {
   return String(value || "").replace(/[&<>"']/g, function(ch) {
     return {"&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;"}[ch];
@@ -929,6 +1050,7 @@ $("refresh").onclick = loadAll;
 $("reloadPlans").onclick = function() {
   loadPlans().then(renderPlans);
 };
+$("pauseToggle").onclick = togglePause;
 $("saveDesired").onclick = saveDesired;
 $("sendTemp").onclick = function() { commandTemp($("tempInput").value); };
 $("tempDown").onclick = function() { $("tempInput").value = Number($("tempInput").value || 0) - 1; };
