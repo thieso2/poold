@@ -39,6 +39,13 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if len(observations) != 1 || observations[0].ID != observationID || observations[0].Status.CurrentTemp == nil || *observations[0].Status.CurrentTemp != 32 {
 		t.Fatalf("observations = %+v", observations)
 	}
+	latestObservations, err := st.LatestObservations(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latestObservations) != 1 || latestObservations[0].ID != observationID {
+		t.Fatalf("latest observations = %+v", latestObservations)
+	}
 
 	desired := pool.DesiredState{Heater: pool.BoolPtr(true)}
 	if err := st.SaveDesiredState(ctx, desired); err != nil {
@@ -62,6 +69,13 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Type != "test" {
 		t.Fatalf("events = %+v", events)
+	}
+	latestEvents, err := st.LatestEvents(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latestEvents) != 1 || latestEvents[0].ID != event.ID {
+		t.Fatalf("latest events = %+v", latestEvents)
 	}
 
 	plan := pool.Plan{

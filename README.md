@@ -44,6 +44,8 @@ Set these in the environment or with `poold` flags:
 
 `poolctl watch` prints compact event lines from the last hour, then tails live events. Use `poolctl watch --all-polls` to print every stored status poll, including polls suppressed from the event stream. Use `poolctl watch --json` to see the raw stream JSON.
 
+Open `http://<poold-host>:8090/` for the mobile-friendly web control panel. The page stores the bearer token in the browser and uses the same API as `poolctl`.
+
 ## Builds
 
 ```sh
@@ -63,13 +65,14 @@ Artifacts are written under `services/poold/dist/`.
 
 ## API
 
-All endpoints require `Authorization: Bearer <token>`.
+All API endpoints require `Authorization: Bearer <token>`. `GET /` serves the web UI shell; the browser supplies the token for API calls.
 
 - `GET /health`
+- `GET /`
 - `GET /status`
-- `GET /events?after=<id>&limit=<n>`
+- `GET /events?after=<id>&limit=<n>` or `GET /events?latest=1&limit=<n>`
 - `GET /events/stream`
-- `GET /observations?after=<id>&limit=<n>`
+- `GET /observations?after=<id>&limit=<n>` or `GET /observations?latest=1&limit=<n>`
 - `GET /observations/stream`
 - `GET /desired-state`
 - `PUT /desired-state`

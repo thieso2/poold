@@ -191,8 +191,16 @@ func (s *Service) Events(ctx context.Context, afterID int64, limit int) ([]pool.
 	return s.store.Events(ctx, afterID, limit)
 }
 
+func (s *Service) LatestEvents(ctx context.Context, limit int) ([]pool.Event, error) {
+	return s.store.LatestEvents(ctx, limit)
+}
+
 func (s *Service) Observations(ctx context.Context, afterID int64, limit int) ([]pool.Observation, error) {
 	return s.store.Observations(ctx, afterID, limit)
+}
+
+func (s *Service) LatestObservations(ctx context.Context, limit int) ([]pool.Observation, error) {
+	return s.store.LatestObservations(ctx, limit)
 }
 
 func (s *Service) EnforceLatest(ctx context.Context) error {

@@ -20,6 +20,7 @@ type API struct {
 func New(service *Service, token string) http.Handler {
 	api := &API{service: service, token: token}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", api.handleWebUI)
 	mux.HandleFunc("GET /health", api.handleHealth)
 	mux.HandleFunc("GET /status", api.handleStatus)
 	mux.HandleFunc("GET /observations", api.handleObservations)
@@ -36,6 +37,10 @@ func New(service *Service, token string) http.Handler {
 
 func (a *API) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if a.token == "" {
 			next.ServeHTTP(w, r)
 			return
@@ -67,7 +72,15 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := a.service.Events(r.Context(), after, limit)
+	var (
+		events []pool.Event
+		err    error
+	)
+	if truthy(r.URL.Query().Get("latest")) {
+		events, err = a.service.LatestEvents(r.Context(), limit)
+	} else {
+		events, err = a.service.Events(r.Context(), after, limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -78,7 +91,15 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleObservations(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	observations, err := a.service.Observations(r.Context(), after, limit)
+	var (
+		observations []pool.Observation
+		err          error
+	)
+	if truthy(r.URL.Query().Get("latest")) {
+		observations, err = a.service.LatestObservations(r.Context(), limit)
+	} else {
+		observations, err = a.service.Observations(r.Context(), after, limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -240,4 +261,13 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
