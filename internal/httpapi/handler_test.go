@@ -59,6 +59,23 @@ func TestFaviconIsPublic(t *testing.T) {
 	}
 }
 
+func TestAppleTouchIconIsPublicPNG(t *testing.T) {
+	handler, _ := testAPI(t)
+	req := httptest.NewRequest(http.MethodGet, "/apple-touch-icon.png", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if contentType := rec.Header().Get("Content-Type"); contentType != "image/png" {
+		t.Fatalf("content type = %q, want image/png", contentType)
+	}
+	body := rec.Body.Bytes()
+	if len(body) < 8 || string(body[:8]) != "\x89PNG\r\n\x1a\n" {
+		t.Fatal("apple touch icon is not a PNG")
+	}
+}
+
 func TestStatusEndpointRefreshesHardware(t *testing.T) {
 	handler, fake := testAPI(t)
 	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36, CurrentTemp: pool.IntPtr(32)}

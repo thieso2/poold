@@ -22,6 +22,7 @@ func New(service *Service, token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", api.handleWebUI)
 	mux.HandleFunc("GET /favicon.svg", api.handleFavicon)
+	mux.HandleFunc("GET /apple-touch-icon.png", api.handleAppleTouchIcon)
 	mux.HandleFunc("GET /health", api.handleHealth)
 	mux.HandleFunc("GET /status", api.handleStatus)
 	mux.HandleFunc("GET /observations", api.handleObservations)
@@ -58,7 +59,7 @@ func (a *API) auth(next http.Handler) http.Handler {
 }
 
 func publicWebPath(r *http.Request) bool {
-	return r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/favicon.svg")
+	return r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/apple-touch-icon.png")
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {

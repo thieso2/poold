@@ -1,6 +1,14 @@
 package httpapi
 
-import "net/http"
+import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
+	"math"
+	"net/http"
+	"sync"
+)
 
 func (a *API) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
@@ -18,6 +26,24 @@ func (a *API) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(faviconSVG))
 }
 
+func (a *API) handleAppleTouchIcon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(appleTouchIconPNG())
+}
+
+var (
+	appleTouchIconOnce sync.Once
+	appleTouchIconData []byte
+)
+
+func appleTouchIconPNG() []byte {
+	appleTouchIconOnce.Do(func() {
+		appleTouchIconData = renderAppIconPNG(180)
+	})
+	return appleTouchIconData
+}
+
 const webUIHTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -25,7 +51,7 @@ const webUIHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#007c89">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="apple-touch-icon" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <title>Pooly Control</title>
 <style>
 :root {
@@ -1099,3 +1125,139 @@ const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <circle cx="51" cy="15" r="4.5" fill="#fff6d8" opacity=".95"/>
 </svg>
 `
+
+func renderAppIconPNG(size int) []byte {
+	const scale = 4
+	large := image.NewRGBA(image.Rect(0, 0, size*scale, size*scale))
+	fillIconBackground(large)
+	drawWave(large, 39, 4.3, 5.5, color.RGBA{R: 233, G: 251, B: 255, A: 255})
+	drawWave(large, 49, 4.1, 4.5, color.RGBA{R: 223, G: 248, B: 252, A: 235})
+	drawSteam(large, 24, color.RGBA{R: 255, G: 246, B: 216, A: 255})
+	drawSteam(large, 38, color.RGBA{R: 255, G: 246, B: 216, A: 235})
+	drawCircle(large, iconCoord(large, 51), iconCoord(large, 15), iconCoord(large, 4.5), color.RGBA{R: 255, G: 246, B: 216, A: 242})
+
+	small := downsampleRGBA(large, scale)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, small); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+func fillIconBackground(img *image.RGBA) {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	start := color.RGBA{R: 0, G: 166, B: 178, A: 255}
+	mid := color.RGBA{R: 0, G: 124, B: 137, A: 255}
+	end := color.RGBA{R: 35, G: 94, B: 168, A: 255}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			t := float64(x+y) / float64(width+height-2)
+			c := mixColor(start, mid, t*2)
+			if t > .5 {
+				c = mixColor(mid, end, (t-.5)*2)
+			}
+			img.SetRGBA(x, y, c)
+		}
+	}
+}
+
+func drawWave(img *image.RGBA, baseY, amplitude, stroke float64, c color.RGBA) {
+	const samples = 220
+	for i := 0; i < samples; i++ {
+		t := float64(i) / float64(samples-1)
+		x := 15 + t*34
+		y := baseY - math.Sin(t*4*math.Pi)*amplitude
+		drawCircle(img, iconCoord(img, x), iconCoord(img, y), iconCoord(img, stroke/2), c)
+	}
+}
+
+func drawSteam(img *image.RGBA, baseX float64, c color.RGBA) {
+	const samples = 80
+	for i := 0; i < samples; i++ {
+		t := float64(i) / float64(samples-1)
+		x := baseX + math.Sin(t*2*math.Pi)*1.6
+		y := 30 - t*18
+		drawCircle(img, iconCoord(img, x), iconCoord(img, y), iconCoord(img, 2.25), c)
+	}
+}
+
+func drawCircle(img *image.RGBA, cx, cy, radius int, c color.RGBA) {
+	if radius <= 0 {
+		return
+	}
+	bounds := img.Bounds()
+	r2 := radius * radius
+	for y := cy - radius; y <= cy+radius; y++ {
+		if y < bounds.Min.Y || y >= bounds.Max.Y {
+			continue
+		}
+		for x := cx - radius; x <= cx+radius; x++ {
+			if x < bounds.Min.X || x >= bounds.Max.X {
+				continue
+			}
+			dx := x - cx
+			dy := y - cy
+			if dx*dx+dy*dy <= r2 {
+				blendRGBA(img, x, y, c)
+			}
+		}
+	}
+}
+
+func blendRGBA(img *image.RGBA, x, y int, c color.RGBA) {
+	if c.A == 255 {
+		img.SetRGBA(x, y, c)
+		return
+	}
+	dst := img.RGBAAt(x, y)
+	a := float64(c.A) / 255
+	img.SetRGBA(x, y, color.RGBA{
+		R: uint8(float64(c.R)*a + float64(dst.R)*(1-a)),
+		G: uint8(float64(c.G)*a + float64(dst.G)*(1-a)),
+		B: uint8(float64(c.B)*a + float64(dst.B)*(1-a)),
+		A: 255,
+	})
+}
+
+func downsampleRGBA(src *image.RGBA, scale int) *image.RGBA {
+	bounds := src.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, bounds.Dx()/scale, bounds.Dy()/scale))
+	for y := 0; y < dst.Bounds().Dy(); y++ {
+		for x := 0; x < dst.Bounds().Dx(); x++ {
+			var r, g, b, a int
+			for yy := 0; yy < scale; yy++ {
+				for xx := 0; xx < scale; xx++ {
+					c := src.RGBAAt(x*scale+xx, y*scale+yy)
+					r += int(c.R)
+					g += int(c.G)
+					b += int(c.B)
+					a += int(c.A)
+				}
+			}
+			count := scale * scale
+			dst.SetRGBA(x, y, color.RGBA{R: uint8(r / count), G: uint8(g / count), B: uint8(b / count), A: uint8(a / count)})
+		}
+	}
+	return dst
+}
+
+func iconCoord(img *image.RGBA, value float64) int {
+	return int(math.Round(value / 64 * float64(img.Bounds().Dx())))
+}
+
+func mixColor(a, b color.RGBA, t float64) color.RGBA {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return color.RGBA{
+		R: uint8(float64(a.R)*(1-t) + float64(b.R)*t),
+		G: uint8(float64(a.G)*(1-t) + float64(b.G)*t),
+		B: uint8(float64(a.B)*(1-t) + float64(b.B)*t),
+		A: 255,
+	}
+}
