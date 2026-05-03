@@ -603,6 +603,12 @@ function renderAll() {
   renderActivity();
 }
 
+function renderLivePanels() {
+  renderStatus();
+  renderControls();
+  renderActivity();
+}
+
 function renderStatus() {
   var status = state.status || {};
   var unit = status.unit || "°C";
@@ -906,7 +912,9 @@ $("editToken").onclick = function() {
   updateTokenUI();
 };
 $("refresh").onclick = loadAll;
-$("reloadPlans").onclick = loadPlans;
+$("reloadPlans").onclick = function() {
+  loadPlans().then(renderPlans);
+};
 $("saveDesired").onclick = saveDesired;
 $("sendTemp").onclick = function() { commandTemp($("tempInput").value); };
 $("tempDown").onclick = function() { $("tempInput").value = Number($("tempInput").value || 0) - 1; };
@@ -928,7 +936,7 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (state.token && !state.pending) Promise.all([loadStatus(), loadEvents(), loadPolls()]).then(renderAll);
+  if (state.token && !state.pending) Promise.all([loadStatus(), loadEvents(), loadPolls()]).then(renderLivePanels);
 }, 30000);
 </script>
 </body>
