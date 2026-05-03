@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 
-START=95
+START=99
 STOP=10
 USE_PROCD=1
 
@@ -9,8 +9,30 @@ DB_PATH=/var/lib/poold/poold.db
 LISTEN_ADDR=127.0.0.1:8090
 POOL_ADDR=127.0.0.1:8990
 
+wait_for_listen_addr() {
+	local listen="${POOLD_LISTEN_ADDR:-$LISTEN_ADDR}"
+	local host="${listen%:*}"
+	local i
+
+	case "$host" in
+		""|"0.0.0.0"|"127.0.0.1"|"localhost")
+			return 0
+			;;
+	esac
+
+	for i in $(seq 1 120); do
+		if ip addr show | grep -q "inet $host/"; then
+			return 0
+		fi
+		sleep 1
+	done
+
+	logger -t poold "listen address $host did not appear before startup"
+}
+
 start_service() {
 	mkdir -p /var/lib/poold
+	wait_for_listen_addr
 
 	procd_open_instance
 	procd_set_param command "$PROG" \
