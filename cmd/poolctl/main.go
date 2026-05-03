@@ -53,7 +53,7 @@ func run(c client, args []string) error {
 		}
 		printJSON(status)
 	case "watch":
-		return c.watch()
+		return runWatch(c, args[1:])
 	case "set":
 		return runSet(c, args[1:])
 	case "plans":
@@ -67,6 +67,15 @@ func run(c client, args []string) error {
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 	return nil
+}
+
+func runWatch(c client, args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	jsonOutput := fs.Bool("json", false, "print raw event JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return c.watch(watchOptions{JSON: *jsonOutput})
 }
 
 func runSet(c client, args []string) error {
@@ -251,7 +260,11 @@ func (c client) doJSON(method, path string, body any, out any) error {
 	return json.Unmarshal(respBody, out)
 }
 
-func (c client) watch() error {
+type watchOptions struct {
+	JSON bool
+}
+
+func (c client) watch(options watchOptions) error {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/events/stream", nil)
 	if err != nil {
 		return err
@@ -269,13 +282,139 @@ func (c client) watch() error {
 		return fmt.Errorf("watch: %s", strings.TrimSpace(string(body)))
 	}
 	scanner := bufio.NewScanner(resp.Body)
+	location := poolctlLocation()
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
-			fmt.Println(strings.TrimPrefix(line, "data: "))
+			raw := strings.TrimPrefix(line, "data: ")
+			if options.JSON {
+				fmt.Println(raw)
+			} else {
+				fmt.Println(formatWatchEvent(raw, location))
+			}
 		}
 	}
 	return scanner.Err()
+}
+
+func formatWatchEvent(raw string, location *time.Location) string {
+	var event pool.Event
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		return raw
+	}
+	prefix := fmt.Sprintf("%s  #%d", formatEventTime(event.CreatedAt, location), event.ID)
+
+	switch event.Type {
+	case "observation":
+		var status pool.Status
+		if err := json.Unmarshal(event.Data, &status); err != nil {
+			return fmt.Sprintf("%s  STATUS  %s", prefix, event.Message)
+		}
+		return fmt.Sprintf(
+			"%s  STATUS  %s  %s",
+			prefix,
+			formatTemperature(status),
+			formatEquipment(status),
+		)
+	case "status_error", "command_error":
+		return fmt.Sprintf("%s  ERROR   %s", prefix, eventError(event))
+	case "command":
+		var command pool.CommandRecord
+		if err := json.Unmarshal(event.Data, &command); err == nil {
+			result := "ok"
+			if !command.Success {
+				result = "failed"
+			}
+			return fmt.Sprintf("%s  COMMAND %s %s %s", prefix, command.Capability, formatCommandValue(command), result)
+		}
+	case "desired_state":
+		return fmt.Sprintf("%s  DESIRED %s", prefix, event.Message)
+	case "plans":
+		return fmt.Sprintf("%s  PLANS   %s", prefix, event.Message)
+	case "scheduler":
+		return fmt.Sprintf("%s  SCHED   %s", prefix, event.Message)
+	}
+
+	return fmt.Sprintf("%s  %-7s %s", prefix, strings.ToUpper(event.Type), event.Message)
+}
+
+func formatEventTime(t time.Time, location *time.Location) string {
+	if t.IsZero() {
+		return "--:--:--"
+	}
+	local := t.In(location)
+	now := time.Now().In(location)
+	if local.Year() == now.Year() && local.YearDay() == now.YearDay() {
+		return local.Format("15:04:05")
+	}
+	return local.Format("2006-01-02 15:04:05")
+}
+
+func formatTemperature(status pool.Status) string {
+	unit := status.Unit
+	if unit == "" {
+		unit = "\u00b0C"
+	}
+	current := "--"
+	if status.CurrentTemp != nil {
+		current = strconv.Itoa(*status.CurrentTemp)
+	}
+	if status.ErrorCode != "" {
+		return fmt.Sprintf("%s -> %d%s", status.ErrorCode, status.TargetTemp, unit)
+	}
+	return fmt.Sprintf("%s%s -> %d%s", current, unit, status.TargetTemp, unit)
+}
+
+func formatEquipment(status pool.Status) string {
+	active := make([]string, 0, 6)
+	if status.Power {
+		active = append(active, "power")
+	}
+	if status.Filter {
+		active = append(active, "filter")
+	}
+	if status.Heater {
+		active = append(active, "heater")
+	}
+	if status.Jets {
+		active = append(active, "jets")
+	}
+	if status.Bubbles {
+		active = append(active, "bubbles")
+	}
+	if status.Sanitizer {
+		active = append(active, "sanitizer")
+	}
+	if len(active) == 0 {
+		return "idle"
+	}
+	return strings.Join(active, " ")
+}
+
+func eventError(event pool.Event) string {
+	var data struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(event.Data, &data); err == nil && data.Error != "" {
+		return data.Error
+	}
+	if event.Message != "" {
+		return event.Message
+	}
+	return "unknown error"
+}
+
+func formatCommandValue(command pool.CommandRecord) string {
+	if command.State != nil {
+		if *command.State {
+			return "on"
+		}
+		return "off"
+	}
+	if len(command.Value) > 0 {
+		return strings.Trim(string(command.Value), `"`)
+	}
+	return ""
 }
 
 func parseOnOff(value string) (bool, error) {
@@ -290,10 +429,7 @@ func parseOnOff(value string) (bool, error) {
 }
 
 func parseLocalTime(value string) (time.Time, error) {
-	location, err := time.LoadLocation(envString("POOLCTL_TIMEZONE", "Europe/Berlin"))
-	if err != nil {
-		return time.Time{}, err
-	}
+	location := poolctlLocation()
 	now := time.Now().In(location)
 	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04", "2006-01-02T15:04"} {
 		if parsed, err := time.ParseInLocation(layout, value, location); err == nil {
@@ -318,6 +454,14 @@ func parseLocalTime(value string) (time.Time, error) {
 		return candidate, nil
 	}
 	return time.Time{}, fmt.Errorf("unsupported time %q", value)
+}
+
+func poolctlLocation() *time.Location {
+	location, err := time.LoadLocation(envString("POOLCTL_TIMEZONE", "Europe/Berlin"))
+	if err != nil {
+		return time.Local
+	}
+	return location
 }
 
 func parseWeekday(value string) (time.Weekday, bool) {
@@ -349,7 +493,7 @@ func printJSON(value any) {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   poolctl status
-  poolctl watch
+  poolctl watch [--json]
   poolctl set temp 36
   poolctl set heater on|off
   poolctl set filter on|off
