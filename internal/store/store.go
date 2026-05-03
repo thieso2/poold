@@ -251,7 +251,7 @@ func (s *Store) DesiredState(ctx context.Context) (pool.DesiredState, error) {
 }
 
 func (s *Store) SaveDesiredState(ctx context.Context, desired pool.DesiredState) error {
-	body, err := json.Marshal(desired.WithHardwareConstraints())
+	body, err := json.Marshal(desired)
 	if err != nil {
 		return err
 	}

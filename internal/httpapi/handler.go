@@ -201,7 +201,7 @@ func (a *API) handlePutDesiredState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.service.EnforceLatest(r.Context())
-	writeJSON(w, http.StatusOK, desired.WithHardwareConstraints())
+	writeJSON(w, http.StatusOK, desired)
 }
 
 func (a *API) handleGetPlans(w http.ResponseWriter, r *http.Request) {

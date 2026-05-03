@@ -105,8 +105,11 @@ func TestDesiredStateEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &desired); err != nil {
 		t.Fatal(err)
 	}
-	if desired.Heater == nil || !*desired.Heater || desired.Filter == nil || !*desired.Filter {
+	if desired.Heater == nil || !*desired.Heater {
 		t.Fatalf("desired = %+v", desired)
+	}
+	if desired.Filter != nil || desired.Power != nil {
+		t.Fatalf("desired any values should be preserved in response: %+v", desired)
 	}
 	if got := fake.callCount(); got != 1 {
 		t.Fatalf("set calls = %d, want heater enforcement", got)

@@ -55,8 +55,8 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if savedDesired.Filter == nil || !*savedDesired.Filter || savedDesired.Power == nil || !*savedDesired.Power {
-		t.Fatalf("hardware constraints were not applied: %+v", savedDesired)
+	if savedDesired.Heater == nil || !*savedDesired.Heater || savedDesired.Filter != nil || savedDesired.Power != nil {
+		t.Fatalf("desired any values were not preserved: %+v", savedDesired)
 	}
 
 	event, err := st.AddEvent(ctx, "test", "hello", map[string]string{"ok": "true"})

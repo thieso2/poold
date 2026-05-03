@@ -30,6 +30,29 @@ func TestDailyFilterWindow(t *testing.T) {
 	}
 }
 
+func TestDesiredHeaterWinsOverInactiveFilterWindow(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	plan := pool.Plan{
+		ID:         "filter",
+		Type:       pool.PlanTimeWindow,
+		Enabled:    true,
+		Capability: "filter",
+		From:       "02:00",
+		To:         "04:00",
+	}
+
+	eval := s.Evaluate(
+		at(loc, 2026, 5, 4, 4, 0),
+		pool.Status{},
+		pool.DesiredState{Heater: pool.BoolPtr(true)},
+		[]pool.Plan{plan},
+	)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater || eval.Desired.Filter == nil || !*eval.Desired.Filter || eval.Desired.Power == nil || !*eval.Desired.Power {
+		t.Fatalf("heater desired on should imply filter/power even outside filter window: %+v", eval)
+	}
+}
+
 func TestOvernightWindowUsesStartDay(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})

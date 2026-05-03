@@ -185,7 +185,7 @@ Plan precedence is:
 3. Time-window plans.
 4. Stored desired state.
 
-Hardware constraints are applied before enforcement. For example, heater-on implies filter-on and power-on.
+Hardware constraints are applied before enforcement. For example, heater-on implies filter-on and power-on. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
 ## API
 
@@ -245,7 +245,7 @@ Set target temperature:
 }
 ```
 
-Use omitted fields to leave a capability unmanaged by the base desired state.
+Use omitted fields to leave a capability unmanaged by the base desired state. For example, `{"heater": true, "target_temp": 36}` stores power and filter as `Any`, but enforcement still turns them on because the heater needs them.
 
 ### Plan Examples
 

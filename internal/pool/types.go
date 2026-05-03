@@ -75,7 +75,7 @@ func (d DesiredState) WithHardwareConstraints() DesiredState {
 		out.Filter = BoolPtr(true)
 		out.Power = BoolPtr(true)
 	}
-	if out.Filter != nil && !*out.Filter {
+	if out.Filter != nil && !*out.Filter && (out.Heater == nil || !*out.Heater) {
 		out.Heater = BoolPtr(false)
 	}
 	return out
