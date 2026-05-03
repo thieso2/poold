@@ -16,7 +16,7 @@ const webUIHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Pooly Control</title>
 <style>
 :root {
@@ -40,6 +40,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
 }
 button, input, select {
   font: inherit;
@@ -71,6 +73,7 @@ input, select {
   border-radius: 8px;
   background: #fff;
   color: var(--text);
+  font-size: 16px;
   padding: 9px 10px;
 }
 label {
