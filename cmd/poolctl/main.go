@@ -257,7 +257,9 @@ func (c client) watch() error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.http.Do(req)
+	streamClient := *c.http
+	streamClient.Timeout = 0
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return err
 	}
