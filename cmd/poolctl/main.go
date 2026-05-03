@@ -72,10 +72,12 @@ func run(c client, args []string) error {
 func runWatch(c client, args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "print raw event JSON")
+	fromStart := fs.Bool("from-start", false, "replay events from the beginning")
+	after := fs.Int64("after", -1, "start after event id")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return c.watch(watchOptions{JSON: *jsonOutput})
+	return c.watch(watchOptions{JSON: *jsonOutput, FromStart: *fromStart, After: *after})
 }
 
 func runSet(c client, args []string) error {
@@ -261,11 +263,21 @@ func (c client) doJSON(method, path string, body any, out any) error {
 }
 
 type watchOptions struct {
-	JSON bool
+	JSON      bool
+	FromStart bool
+	After     int64
 }
 
 func (c client) watch(options watchOptions) error {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/events/stream", nil)
+	after, err := c.watchAfterID(options)
+	if err != nil {
+		return err
+	}
+	path := "/events/stream"
+	if after > 0 {
+		path += "?after=" + strconv.FormatInt(after, 10)
+	}
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -295,6 +307,36 @@ func (c client) watch(options watchOptions) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func (c client) watchAfterID(options watchOptions) (int64, error) {
+	if options.After >= 0 {
+		return options.After, nil
+	}
+	if options.FromStart {
+		return 0, nil
+	}
+	return c.latestEventID()
+}
+
+func (c client) latestEventID() (int64, error) {
+	var after int64
+	for {
+		var response struct {
+			Events []pool.Event `json:"events"`
+		}
+		path := fmt.Sprintf("/events?after=%d&limit=500", after)
+		if err := c.doJSON(http.MethodGet, path, nil, &response); err != nil {
+			return 0, err
+		}
+		if len(response.Events) == 0 {
+			return after, nil
+		}
+		after = response.Events[len(response.Events)-1].ID
+		if len(response.Events) < 500 {
+			return after, nil
+		}
+	}
 }
 
 func formatWatchEvent(raw string, location *time.Location) string {
@@ -493,7 +535,7 @@ func printJSON(value any) {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   poolctl status
-  poolctl watch [--json]
+  poolctl watch [--json] [--from-start] [--after <event-id>]
   poolctl set temp 36
   poolctl set heater on|off
   poolctl set filter on|off

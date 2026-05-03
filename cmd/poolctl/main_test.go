@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -25,5 +28,39 @@ func TestFormatWatchEventStatusError(t *testing.T) {
 	}
 	if !strings.Contains(got, `invalid status response: result="timeout" type=2`) {
 		t.Fatalf("formatted error missing message: %q", got)
+	}
+}
+
+func TestWatchAfterIDDefaultsToLatestEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		after := r.URL.Query().Get("after")
+		switch after {
+		case "0":
+			fmt.Fprint(w, `{"events":[{"id":1},{"id":2}]}`)
+		case "2":
+			fmt.Fprint(w, `{"events":[]}`)
+		default:
+			t.Fatalf("unexpected after query %q", after)
+		}
+	}))
+	defer server.Close()
+
+	c := client{baseURL: server.URL, token: "test", http: server.Client()}
+	got, err := c.watchAfterID(watchOptions{After: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Fatalf("after = %d, want latest event id 2", got)
+	}
+}
+
+func TestWatchAfterIDExplicitOptions(t *testing.T) {
+	c := client{}
+	if got, err := c.watchAfterID(watchOptions{After: 42}); err != nil || got != 42 {
+		t.Fatalf("explicit after = %d, %v; want 42", got, err)
+	}
+	if got, err := c.watchAfterID(watchOptions{After: -1, FromStart: true}); err != nil || got != 0 {
+		t.Fatalf("from-start after = %d, %v; want 0", got, err)
 	}
 }
