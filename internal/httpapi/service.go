@@ -44,7 +44,7 @@ type WeatherProvider interface {
 type WeatherSettingsView struct {
 	APIKeySet bool                 `json:"api_key_set"`
 	Location  pool.WeatherLocation `json:"location,omitempty"`
-	UpdatedAt time.Time            `json:"updated_at,omitempty"`
+	UpdatedAt *time.Time           `json:"updated_at,omitempty"`
 }
 
 type ServiceConfig struct {
@@ -56,10 +56,15 @@ type ServiceConfig struct {
 }
 
 func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
+	var updatedAt *time.Time
+	if !settings.UpdatedAt.IsZero() {
+		t := settings.UpdatedAt
+		updatedAt = &t
+	}
 	return WeatherSettingsView{
 		APIKeySet: strings.TrimSpace(settings.APIKey) != "",
 		Location:  settings.Location,
-		UpdatedAt: settings.UpdatedAt,
+		UpdatedAt: updatedAt,
 	}
 }
 
