@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,7 @@ type Service struct {
 	store                *store.Store
 	client               intex.PoolClient
 	scheduler            *scheduler.Scheduler
+	weather              WeatherProvider
 	startedAt            time.Time
 	observationRetention time.Duration
 	eventRetention       time.Duration
@@ -24,10 +27,24 @@ type Service struct {
 	commandConfirmDelay  time.Duration
 	refreshRequests      chan time.Duration
 	commandMu            sync.Mutex
+	weatherMu            sync.Mutex
 	statusEventMu        sync.Mutex
 	lastStatusEventAt    time.Time
 	lastStatusError      string
 	lastStatusErrorAt    time.Time
+}
+
+var ErrWeatherNotConfigured = errors.New("weather is not configured")
+
+type WeatherProvider interface {
+	ResolveLocation(context.Context, string, string) (pool.WeatherLocation, error)
+	CurrentWeather(context.Context, string, pool.WeatherLocation) (json.RawMessage, error)
+}
+
+type WeatherSettingsView struct {
+	APIKeySet bool                 `json:"api_key_set"`
+	Location  pool.WeatherLocation `json:"location,omitempty"`
+	UpdatedAt time.Time            `json:"updated_at,omitempty"`
 }
 
 type ServiceConfig struct {
@@ -35,6 +52,15 @@ type ServiceConfig struct {
 	EventRetention       time.Duration
 	EventHeartbeat       time.Duration
 	CommandConfirmDelay  time.Duration
+	WeatherProvider      WeatherProvider
+}
+
+func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
+	return WeatherSettingsView{
+		APIKeySet: strings.TrimSpace(settings.APIKey) != "",
+		Location:  settings.Location,
+		UpdatedAt: settings.UpdatedAt,
+	}
 }
 
 func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Scheduler, cfg ServiceConfig) *Service {
@@ -48,6 +74,7 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		store:                st,
 		client:               client,
 		scheduler:            sched,
+		weather:              cfg.WeatherProvider,
 		startedAt:            time.Now().UTC(),
 		observationRetention: cfg.ObservationRetention,
 		eventRetention:       cfg.EventRetention,
@@ -172,6 +199,67 @@ func (s *Service) SaveDesiredState(ctx context.Context, desired pool.DesiredStat
 	_, _ = s.store.AddEvent(ctx, "desired_state", "desired state updated", desired)
 	s.requestRefreshAfter(0)
 	return nil
+}
+
+func (s *Service) WeatherSettings(ctx context.Context) (pool.WeatherSettings, error) {
+	return s.store.WeatherSettings(ctx)
+}
+
+func (s *Service) SaveWeatherSettings(ctx context.Context, settings pool.WeatherSettings) (pool.WeatherSettings, error) {
+	settings.APIKey = strings.TrimSpace(settings.APIKey)
+	settings.Location.Query = strings.TrimSpace(settings.Location.Query)
+	if settings.APIKey != "" && settings.Location.Query != "" {
+		if s.weather == nil {
+			return pool.WeatherSettings{}, fmt.Errorf("weather provider is not configured")
+		}
+		location, err := s.weather.ResolveLocation(ctx, settings.APIKey, settings.Location.Query)
+		if err != nil {
+			return pool.WeatherSettings{}, err
+		}
+		settings.Location = location
+	}
+	settings.UpdatedAt = time.Now().UTC()
+	if err := s.store.SaveWeatherSettings(ctx, settings); err != nil {
+		return pool.WeatherSettings{}, err
+	}
+	_, _ = s.store.AddEvent(ctx, "weather_settings", "weather settings updated", publicWeatherSettings(settings))
+	return settings, nil
+}
+
+func (s *Service) LatestWeatherObservation(ctx context.Context) (pool.WeatherObservation, bool, error) {
+	return s.store.LatestWeatherObservation(ctx)
+}
+
+func (s *Service) RefreshWeather(ctx context.Context) (pool.WeatherObservation, error) {
+	if s.weather == nil {
+		return pool.WeatherObservation{}, ErrWeatherNotConfigured
+	}
+	settings, err := s.store.WeatherSettings(ctx)
+	if err != nil {
+		return pool.WeatherObservation{}, err
+	}
+	if !settings.Configured() {
+		return pool.WeatherObservation{}, ErrWeatherNotConfigured
+	}
+
+	s.weatherMu.Lock()
+	defer s.weatherMu.Unlock()
+
+	raw, err := s.weather.CurrentWeather(ctx, settings.APIKey, settings.Location)
+	if err != nil {
+		return pool.WeatherObservation{}, err
+	}
+	observation := pool.WeatherObservation{
+		ObservedAt: time.Now().UTC(),
+		Location:   settings.Location,
+		Data:       raw,
+	}
+	id, err := s.store.SaveWeatherObservation(ctx, observation)
+	if err != nil {
+		return pool.WeatherObservation{}, err
+	}
+	observation.ID = id
+	return observation, nil
 }
 
 func (s *Service) Plans(ctx context.Context) ([]pool.Plan, error) {

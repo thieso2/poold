@@ -131,8 +131,10 @@ The web UI is embedded in the daemon and served by `GET /`. It has no frontend b
 It supports:
 
 - Current temperature, target temperature, connection state, equipment state, and last observation.
+- Current outdoor weather widget from OpenWeatherMap.
 - Timed manual control for power, filter, heater, jets, bubbles, sanitizer, and target temperature.
 - Active manual override display with remaining time, `+30m`, `-30m`, and clear actions.
+- Settings screen for the OpenWeatherMap API key and pool location.
 - Plan list, toggle, and delete.
 - Ready-by plan creation.
 - Time-window plan creation.
@@ -141,6 +143,8 @@ It supports:
 The web shell itself is public, but all data and actions still require the bearer token.
 
 The control tiles create a temporary manual-override plan named `webui-manual` with a default 30-minute duration. Tapping power off is the stop-pool control; it stores `power:false` and enforcement turns dependent equipment off.
+
+Weather settings are stored locally in SQLite. When configured, `poold` resolves the pool location through OpenWeatherMap geocoding, polls current weather every 5 minutes, and stores the complete JSON response for future heating/cooling analysis.
 
 ## CLI
 
@@ -182,7 +186,7 @@ Plan precedence is:
 3. Time-window plans.
 4. Stored desired state.
 
-Hardware constraints are applied before enforcement. For example, heater-on implies filter-on and power-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
+Hardware constraints are applied before enforcement. Any equipment-on state implies power-on, heater-on also implies filter-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
 Time-window plans turn a capability on while the window is active. Outside the window, that capability returns to the stored desired state instead of being forced off.
 
@@ -209,6 +213,9 @@ Authorization: Bearer <token>
 | `GET` | `/observations/stream` | Server-sent observation stream |
 | `GET` | `/desired-state` | Stored base desired state |
 | `PUT` | `/desired-state` | Replace base desired state |
+| `GET` | `/weather` | Redacted settings view and latest stored weather observation |
+| `PUT` | `/weather/settings` | Save OpenWeatherMap API key and pool location |
+| `POST` | `/weather/refresh` | Fetch and store weather immediately |
 | `GET` | `/plans` | List plans |
 | `PUT` | `/plans` | Replace plans |
 | `POST` | `/commands` | Execute one command |

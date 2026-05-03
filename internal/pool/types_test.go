@@ -27,3 +27,19 @@ func TestPowerOffConstrainsEquipmentOff(t *testing.T) {
 		}
 	}
 }
+
+func TestEquipmentOnConstrainsPowerOn(t *testing.T) {
+	cases := map[string]DesiredState{
+		"filter":    {Filter: BoolPtr(true)},
+		"heater":    {Heater: BoolPtr(true)},
+		"jets":      {Jets: BoolPtr(true)},
+		"bubbles":   {Bubbles: BoolPtr(true)},
+		"sanitizer": {Sanitizer: BoolPtr(true)},
+	}
+	for name, input := range cases {
+		desired := input.WithHardwareConstraints()
+		if desired.Power == nil || !*desired.Power {
+			t.Fatalf("%s on should imply power on: %+v", name, desired)
+		}
+	}
+}

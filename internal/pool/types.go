@@ -78,6 +78,9 @@ func (d DesiredState) WithHardwareConstraints() DesiredState {
 		out.Bubbles = BoolPtr(false)
 		out.Sanitizer = BoolPtr(false)
 	}
+	if boolOn(out.Filter) || boolOn(out.Heater) || boolOn(out.Jets) || boolOn(out.Bubbles) || boolOn(out.Sanitizer) {
+		out.Power = BoolPtr(true)
+	}
 	if out.Heater != nil && *out.Heater {
 		out.Filter = BoolPtr(true)
 		out.Power = BoolPtr(true)
@@ -86,6 +89,10 @@ func (d DesiredState) WithHardwareConstraints() DesiredState {
 		out.Heater = BoolPtr(false)
 	}
 	return out
+}
+
+func boolOn(value *bool) bool {
+	return value != nil && *value
 }
 
 func DesiredFromStatus(status Status) DesiredState {
@@ -251,4 +258,32 @@ type Health struct {
 	LastObservedAt *time.Time `json:"last_observed_at,omitempty"`
 	LastCommandAt  *time.Time `json:"last_command_at,omitempty"`
 	UptimeSeconds  int64      `json:"uptime_seconds"`
+}
+
+type WeatherLocation struct {
+	Query   string  `json:"query,omitempty"`
+	Name    string  `json:"name,omitempty"`
+	Country string  `json:"country,omitempty"`
+	State   string  `json:"state,omitempty"`
+	Lat     float64 `json:"lat,omitempty"`
+	Lon     float64 `json:"lon,omitempty"`
+}
+
+type WeatherSettings struct {
+	APIKey    string          `json:"api_key,omitempty"`
+	Location  WeatherLocation `json:"location,omitempty"`
+	UpdatedAt time.Time       `json:"updated_at,omitempty"`
+}
+
+func (s WeatherSettings) Configured() bool {
+	return strings.TrimSpace(s.APIKey) != "" &&
+		strings.TrimSpace(s.Location.Query) != "" &&
+		(s.Location.Lat != 0 || s.Location.Lon != 0)
+}
+
+type WeatherObservation struct {
+	ID         int64           `json:"id"`
+	ObservedAt time.Time       `json:"observed_at"`
+	Location   WeatherLocation `json:"location"`
+	Data       json.RawMessage `json:"data"`
 }

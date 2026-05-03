@@ -96,6 +96,41 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if len(plans) != 1 || plans[0].ID != "daily-filter" || plans[0].CreatedAt.IsZero() || plans[0].UpdatedAt.IsZero() {
 		t.Fatalf("plans = %+v", plans)
 	}
+
+	settings := pool.WeatherSettings{
+		APIKey: "secret",
+		Location: pool.WeatherLocation{
+			Query: "Berlin,DE",
+			Name:  "Berlin",
+			Lat:   52.52,
+			Lon:   13.405,
+		},
+	}
+	if err := st.SaveWeatherSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	savedWeather, err := st.WeatherSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if savedWeather.APIKey != "secret" || savedWeather.Location.Name != "Berlin" || savedWeather.UpdatedAt.IsZero() {
+		t.Fatalf("weather settings = %+v", savedWeather)
+	}
+	weatherID, err := st.SaveWeatherObservation(ctx, pool.WeatherObservation{
+		ObservedAt: status.ObservedAt,
+		Location:   savedWeather.Location,
+		Data:       []byte(`{"main":{"temp":21.5},"weather":[{"main":"Clouds","description":"broken clouds"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestWeather, ok, err := st.LatestWeatherObservation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || latestWeather.ID != weatherID || latestWeather.Location.Name != "Berlin" || len(latestWeather.Data) == 0 {
+		t.Fatalf("latest weather = %+v ok=%v", latestWeather, ok)
+	}
 }
 
 func TestStoreCommandAndRetention(t *testing.T) {

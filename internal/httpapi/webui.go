@@ -239,6 +239,24 @@ h3 {
   margin-top: 2px;
   font-size: 15px;
 }
+.weather-widget {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.weather-widget strong {
+  grid-row: span 2;
+  font-size: 28px;
+  line-height: 1;
+}
+.weather-widget span {
+  color: var(--muted);
+  font-size: 13px;
+}
 .controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -436,6 +454,13 @@ h3 {
 .tokenbar.show {
   display: grid;
 }
+.settings-panel {
+  display: none;
+  margin-bottom: 12px;
+}
+.settings-panel.show {
+  display: block;
+}
 .wide-only {
   display: none;
 }
@@ -462,6 +487,7 @@ h3 {
     </div>
     <div class="top-actions">
       <button id="editToken">Token</button>
+      <button id="settingsToggle">Settings</button>
       <button id="refresh">Refresh</button>
     </div>
   </header>
@@ -469,6 +495,21 @@ h3 {
   <section class="tokenbar" id="tokenbar">
     <input id="token" type="password" autocomplete="current-password" placeholder="Bearer token">
     <button class="primary" id="saveToken">Save</button>
+  </section>
+
+  <section class="panel settings-panel" id="settingsPanel">
+    <div class="panel-head">
+      <h2>Settings</h2>
+      <button id="settingsClose">Close</button>
+    </div>
+    <div class="row two">
+      <label>OpenWeatherMap API Key <input id="weatherApiKey" type="password" autocomplete="off" placeholder="Leave blank to keep saved key"></label>
+      <label>Pool Location <input id="weatherLocation" type="text" autocomplete="address-level2" placeholder="Berlin,DE"></label>
+    </div>
+    <div style="display:grid; gap:8px; margin-top:10px">
+      <button class="primary" id="saveWeatherSettings">Save Weather</button>
+      <p class="muted" id="weatherSettingsDetail">Weather is not configured.</p>
+    </div>
   </section>
 
   <div class="grid">
@@ -487,6 +528,11 @@ h3 {
       <div class="metrics">
         <div class="metric"><span>Observed</span><strong id="observedAt">--</strong></div>
         <div class="metric"><span>Error</span><strong id="errorCode">None</strong></div>
+      </div>
+      <div class="weather-widget" id="weatherWidget">
+        <strong id="weatherTemp">--°</strong>
+        <div id="weatherCondition">Weather not configured</div>
+        <span id="weatherObserved">Add OpenWeatherMap settings</span>
       </div>
     </section>
 
@@ -553,11 +599,13 @@ var tempDebounceTimer = null;
 var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
+  weather: null,
   plans: [],
   events: [],
   polls: [],
   commands: [],
   manualDraft: null,
+  settingsOpen: false,
   planView: "plans",
   activityView: "events",
   pending: false
@@ -619,6 +667,7 @@ function loadAll() {
   setBusy(true);
   Promise.all([
     loadStatus(),
+    loadWeather(),
     loadPlans(),
     loadEvents(),
     loadPolls()
@@ -650,6 +699,14 @@ function loadPlans() {
   });
 }
 
+function loadWeather() {
+  return api("/weather").then(function(data) {
+    state.weather = data || {};
+  }).catch(function(err) {
+    toast("Weather: " + err.message, "bad");
+  });
+}
+
 function loadEvents() {
   return api("/events?latest=1&limit=12").then(function(data) {
     state.events = data.events || [];
@@ -667,6 +724,8 @@ function loadPolls() {
 
 function renderAll() {
   renderStatus();
+  renderWeather();
+  renderSettings();
   renderManual();
   renderControls();
   renderPlans();
@@ -675,6 +734,8 @@ function renderAll() {
 
 function renderLivePanels() {
   renderStatus();
+  renderWeather();
+  renderSettings();
   renderManual();
   renderControls();
   renderActivity();
@@ -703,6 +764,41 @@ function renderStatus() {
   var active = activeCaps(status);
   $("stateBadge").textContent = active.length ? active.map(title).join(", ") : "Idle";
   $("stateBadge").className = active.length ? "badge ok" : "badge";
+}
+
+function renderWeather() {
+  var weather = state.weather || {};
+  var latest = weather.latest || {};
+  var data = latest.data || {};
+  var main = data.main || {};
+  var condition = data.weather && data.weather.length ? data.weather[0] : {};
+  var temp = typeof main.temp === "number" ? Math.round(main.temp) + "°C" : "--°";
+  $("weatherTemp").textContent = temp;
+  if (latest.id) {
+    $("weatherCondition").textContent = title(condition.description || condition.main || "Weather");
+    var cloudText = data.clouds && typeof data.clouds.all === "number" ? " · " + data.clouds.all + "% clouds" : "";
+    $("weatherObserved").textContent = weatherLocationLabel(latest.location) + " · " + formatAge(latest.observed_at) + cloudText;
+  } else if (weather.settings && weather.settings.api_key_set) {
+    $("weatherCondition").textContent = "Waiting for weather";
+    $("weatherObserved").textContent = weatherLocationLabel(weather.settings.location);
+  } else {
+    $("weatherCondition").textContent = "Weather not configured";
+    $("weatherObserved").textContent = "Add OpenWeatherMap settings";
+  }
+}
+
+function renderSettings() {
+  $("settingsPanel").classList.toggle("show", state.settingsOpen);
+  var settings = state.weather && state.weather.settings ? state.weather.settings : {};
+  var location = settings.location || {};
+  if (document.activeElement !== $("weatherLocation")) {
+    $("weatherLocation").value = location.query || "";
+  }
+  $("weatherApiKey").placeholder = settings.api_key_set ? "Saved; leave blank to keep" : "OpenWeatherMap API key";
+  var detail = [];
+  detail.push(settings.api_key_set ? "API key saved" : "API key missing");
+  if (location.name) detail.push(weatherLocationLabel(location));
+  $("weatherSettingsDetail").textContent = detail.join(" · ");
 }
 
 function renderManual() {
@@ -849,12 +945,24 @@ function updatePlans(plans, message) {
   }, message || "Plans saved");
 }
 
+function saveWeatherSettings() {
+  var payload = {location: $("weatherLocation").value.trim()};
+  var apiKey = $("weatherApiKey").value.trim();
+  if (apiKey) payload.api_key = apiKey;
+  runAction(function() {
+    return api("/weather/settings", {method: "PUT", body: JSON.stringify(payload)}).then(function(data) {
+      state.weather = data || {};
+      $("weatherApiKey").value = "";
+    });
+  }, "Weather settings saved");
+}
+
 function setManualBool(cap, value) {
   var desired = currentManualDesired();
   if (cap === "power" && value === false) {
     desired = {power: false};
   } else {
-    if (cap !== "power" && value === true && desired.power === false) delete desired.power;
+    if (cap !== "power" && value === true) desired.power = true;
     desired[cap] = value;
     if (cap === "filter" && value === false && desired.heater === true) desired.heater = false;
   }
@@ -915,7 +1023,7 @@ function runAction(action, message) {
   setBusy(true);
   action().then(function() {
     toast(message, "ok");
-    return Promise.all([loadStatus(), loadPlans(), loadEvents(), loadPolls()]);
+    return Promise.all([loadStatus(), loadWeather(), loadPlans(), loadEvents(), loadPolls()]);
   }).catch(function(err) {
     toast(err.message, "bad");
   }).finally(function() {
@@ -947,6 +1055,13 @@ function describePlan(plan) {
   if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
   if (plan.type === "manual_override") return "Until " + formatDateTime(plan.expires_at);
   return title(plan.type);
+}
+
+function weatherLocationLabel(location) {
+  location = location || {};
+  var label = location.name || location.query || "Pool location";
+  if (location.country) label += ", " + location.country;
+  return label;
 }
 
 function formatTime(value) {
@@ -1042,10 +1157,19 @@ $("editToken").onclick = function() {
   localStorage.removeItem("poold.token");
   updateTokenUI();
 };
+$("settingsToggle").onclick = function() {
+  state.settingsOpen = !state.settingsOpen;
+  renderSettings();
+};
+$("settingsClose").onclick = function() {
+  state.settingsOpen = false;
+  renderSettings();
+};
 $("refresh").onclick = loadAll;
 $("reloadPlans").onclick = function() {
   loadPlans().then(renderPlans);
 };
+$("saveWeatherSettings").onclick = saveWeatherSettings;
 $("manualMinus").onclick = function() { adjustManual(-30); };
 $("manualPlus").onclick = function() { adjustManual(30); };
 $("manualClear").onclick = clearManual;
@@ -1075,7 +1199,7 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (state.token && !state.pending) Promise.all([loadStatus(), loadEvents(), loadPolls()]).then(renderLivePanels);
+  if (state.token && !state.pending) Promise.all([loadStatus(), loadWeather(), loadEvents(), loadPolls()]).then(renderLivePanels);
 }, 30000);
 setInterval(renderManual, 1000);
 </script>

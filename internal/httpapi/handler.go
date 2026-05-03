@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -31,6 +32,9 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
+	mux.HandleFunc("GET /weather", api.handleGetWeather)
+	mux.HandleFunc("PUT /weather/settings", api.handlePutWeatherSettings)
+	mux.HandleFunc("POST /weather/refresh", api.handleRefreshWeather)
 	mux.HandleFunc("GET /plans", api.handleGetPlans)
 	mux.HandleFunc("PUT /plans", api.handlePutPlans)
 	mux.HandleFunc("POST /commands", api.handleCommands)
@@ -202,6 +206,69 @@ func (a *API) handlePutDesiredState(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.service.EnforceLatest(r.Context())
 	writeJSON(w, http.StatusOK, desired)
+}
+
+func (a *API) handleGetWeather(w http.ResponseWriter, r *http.Request) {
+	settings, err := a.service.WeatherSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	latest, ok, err := a.service.LatestWeatherObservation(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response := map[string]any{"settings": publicWeatherSettings(settings)}
+	if ok {
+		response["latest"] = latest
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *API) handlePutWeatherSettings(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		APIKey   *string `json:"api_key"`
+		Location string  `json:"location"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	settings, err := a.service.WeatherSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if request.APIKey != nil {
+		settings.APIKey = strings.TrimSpace(*request.APIKey)
+	}
+	if strings.TrimSpace(request.Location) != "" {
+		settings.Location.Query = strings.TrimSpace(request.Location)
+	}
+	settings, err = a.service.SaveWeatherSettings(r.Context(), settings)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	response := map[string]any{"settings": publicWeatherSettings(settings)}
+	if latest, err := a.service.RefreshWeather(r.Context()); err == nil {
+		response["latest"] = latest
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *API) handleRefreshWeather(w http.ResponseWriter, r *http.Request) {
+	observation, err := a.service.RefreshWeather(r.Context())
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, ErrWeatherNotConfigured) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, observation)
 }
 
 func (a *API) handleGetPlans(w http.ResponseWriter, r *http.Request) {

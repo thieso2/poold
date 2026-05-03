@@ -23,6 +23,7 @@ type Config struct {
 	PollActiveInterval   time.Duration
 	PollErrorMinInterval time.Duration
 	PollErrorMaxInterval time.Duration
+	WeatherPollInterval  time.Duration
 	CommandConfirmDelay  time.Duration
 	EventHeartbeat       time.Duration
 	ObservationRetention time.Duration
@@ -43,6 +44,7 @@ func Load(args []string) (Config, error) {
 		PollActiveInterval:   envDuration("POOLD_POLL_ACTIVE_INTERVAL", 1*time.Minute),
 		PollErrorMinInterval: envDuration("POOLD_POLL_ERROR_MIN_INTERVAL", 30*time.Second),
 		PollErrorMaxInterval: envDuration("POOLD_POLL_ERROR_MAX_INTERVAL", 5*time.Minute),
+		WeatherPollInterval:  envDuration("POOLD_WEATHER_POLL_INTERVAL", 5*time.Minute),
 		CommandConfirmDelay:  envDuration("POOLD_COMMAND_CONFIRM_DELAY", 10*time.Second),
 		EventHeartbeat:       envDuration("POOLD_EVENT_HEARTBEAT", 30*time.Minute),
 		ObservationRetention: envDuration("POOLD_OBSERVATION_RETENTION", 14*24*time.Hour),
@@ -69,6 +71,7 @@ func Load(args []string) (Config, error) {
 	fs.DurationVar(&cfg.PollActiveInterval, "poll-active-interval", cfg.PollActiveInterval, "status poll interval while equipment is active")
 	fs.DurationVar(&cfg.PollErrorMinInterval, "poll-error-min-interval", cfg.PollErrorMinInterval, "initial status error backoff interval")
 	fs.DurationVar(&cfg.PollErrorMaxInterval, "poll-error-max-interval", cfg.PollErrorMaxInterval, "maximum status error backoff interval")
+	fs.DurationVar(&cfg.WeatherPollInterval, "weather-poll-interval", cfg.WeatherPollInterval, "OpenWeatherMap poll interval")
 	fs.DurationVar(&cfg.CommandConfirmDelay, "command-confirm-delay", cfg.CommandConfirmDelay, "delayed status confirmation after commands")
 	fs.DurationVar(&cfg.EventHeartbeat, "event-heartbeat", cfg.EventHeartbeat, "maximum interval between unchanged observation/error events")
 	if err := fs.Parse(args); err != nil {

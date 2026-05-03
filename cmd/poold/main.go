@@ -16,6 +16,7 @@ import (
 	"pooly/services/poold/internal/protocol/intex"
 	"pooly/services/poold/internal/scheduler"
 	"pooly/services/poold/internal/store"
+	"pooly/services/poold/internal/weather"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 		EventRetention:       cfg.EventRetention,
 		EventHeartbeat:       cfg.EventHeartbeat,
 		CommandConfirmDelay:  cfg.CommandConfirmDelay,
+		WeatherProvider:      weather.New(),
 	})
 
 	server := &http.Server{
@@ -53,6 +55,7 @@ func main() {
 	}
 
 	go poll(ctx, cfg, service)
+	go pollWeather(ctx, cfg, service)
 
 	go func() {
 		log.Printf("poold listening on %s, pool=%s, db=%s", cfg.ListenAddr, cfg.PoolAddr, cfg.DatabasePath)
@@ -66,6 +69,24 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown: %v", err)
+	}
+}
+
+func pollWeather(ctx context.Context, cfg config.Config, service *httpapi.Service) {
+	interval := durationDefault(cfg.WeatherPollInterval, 5*time.Minute)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			if _, err := service.RefreshWeather(ctx); err != nil && !errors.Is(err, httpapi.ErrWeatherNotConfigured) {
+				log.Printf("weather refresh: %v", err)
+			}
+			resetTimer(timer, interval)
+		}
 	}
 }
 

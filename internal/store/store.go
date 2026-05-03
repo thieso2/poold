@@ -258,6 +258,75 @@ func (s *Store) SaveDesiredState(ctx context.Context, desired pool.DesiredState)
 	return s.setKV(ctx, "desired_state", body)
 }
 
+func (s *Store) WeatherSettings(ctx context.Context) (pool.WeatherSettings, error) {
+	body, ok, err := s.getKV(ctx, "weather_settings")
+	if err != nil || !ok {
+		return pool.WeatherSettings{}, err
+	}
+	var settings pool.WeatherSettings
+	if err := json.Unmarshal(body, &settings); err != nil {
+		return pool.WeatherSettings{}, err
+	}
+	return settings, nil
+}
+
+func (s *Store) SaveWeatherSettings(ctx context.Context, settings pool.WeatherSettings) error {
+	if settings.UpdatedAt.IsZero() {
+		settings.UpdatedAt = time.Now().UTC()
+	}
+	body, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return s.setKV(ctx, "weather_settings", body)
+}
+
+func (s *Store) SaveWeatherObservation(ctx context.Context, observation pool.WeatherObservation) (int64, error) {
+	if observation.ObservedAt.IsZero() {
+		observation.ObservedAt = time.Now().UTC()
+	}
+	if len(observation.Data) == 0 {
+		return 0, fmt.Errorf("weather observation data is required")
+	}
+	locationJSON, err := json.Marshal(observation.Location)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO weather_observations (observed_at, location_json, weather_json)
+		VALUES (?, ?, ?)
+	`, encodeTime(observation.ObservedAt), locationJSON, observation.Data)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (s *Store) LatestWeatherObservation(ctx context.Context) (pool.WeatherObservation, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, observed_at, location_json, weather_json
+		FROM weather_observations
+		ORDER BY id DESC
+		LIMIT 1
+	`)
+	var observation pool.WeatherObservation
+	var observedAt string
+	var locationJSON []byte
+	if err := row.Scan(&observation.ID, &observedAt, &locationJSON, &observation.Data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return pool.WeatherObservation{}, false, nil
+		}
+		return pool.WeatherObservation{}, false, err
+	}
+	observation.ObservedAt = decodeTime(observedAt)
+	if len(locationJSON) > 0 {
+		if err := json.Unmarshal(locationJSON, &observation.Location); err != nil {
+			return pool.WeatherObservation{}, false, err
+		}
+	}
+	return observation, true, nil
+}
+
 func (s *Store) Plans(ctx context.Context) ([]pool.Plan, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT plan_json
@@ -432,6 +501,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			plan_json BLOB NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS weather_observations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			observed_at TEXT NOT NULL,
+			location_json BLOB NOT NULL,
+			weather_json BLOB NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS weather_observations_observed_at_idx ON weather_observations(observed_at);
 	`)
 	return err
 }

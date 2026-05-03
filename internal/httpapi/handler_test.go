@@ -235,6 +235,37 @@ func TestObservationsEndpoint(t *testing.T) {
 	}
 }
 
+func TestWeatherSettingsEndpoint(t *testing.T) {
+	handler, _, fakeWeather := testAPIWithWeather(t)
+	fakeWeather.raw = json.RawMessage(`{"main":{"temp":21.5},"weather":[{"main":"Clouds","description":"broken clouds"}],"clouds":{"all":75},"name":"Berlin"}`)
+
+	rec := authed(handler, http.MethodPut, "/weather/settings", []byte(`{"api_key":"owm-secret","location":"Berlin,DE"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "owm-secret") {
+		t.Fatal("weather API key leaked in response")
+	}
+
+	rec = authed(handler, http.MethodGet, "/weather", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Settings WeatherSettingsView     `json:"settings"`
+		Latest   pool.WeatherObservation `json:"latest"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Settings.APIKeySet || response.Settings.Location.Name != "Berlin" {
+		t.Fatalf("settings = %+v", response.Settings)
+	}
+	if response.Latest.ID == 0 || !strings.Contains(string(response.Latest.Data), "broken clouds") {
+		t.Fatalf("latest = %+v", response.Latest)
+	}
+}
+
 func testAPI(t *testing.T) (http.Handler, *fakePoolClient) {
 	t.Helper()
 	st, err := store.Open(context.Background(), t.TempDir()+"/poold.db")
@@ -245,6 +276,19 @@ func testAPI(t *testing.T) (http.Handler, *fakePoolClient) {
 	fake := &fakePoolClient{status: pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}}
 	service := NewService(st, fake, scheduler.New(scheduler.Config{}), ServiceConfig{})
 	return New(service, "secret"), fake
+}
+
+func testAPIWithWeather(t *testing.T) (http.Handler, *fakePoolClient, *fakeWeatherProvider) {
+	t.Helper()
+	st, err := store.Open(context.Background(), t.TempDir()+"/poold.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	fake := &fakePoolClient{status: pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}}
+	fakeWeather := &fakeWeatherProvider{}
+	service := NewService(st, fake, scheduler.New(scheduler.Config{}), ServiceConfig{WeatherProvider: fakeWeather})
+	return New(service, "secret"), fake, fakeWeather
 }
 
 func authed(handler http.Handler, method, path string, body []byte) *httptest.ResponseRecorder {
@@ -321,4 +365,19 @@ func (f *fakePoolClient) lastCapability() string {
 func boolValue(value any) bool {
 	v, _ := value.(bool)
 	return v
+}
+
+type fakeWeatherProvider struct {
+	raw json.RawMessage
+}
+
+func (f *fakeWeatherProvider) ResolveLocation(context.Context, string, string) (pool.WeatherLocation, error) {
+	return pool.WeatherLocation{Query: "Berlin,DE", Name: "Berlin", Country: "DE", Lat: 52.52, Lon: 13.405}, nil
+}
+
+func (f *fakeWeatherProvider) CurrentWeather(context.Context, string, pool.WeatherLocation) (json.RawMessage, error) {
+	if len(f.raw) == 0 {
+		return json.RawMessage(`{"main":{"temp":20},"weather":[{"main":"Clear","description":"clear sky"}]}`), nil
+	}
+	return f.raw, nil
 }
