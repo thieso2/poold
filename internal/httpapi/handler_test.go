@@ -43,6 +43,22 @@ func TestWebUIIsPublic(t *testing.T) {
 	}
 }
 
+func TestFaviconIsPublic(t *testing.T) {
+	handler, _ := testAPI(t)
+	req := httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "image/svg+xml") {
+		t.Fatalf("content type = %q, want svg", contentType)
+	}
+	if !strings.Contains(rec.Body.String(), "<svg") {
+		t.Fatal("favicon svg missing")
+	}
+}
+
 func TestStatusEndpointRefreshesHardware(t *testing.T) {
 	handler, fake := testAPI(t)
 	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36, CurrentTemp: pool.IntPtr(32)}

@@ -21,6 +21,7 @@ func New(service *Service, token string) http.Handler {
 	api := &API{service: service, token: token}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", api.handleWebUI)
+	mux.HandleFunc("GET /favicon.svg", api.handleFavicon)
 	mux.HandleFunc("GET /health", api.handleHealth)
 	mux.HandleFunc("GET /status", api.handleStatus)
 	mux.HandleFunc("GET /observations", api.handleObservations)
@@ -37,7 +38,7 @@ func New(service *Service, token string) http.Handler {
 
 func (a *API) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/" {
+		if publicWebPath(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -54,6 +55,10 @@ func (a *API) auth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func publicWebPath(r *http.Request) bool {
+	return r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/favicon.svg")
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {

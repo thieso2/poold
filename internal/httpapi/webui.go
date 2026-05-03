@@ -12,11 +12,20 @@ func (a *API) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(webUIHTML))
 }
 
+func (a *API) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write([]byte(faviconSVG))
+}
+
 const webUIHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#007c89">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/favicon.svg">
 <title>Pooly Control</title>
 <style>
 :root {
@@ -109,11 +118,13 @@ label {
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 124, 137, .22);
+}
+.mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 h1, h2, h3, p {
   margin: 0;
@@ -385,7 +396,7 @@ h3 {
 <main class="app">
   <header class="topbar">
     <div class="brand">
-      <div class="mark">P</div>
+      <div class="mark"><img src="/favicon.svg" alt=""></div>
       <div>
         <h1>Pooly Control</h1>
         <p class="muted" id="subline">Pool daemon</p>
@@ -944,4 +955,25 @@ setInterval(function() {
 </script>
 </body>
 </html>
+`
+
+const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="10" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00a6b2"/>
+      <stop offset=".55" stop-color="#007c89"/>
+      <stop offset="1" stop-color="#235ea8"/>
+    </linearGradient>
+    <linearGradient id="water" x1="11" y1="38" x2="53" y2="53" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e9fbff"/>
+      <stop offset="1" stop-color="#b8e9f3"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <path d="M15 39c5.7-4.3 11.3-4.3 17 0s11.3 4.3 17 0" fill="none" stroke="url(#water)" stroke-width="5.5" stroke-linecap="round"/>
+  <path d="M15 49c5.7-4.3 11.3-4.3 17 0s11.3 4.3 17 0" fill="none" stroke="#dff8fc" stroke-width="4.5" stroke-linecap="round" opacity=".9"/>
+  <path d="M24 30c-3.2-3.2-3.2-7 0-10 2.7-2.6 2.9-5.6.5-8" fill="none" stroke="#fff6d8" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M38 30c-3.2-3.2-3.2-7 0-10 2.7-2.6 2.9-5.6.5-8" fill="none" stroke="#fff6d8" stroke-width="4.5" stroke-linecap="round" opacity=".92"/>
+  <circle cx="51" cy="15" r="4.5" fill="#fff6d8" opacity=".95"/>
+</svg>
 `
