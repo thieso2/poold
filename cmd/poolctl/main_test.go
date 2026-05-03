@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"pooly/services/poold/internal/pool"
 )
 
 func TestFormatWatchEventObservation(t *testing.T) {
@@ -31,12 +33,12 @@ func TestFormatWatchEventStatusError(t *testing.T) {
 	}
 }
 
-func TestWatchAfterIDDefaultsToLatestEvent(t *testing.T) {
+func TestReplayWatchHistoryDefaultsToLastHour(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		after := r.URL.Query().Get("after")
 		switch after {
 		case "0":
-			fmt.Fprint(w, `{"events":[{"id":1},{"id":2}]}`)
+			fmt.Fprint(w, `{"events":[{"id":1,"created_at":"2026-05-03T10:00:00Z"},{"id":2,"created_at":"2026-05-03T11:30:00Z"}]}`)
 		case "2":
 			fmt.Fprint(w, `{"events":[]}`)
 		default:
@@ -46,21 +48,49 @@ func TestWatchAfterIDDefaultsToLatestEvent(t *testing.T) {
 	defer server.Close()
 
 	c := client{baseURL: server.URL, token: "test", http: server.Client()}
-	got, err := c.watchAfterID(watchOptions{After: -1})
+	var emitted []int64
+	got, err := c.replayWatchHistory(watchOptions{After: -1, History: time.Hour}, time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC), func(event pool.Event) error {
+		emitted = append(emitted, event.ID)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != 2 {
 		t.Fatalf("after = %d, want latest event id 2", got)
 	}
+	if len(emitted) != 1 || emitted[0] != 2 {
+		t.Fatalf("emitted = %+v, want only last-hour event 2", emitted)
+	}
 }
 
-func TestWatchAfterIDExplicitOptions(t *testing.T) {
-	c := client{}
-	if got, err := c.watchAfterID(watchOptions{After: 42}); err != nil || got != 42 {
-		t.Fatalf("explicit after = %d, %v; want 42", got, err)
+func TestReplayWatchHistoryExplicitAfterReplaysFromAfterID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		after := r.URL.Query().Get("after")
+		switch after {
+		case "42":
+			fmt.Fprint(w, `{"events":[{"id":43,"created_at":"2026-05-03T10:00:00Z"}]}`)
+		case "43":
+			fmt.Fprint(w, `{"events":[]}`)
+		default:
+			t.Fatalf("unexpected after query %q", after)
+		}
+	}))
+	defer server.Close()
+
+	c := client{baseURL: server.URL, token: "test", http: server.Client()}
+	var emitted []int64
+	got, err := c.replayWatchHistory(watchOptions{After: 42}, time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC), func(event pool.Event) error {
+		emitted = append(emitted, event.ID)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, err := c.watchAfterID(watchOptions{After: -1, FromStart: true}); err != nil || got != 0 {
-		t.Fatalf("from-start after = %d, %v; want 0", got, err)
+	if got != 43 {
+		t.Fatalf("after = %d, want 43", got)
+	}
+	if len(emitted) != 1 || emitted[0] != 43 {
+		t.Fatalf("emitted = %+v, want event 43", emitted)
 	}
 }

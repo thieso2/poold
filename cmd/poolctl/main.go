@@ -77,7 +77,7 @@ func runWatch(c client, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return c.watch(watchOptions{JSON: *jsonOutput, FromStart: *fromStart, After: *after})
+	return c.watch(watchOptions{JSON: *jsonOutput, FromStart: *fromStart, After: *after, History: time.Hour})
 }
 
 func runSet(c client, args []string) error {
@@ -266,10 +266,15 @@ type watchOptions struct {
 	JSON      bool
 	FromStart bool
 	After     int64
+	History   time.Duration
 }
 
 func (c client) watch(options watchOptions) error {
-	after, err := c.watchAfterID(options)
+	location := poolctlLocation()
+	after, err := c.replayWatchHistory(options, time.Now(), func(event pool.Event) error {
+		printWatchEvent(event, options, location)
+		return nil
+	})
 	if err != nil {
 		return err
 	}
@@ -294,7 +299,6 @@ func (c client) watch(options watchOptions) error {
 		return fmt.Errorf("watch: %s", strings.TrimSpace(string(body)))
 	}
 	scanner := bufio.NewScanner(resp.Body)
-	location := poolctlLocation()
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -309,34 +313,68 @@ func (c client) watch(options watchOptions) error {
 	return scanner.Err()
 }
 
-func (c client) watchAfterID(options watchOptions) (int64, error) {
+func (c client) replayWatchHistory(options watchOptions, now time.Time, emit func(pool.Event) error) (int64, error) {
 	if options.After >= 0 {
-		return options.After, nil
+		return c.replayEventsAfter(options.After, func(event pool.Event) bool {
+			return true
+		}, emit)
 	}
 	if options.FromStart {
-		return 0, nil
+		return c.replayEventsAfter(0, func(event pool.Event) bool {
+			return true
+		}, emit)
 	}
-	return c.latestEventID()
+
+	history := options.History
+	if history <= 0 {
+		history = time.Hour
+	}
+	cutoff := now.Add(-history)
+	return c.replayEventsAfter(0, func(event pool.Event) bool {
+		return !event.CreatedAt.Before(cutoff)
+	}, emit)
 }
 
-func (c client) latestEventID() (int64, error) {
-	var after int64
+func (c client) replayEventsAfter(after int64, include func(pool.Event) bool, emit func(pool.Event) error) (int64, error) {
+	if after < 0 {
+		after = 0
+	}
+	lastSeen := after
 	for {
 		var response struct {
 			Events []pool.Event `json:"events"`
 		}
-		path := fmt.Sprintf("/events?after=%d&limit=500", after)
+		path := fmt.Sprintf("/events?after=%d&limit=500", lastSeen)
 		if err := c.doJSON(http.MethodGet, path, nil, &response); err != nil {
 			return 0, err
 		}
 		if len(response.Events) == 0 {
-			return after, nil
+			return lastSeen, nil
 		}
-		after = response.Events[len(response.Events)-1].ID
+		for _, event := range response.Events {
+			lastSeen = event.ID
+			if include(event) {
+				if err := emit(event); err != nil {
+					return 0, err
+				}
+			}
+		}
 		if len(response.Events) < 500 {
-			return after, nil
+			return lastSeen, nil
 		}
 	}
+}
+
+func printWatchEvent(event pool.Event, options watchOptions, location *time.Location) {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	if options.JSON {
+		fmt.Println(string(raw))
+		return
+	}
+	fmt.Println(formatWatchEvent(string(raw), location))
 }
 
 func formatWatchEvent(raw string, location *time.Location) string {
