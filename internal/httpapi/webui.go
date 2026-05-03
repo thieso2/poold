@@ -244,37 +244,34 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
-.pause-strip {
+.manual-strip {
   display: grid;
   gap: 10px;
   margin-bottom: 12px;
   padding: 11px;
-  border: 1px solid #f0b8b3;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff8f7;
+  background: #f8fbfc;
 }
-.pause-strip.active {
+.manual-strip.active {
   border-color: #f1c27d;
   background: #fff6e8;
 }
-.pause-strip strong,
-.pause-strip span {
+.manual-strip strong,
+.manual-strip span {
   display: block;
 }
-.pause-strip span {
+.manual-strip span {
   color: var(--muted);
   font-size: 13px;
 }
-.pause-actions {
-  display: grid;
-  grid-template-columns: 86px 1fr;
+.manual-actions {
+  display: none;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
 }
-.pause-strip.active .pause-actions {
-  grid-template-columns: 1fr;
-}
-.pause-strip.active select {
-  display: none;
+.manual-strip.active .manual-actions {
+  display: grid;
 }
 .control {
   display: flex;
@@ -302,6 +299,9 @@ h3 {
 }
 .control.on .dot {
   background: var(--accent);
+}
+.control.manual {
+  box-shadow: inset 0 0 0 2px rgba(241, 194, 125, .65);
 }
 .temp-row {
   display: grid;
@@ -495,19 +495,15 @@ h3 {
         <h2>Controls</h2>
         <span class="badge" id="busy">Ready</span>
       </div>
-      <div class="pause-strip" id="pauseStrip">
+      <div class="manual-strip" id="manualStrip">
         <div>
-          <strong id="pauseTitle">Power break</strong>
-          <span id="pauseDetail">Temporarily turns the pool off.</span>
+          <strong id="manualTitle">Manual control</strong>
+          <span id="manualDetail">No override active</span>
         </div>
-        <div class="pause-actions">
-          <select id="pauseMinutes">
-            <option value="15">15m</option>
-            <option value="30" selected>30m</option>
-            <option value="60">1h</option>
-            <option value="120">2h</option>
-          </select>
-          <button class="danger" id="pauseToggle">Pause</button>
+        <div class="manual-actions">
+          <button id="manualMinus">-30m</button>
+          <button id="manualPlus">+30m</button>
+          <button class="danger" id="manualClear">Clear</button>
         </div>
       </div>
       <div class="controls" id="controls"></div>
@@ -516,15 +512,6 @@ h3 {
         <label>Target <input id="tempInput" type="number" min="10" max="40" step="1"></label>
         <button id="tempUp">+</button>
       </div>
-      <button class="primary" id="sendTemp">Set Temperature</button>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Desired State</h2>
-        <button class="primary" id="saveDesired">Save</button>
-      </div>
-      <div class="forms" id="desiredForm"></div>
     </section>
 
     <section class="panel">
@@ -559,15 +546,18 @@ h3 {
 var caps = ["power", "filter", "heater", "jets", "bubbles", "sanitizer"];
 var capLabels = {power:"Power", filter:"Filter", heater:"Heater", jets:"Jets", bubbles:"Bubbles", sanitizer:"Sanitizer"};
 var days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-var pausePlanID = "webui-pause";
+var manualPlanID = "webui-manual";
+var legacyPausePlanID = "webui-pause";
+var manualDefaultMinutes = 30;
+var tempDebounceTimer = null;
 var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
-  desired: {},
   plans: [],
   events: [],
   polls: [],
   commands: [],
+  manualDraft: null,
   planView: "plans",
   activityView: "events",
   pending: false
@@ -629,7 +619,6 @@ function loadAll() {
   setBusy(true);
   Promise.all([
     loadStatus(),
-    loadDesired(),
     loadPlans(),
     loadEvents(),
     loadPolls()
@@ -643,26 +632,19 @@ function loadStatus() {
   return api("/status").then(function(status) {
     state.status = status;
   }).catch(function(err) {
-    toast("Status: " + err.message, "bad");
-  });
-}
-
-function loadDesired() {
-  return api("/desired-state").then(function(desired) {
-    state.desired = desired || {};
-  }).catch(function(err) {
     if (err.status === 401) {
       state.token = "";
       localStorage.removeItem("poold.token");
       updateTokenUI();
     }
-    toast("Desired state: " + err.message, "bad");
+    toast("Status: " + err.message, "bad");
   });
 }
 
 function loadPlans() {
   return api("/plans").then(function(data) {
     state.plans = data.plans || [];
+    state.manualDraft = null;
   }).catch(function(err) {
     toast("Plans: " + err.message, "bad");
   });
@@ -685,16 +667,15 @@ function loadPolls() {
 
 function renderAll() {
   renderStatus();
-  renderPause();
+  renderManual();
   renderControls();
-  renderDesired();
   renderPlans();
   renderActivity();
 }
 
 function renderLivePanels() {
   renderStatus();
-  renderPause();
+  renderManual();
   renderControls();
   renderActivity();
 }
@@ -705,15 +686,17 @@ function renderStatus() {
   var current = status.current_temp == null ? "--" : status.current_temp + unit;
   $("currentTemp").textContent = current;
   $("targetTemp").textContent = "Target " + (status.preset_temp || "--") + unit;
-  $("tempInput").value = status.preset_temp || "";
+  if (document.activeElement !== $("tempInput")) {
+    $("tempInput").value = status.preset_temp || "";
+  }
   $("observedAt").textContent = status.observed_at ? formatTime(status.observed_at) : "--";
   $("errorCode").textContent = status.error_code || "None";
   $("subline").textContent = status.connected ? "Connected " + formatAge(status.observed_at) : "Pool daemon";
   $("connected").textContent = status.connected ? "Connected" : state.token ? "Disconnected" : "Token";
   $("connected").className = status.connected ? "badge ok" : state.token ? "badge bad" : "badge warn";
-  var pause = activePausePlan();
-  if (pause) {
-    $("stateBadge").textContent = "Paused";
+  var manual = activeManualPlan();
+  if (manual) {
+    $("stateBadge").textContent = "Manual";
     $("stateBadge").className = "badge warn";
     return;
   }
@@ -722,20 +705,16 @@ function renderStatus() {
   $("stateBadge").className = active.length ? "badge ok" : "badge";
 }
 
-function renderPause() {
-  var plan = activePausePlan();
-  var strip = $("pauseStrip");
+function renderManual() {
+  var plan = activeManualPlan();
+  var strip = $("manualStrip");
   strip.classList.toggle("active", !!plan);
   if (plan) {
-    $("pauseTitle").textContent = "Pool paused";
-    $("pauseDetail").textContent = "Resumes at " + formatDateTime(plan.expires_at);
-    $("pauseToggle").textContent = "Resume Now";
-    $("pauseToggle").className = "primary";
+    $("manualTitle").textContent = manualTitle(plan.desired_state || {});
+    $("manualDetail").textContent = manualSummary(plan.desired_state || {}) + " · " + remainingTime(plan.expires_at) + " left";
   } else {
-    $("pauseTitle").textContent = "Power break";
-    $("pauseDetail").textContent = "Temporarily turns the pool off.";
-    $("pauseToggle").textContent = "Pause";
-    $("pauseToggle").className = "danger";
+    $("manualTitle").textContent = "Manual control";
+    $("manualDetail").textContent = "No override active";
   }
 }
 
@@ -744,43 +723,14 @@ function renderControls() {
   var status = state.status || {};
   wrap.innerHTML = "";
   caps.forEach(function(cap) {
+    var manualValue = manualDesiredValue(cap);
+    var displayValue = manualValue === undefined ? !!status[cap] : manualValue;
     var button = document.createElement("button");
-    button.className = "control" + (status[cap] ? " on" : "");
-    button.innerHTML = "<span><strong>" + capLabels[cap] + "</strong><br><span class=\"muted\">" + boolText(!!status[cap]) + "</span></span><i class=\"dot\"></i>";
-    button.onclick = function() { commandBool(cap, !status[cap]); };
+    button.className = "control" + (displayValue ? " on" : "") + (manualValue !== undefined ? " manual" : "");
+    button.innerHTML = "<span><strong>" + capLabels[cap] + "</strong></span><i class=\"dot\"></i>";
+    button.onclick = function() { setManualBool(cap, !displayValue); };
     wrap.appendChild(button);
   });
-}
-
-function renderDesired() {
-  var form = $("desiredForm");
-  form.innerHTML = "";
-  caps.forEach(function(cap) {
-    var field = document.createElement("div");
-    field.className = "row";
-    field.innerHTML = "<label>" + capLabels[cap] + "<div class=\"segments\" data-desired=\"" + cap + "\"><button data-value=\"unset\">Any</button><button data-value=\"false\">Off</button><button data-value=\"true\">On</button></div></label>";
-    form.appendChild(field);
-    var current = state.desired[cap];
-    qsa("[data-desired=\"" + cap + "\"] button").forEach(function(button) {
-      var active = current == null ? button.dataset.value === "unset" : String(current) === button.dataset.value;
-      button.classList.toggle("active", active);
-      button.onclick = function() {
-        state.desired[cap] = button.dataset.value === "unset" ? undefined : button.dataset.value === "true";
-        renderDesired();
-      };
-    });
-  });
-  var target = document.createElement("div");
-  target.className = "row two";
-  target.innerHTML = "<label>Target <input id=\"desiredTarget\" type=\"number\" min=\"10\" max=\"40\" step=\"1\" value=\"" + (state.desired.target_temp == null ? "" : state.desired.target_temp) + "\"></label><button id=\"clearDesiredTemp\">Clear Target</button>";
-  form.appendChild(target);
-  $("desiredTarget").oninput = function() {
-    state.desired.target_temp = this.value === "" ? undefined : Number(this.value);
-  };
-  $("clearDesiredTemp").onclick = function() {
-    state.desired.target_temp = undefined;
-    renderDesired();
-  };
 }
 
 function renderPlans() {
@@ -795,13 +745,14 @@ function renderPlans() {
 }
 
 function renderPlanList(view) {
-  if (!state.plans.length) {
+  var visiblePlans = state.plans.filter(function(plan) { return !isReservedManualPlan(plan); });
+  if (!visiblePlans.length) {
     view.innerHTML = "<p class=\"muted\">No plans</p>";
     return;
   }
   var list = document.createElement("div");
   list.className = "plan-list";
-  state.plans.forEach(function(plan) {
+  visiblePlans.forEach(function(plan) {
     var item = document.createElement("div");
     item.className = "plan";
     item.innerHTML = "<div class=\"plan-main\"><div><h3>" + escapeHTML(plan.name || plan.id) + "</h3><p class=\"muted\">" + describePlan(plan) + "</p></div><span class=\"badge " + (plan.enabled ? "ok" : "") + "\">" + (plan.enabled ? "On" : "Off") + "</span></div><div class=\"plan-actions\"><button data-toggle=\"" + plan.id + "\">" + (plan.enabled ? "Disable" : "Enable") + "</button><button class=\"danger\" data-delete=\"" + plan.id + "\">Delete</button></div>";
@@ -842,7 +793,7 @@ function renderReadyForm(view) {
 }
 
 function renderWindowForm(view) {
-  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"windowName\" value=\"Filter window\"></label><label>Capability <select id=\"windowCap\"><option value=\"filter\">Filter</option><option value=\"heater\">Heater</option><option value=\"jets\">Jets</option><option value=\"bubbles\">Bubbles</option><option value=\"sanitizer\">Sanitizer</option></select></label><label>Enabled <select id=\"windowEnabled\"><option value=\"true\">On</option><option value=\"false\">Off</option></select></label></div><div class=\"row two\"><label>From <input id=\"windowFrom\" type=\"time\" value=\"02:00\"></label><label>To <input id=\"windowTo\" type=\"time\" value=\"04:00\"></label></div><div class=\"days\" id=\"windowDays\"></div><button class=\"primary\" id=\"addWindow\">Add Window</button><hr><div class=\"row two\"><label>Override Until <input id=\"overrideUntil\" type=\"datetime-local\"></label><label>Heater <select id=\"overrideHeater\"><option value=\"unset\">Any</option><option value=\"true\">On</option><option value=\"false\">Off</option></select></label></div><button id=\"addOverride\">Add Manual Override</button>";
+  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"windowName\" value=\"Filter window\"></label><label>Capability <select id=\"windowCap\"><option value=\"filter\">Filter</option><option value=\"heater\">Heater</option><option value=\"jets\">Jets</option><option value=\"bubbles\">Bubbles</option><option value=\"sanitizer\">Sanitizer</option></select></label><label>Enabled <select id=\"windowEnabled\"><option value=\"true\">On</option><option value=\"false\">Off</option></select></label></div><div class=\"row two\"><label>From <input id=\"windowFrom\" type=\"time\" value=\"02:00\"></label><label>To <input id=\"windowTo\" type=\"time\" value=\"04:00\"></label></div><div class=\"days\" id=\"windowDays\"></div><button class=\"primary\" id=\"addWindow\">Add Window</button>";
   var dayWrap = $("windowDays");
   days.forEach(function(day) {
     var button = document.createElement("button");
@@ -852,7 +803,6 @@ function renderWindowForm(view) {
     button.onclick = function() { button.classList.toggle("active"); };
     dayWrap.appendChild(button);
   });
-  $("overrideUntil").value = localDateTime(new Date(Date.now() + 60 * 60 * 1000));
   $("addWindow").onclick = function() {
     var plan = {
       id: "window-" + Date.now(),
@@ -865,26 +815,6 @@ function renderWindowForm(view) {
       days: qsa("#windowDays .day.active").map(function(button) { return button.dataset.day; })
     };
     updatePlans(state.plans.concat([plan]));
-  };
-  $("addOverride").onclick = function() {
-    var desired = {};
-    var heater = $("overrideHeater").value;
-    if (heater !== "unset") desired.heater = heater === "true";
-    if (heater === "true") {
-      desired.power = true;
-      desired.filter = true;
-    }
-    if (!Object.keys(desired).length) return toast("Choose an override state", "bad");
-    var until = $("overrideUntil").value;
-    if (!until) return toast("Override time is required", "bad");
-    updatePlans(state.plans.concat([{
-      id: "override-" + Date.now(),
-      type: "manual_override",
-      name: "Manual override",
-      enabled: true,
-      desired_state: desired,
-      expires_at: new Date(until).toISOString()
-    }]));
   };
 }
 
@@ -911,18 +841,6 @@ function renderActivity() {
   });
 }
 
-function commandBool(cap, value) {
-  runAction(function() {
-    return api("/commands", {method: "POST", body: JSON.stringify({capability: cap, state: value, source: "webui"})});
-  }, capLabels[cap] + " " + boolText(value));
-}
-
-function commandTemp(value) {
-  runAction(function() {
-    return api("/commands", {method: "POST", body: JSON.stringify({capability: "target_temp", value: Number(value), source: "webui"})});
-  }, "Temperature set");
-}
-
 function updatePlans(plans, message) {
   runAction(function() {
     return api("/plans", {method: "PUT", body: JSON.stringify({plans: plans})}).then(function(data) {
@@ -931,56 +849,65 @@ function updatePlans(plans, message) {
   }, message || "Plans saved");
 }
 
-function togglePause() {
-  if (activePausePlan()) {
-    return unpausePool();
+function setManualBool(cap, value) {
+  var desired = currentManualDesired();
+  if (cap === "power" && value === false) {
+    desired = {power: false};
+  } else {
+    if (cap !== "power" && value === true && desired.power === false) delete desired.power;
+    desired[cap] = value;
+    if (cap === "filter" && value === false && desired.heater === true) desired.heater = false;
   }
-  pausePool();
+  updateManualPlan(desired, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), capLabels[cap] + " " + boolText(value));
 }
 
-function pausePool() {
-  if (!state.token) return toast("Token required", "bad");
-  var minutes = Number($("pauseMinutes").value || 30);
-  var expiresAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+function scheduleManualTemp(value) {
+  clearTimeout(tempDebounceTimer);
+  tempDebounceTimer = setTimeout(function() {
+    setManualTargetTemp(value);
+  }, 650);
+}
+
+function setManualTargetTemp(value) {
+  if (String(value).trim() === "") {
+    var cleared = currentManualDesired();
+    delete cleared.target_temp;
+    if (!Object.keys(cleared).length) return clearManual();
+    return updateManualPlan(cleared, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), "Target cleared");
+  }
+  var target = Number(value);
+  if (!Number.isFinite(target) || target < 10 || target > 40) return;
+  var desired = currentManualDesired();
+  desired.target_temp = target;
+  updateManualPlan(desired, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), "Target " + target + "°");
+}
+
+function adjustManual(minutes) {
+  var plan = activeManualPlan();
+  if (!plan) return;
+  var expiresAt = new Date(plan.expires_at).getTime() + minutes * 60 * 1000;
+  if (expiresAt <= Date.now()) return clearManual();
+  updateManualPlan(Object.assign({}, plan.desired_state || {}), new Date(expiresAt), "Manual time updated");
+}
+
+function clearManual() {
+  state.manualDraft = null;
+  updatePlans(state.plans.filter(function(plan) { return !isReservedManualPlan(plan); }), "Manual cleared");
+}
+
+function updateManualPlan(desired, expiresAt, message) {
+  state.manualDraft = Object.assign({}, desired);
   var plan = {
-    id: pausePlanID,
+    id: manualPlanID,
     type: "manual_override",
-    name: "Pool paused",
+    name: manualTitle(desired),
     enabled: true,
-    desired_state: {
-      power: false,
-      filter: false,
-      heater: false,
-      jets: false,
-      bubbles: false,
-      sanitizer: false
-    },
-    expires_at: expiresAt
+    desired_state: desired,
+    expires_at: expiresAt.toISOString()
   };
   updatePlans(state.plans.filter(function(existing) {
-    return existing.id !== pausePlanID;
-  }).concat([plan]), "Pool paused");
-}
-
-function unpausePool() {
-  updatePlans(state.plans.filter(function(plan) {
-    return plan.id !== pausePlanID;
-  }), "Pool resumed");
-}
-
-function saveDesired() {
-  var desired = {};
-  caps.forEach(function(cap) {
-    if (state.desired[cap] !== undefined) desired[cap] = state.desired[cap];
-  });
-  if (state.desired.target_temp !== undefined && state.desired.target_temp !== "") {
-    desired.target_temp = Number(state.desired.target_temp);
-  }
-  runAction(function() {
-    return api("/desired-state", {method: "PUT", body: JSON.stringify(desired)}).then(function(saved) {
-      state.desired = saved || {};
-    });
-  }, "Desired state saved");
+    return !isReservedManualPlan(existing);
+  }).concat([plan]), message || "Manual control saved");
 }
 
 function runAction(action, message) {
@@ -988,7 +915,7 @@ function runAction(action, message) {
   setBusy(true);
   action().then(function() {
     toast(message, "ok");
-    return Promise.all([loadStatus(), loadDesired(), loadPlans(), loadEvents(), loadPolls()]);
+    return Promise.all([loadStatus(), loadPlans(), loadEvents(), loadPolls()]);
   }).catch(function(err) {
     toast(err.message, "bad");
   }).finally(function() {
@@ -1015,7 +942,7 @@ function eventLine(event) {
 }
 
 function describePlan(plan) {
-  if (plan.id === pausePlanID) return "Pool paused until " + formatDateTime(plan.expires_at);
+  if (isReservedManualPlan(plan)) return manualSummary(plan.desired_state || {}) + " until " + formatDateTime(plan.expires_at);
   if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + formatDateTime(plan.at);
   if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
   if (plan.type === "manual_override") return "Until " + formatDateTime(plan.expires_at);
@@ -1046,14 +973,57 @@ function localDateTime(date) {
   return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
 }
 
-function activePausePlan() {
+function activeManualPlan() {
   var now = Date.now();
   return state.plans.find(function(plan) {
-    return plan.id === pausePlanID &&
+    return isReservedManualPlan(plan) &&
       plan.enabled &&
       plan.expires_at &&
       new Date(plan.expires_at).getTime() > now;
   });
+}
+
+function isReservedManualPlan(plan) {
+  return plan && (plan.id === manualPlanID || plan.id === legacyPausePlanID);
+}
+
+function currentManualDesired() {
+  if (state.manualDraft) return Object.assign({}, state.manualDraft);
+  var plan = activeManualPlan();
+  return Object.assign({}, plan && plan.desired_state ? plan.desired_state : {});
+}
+
+function manualDesiredValue(cap) {
+  var plan = activeManualPlan();
+  var desired = state.manualDraft || (plan && plan.desired_state ? plan.desired_state : {});
+  return Object.prototype.hasOwnProperty.call(desired, cap) ? desired[cap] : undefined;
+}
+
+function manualTitle(desired) {
+  if (desired && desired.power === false) return "Pool stopped";
+  if (desired && desired.heater === true) return "Manual heating";
+  return "Manual control";
+}
+
+function manualSummary(desired) {
+  var parts = [];
+  caps.forEach(function(cap) {
+    if (Object.prototype.hasOwnProperty.call(desired, cap)) {
+      parts.push(capLabels[cap] + " " + boolText(!!desired[cap]));
+    }
+  });
+  if (desired.target_temp != null) parts.push("Target " + desired.target_temp + "°");
+  return parts.length ? parts.join(" · ") : "No settings";
+}
+
+function remainingTime(value) {
+  var seconds = Math.max(0, Math.round((new Date(value).getTime() - Date.now()) / 1000));
+  if (seconds < 60) return seconds + "s";
+  var minutes = Math.round(seconds / 60);
+  if (minutes < 90) return minutes + "m";
+  var hours = Math.floor(minutes / 60);
+  var rest = minutes % 60;
+  return rest ? hours + "h " + rest + "m" : hours + "h";
 }
 
 function escapeHTML(value) {
@@ -1076,11 +1046,18 @@ $("refresh").onclick = loadAll;
 $("reloadPlans").onclick = function() {
   loadPlans().then(renderPlans);
 };
-$("pauseToggle").onclick = togglePause;
-$("saveDesired").onclick = saveDesired;
-$("sendTemp").onclick = function() { commandTemp($("tempInput").value); };
-$("tempDown").onclick = function() { $("tempInput").value = Number($("tempInput").value || 0) - 1; };
-$("tempUp").onclick = function() { $("tempInput").value = Number($("tempInput").value || 0) + 1; };
+$("manualMinus").onclick = function() { adjustManual(-30); };
+$("manualPlus").onclick = function() { adjustManual(30); };
+$("manualClear").onclick = clearManual;
+$("tempInput").oninput = function() { scheduleManualTemp($("tempInput").value); };
+$("tempDown").onclick = function() {
+  $("tempInput").value = Number($("tempInput").value || 0) - 1;
+  scheduleManualTemp($("tempInput").value);
+};
+$("tempUp").onclick = function() {
+  $("tempInput").value = Number($("tempInput").value || 0) + 1;
+  scheduleManualTemp($("tempInput").value);
+};
 qsa("[data-view]").forEach(function(button) {
   button.onclick = function() {
     state.planView = button.dataset.view;
@@ -1100,6 +1077,7 @@ loadAll();
 setInterval(function() {
   if (state.token && !state.pending) Promise.all([loadStatus(), loadEvents(), loadPolls()]).then(renderLivePanels);
 }, 30000);
+setInterval(renderManual, 1000);
 </script>
 </body>
 </html>

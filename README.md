@@ -131,19 +131,16 @@ The web UI is embedded in the daemon and served by `GET /`. It has no frontend b
 It supports:
 
 - Current temperature, target temperature, connection state, equipment state, and last observation.
-- Fast pause/resume for short power breaks.
-- Direct power, filter, heater, jets, bubbles, and sanitizer commands.
-- Target temperature changes.
-- Desired-state editing with `Any`, `Off`, and `On` states.
+- Timed manual control for power, filter, heater, jets, bubbles, sanitizer, and target temperature.
+- Active manual override display with remaining time, `+30m`, `-30m`, and clear actions.
 - Plan list, toggle, and delete.
 - Ready-by plan creation.
 - Time-window plan creation.
-- Manual heater override creation.
 - Recent events, polls, and command activity.
 
 The web shell itself is public, but all data and actions still require the bearer token.
 
-The pause control creates a temporary manual-override plan named `webui-pause` that forces power, filter, heater, jets, bubbles, and sanitizer off. Resume removes that plan so normal desired state and schedules can take over again.
+The control tiles create a temporary manual-override plan named `webui-manual` with a default 30-minute duration. Tapping power off is the stop-pool control; it stores `power:false` and enforcement turns dependent equipment off.
 
 ## CLI
 
@@ -185,7 +182,7 @@ Plan precedence is:
 3. Time-window plans.
 4. Stored desired state.
 
-Hardware constraints are applied before enforcement. For example, heater-on implies filter-on and power-on. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
+Hardware constraints are applied before enforcement. For example, heater-on implies filter-on and power-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
 Time-window plans turn a capability on while the window is active. Outside the window, that capability returns to the stored desired state instead of being forced off.
 

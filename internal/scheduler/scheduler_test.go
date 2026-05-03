@@ -138,6 +138,42 @@ func TestManualOverridePrecedence(t *testing.T) {
 	}
 }
 
+func TestManualPowerOffOverridesBaseHeater(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	now := at(loc, 2026, 5, 4, 2, 30)
+	plan := pool.Plan{
+		ID:           "manual",
+		Type:         pool.PlanManualOverride,
+		Enabled:      true,
+		DesiredState: pool.DesiredState{Power: pool.BoolPtr(false)},
+		ExpiresAt:    ptrTime(now.Add(time.Hour)),
+	}
+
+	eval := s.Evaluate(now, pool.Status{}, pool.DesiredState{Heater: pool.BoolPtr(true)}, []pool.Plan{plan})
+	if eval.Desired.Power == nil || *eval.Desired.Power || eval.Desired.Heater == nil || *eval.Desired.Heater {
+		t.Fatalf("power-off manual override should stop heater: %+v", eval)
+	}
+}
+
+func TestManualFilterOffOverridesBaseHeater(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	now := at(loc, 2026, 5, 4, 2, 30)
+	plan := pool.Plan{
+		ID:           "manual",
+		Type:         pool.PlanManualOverride,
+		Enabled:      true,
+		DesiredState: pool.DesiredState{Filter: pool.BoolPtr(false)},
+		ExpiresAt:    ptrTime(now.Add(time.Hour)),
+	}
+
+	eval := s.Evaluate(now, pool.Status{}, pool.DesiredState{Heater: pool.BoolPtr(true)}, []pool.Plan{plan})
+	if eval.Desired.Filter == nil || *eval.Desired.Filter || eval.Desired.Heater == nil || *eval.Desired.Heater {
+		t.Fatalf("filter-off manual override should stop heater: %+v", eval)
+	}
+}
+
 func TestExpiredOverrideFallsThrough(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})

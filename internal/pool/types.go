@@ -71,6 +71,13 @@ func (d DesiredState) Overlay(base DesiredState) DesiredState {
 
 func (d DesiredState) WithHardwareConstraints() DesiredState {
 	out := d
+	if out.Power != nil && !*out.Power {
+		out.Filter = BoolPtr(false)
+		out.Heater = BoolPtr(false)
+		out.Jets = BoolPtr(false)
+		out.Bubbles = BoolPtr(false)
+		out.Sanitizer = BoolPtr(false)
+	}
 	if out.Heater != nil && *out.Heater {
 		out.Filter = BoolPtr(true)
 		out.Power = BoolPtr(true)
