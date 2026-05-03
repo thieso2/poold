@@ -17,7 +17,14 @@ type Config struct {
 	Location             *time.Location
 	HeatingRateCPerHour  float64
 	ReadinessBuffer      time.Duration
-	PollInterval         time.Duration
+	PollStartupInterval  time.Duration
+	PollIdleInterval     time.Duration
+	PollStableInterval   time.Duration
+	PollActiveInterval   time.Duration
+	PollErrorMinInterval time.Duration
+	PollErrorMaxInterval time.Duration
+	CommandConfirmDelay  time.Duration
+	EventHeartbeat       time.Duration
 	ObservationRetention time.Duration
 	EventRetention       time.Duration
 }
@@ -30,7 +37,14 @@ func Load(args []string) (Config, error) {
 		Token:                envString("POOLD_TOKEN", "dev-token"),
 		HeatingRateCPerHour:  envFloat("POOLD_HEATING_RATE_C_PER_HOUR", 0.75),
 		ReadinessBuffer:      envDuration("POOLD_READINESS_BUFFER", 30*time.Minute),
-		PollInterval:         envDuration("POOLD_POLL_INTERVAL", 30*time.Second),
+		PollStartupInterval:  envDuration("POOLD_POLL_STARTUP_INTERVAL", 10*time.Second),
+		PollIdleInterval:     envDuration("POOLD_POLL_IDLE_INTERVAL", 10*time.Minute),
+		PollStableInterval:   envDuration("POOLD_POLL_STABLE_INTERVAL", envDuration("POOLD_POLL_INTERVAL", 5*time.Minute)),
+		PollActiveInterval:   envDuration("POOLD_POLL_ACTIVE_INTERVAL", 1*time.Minute),
+		PollErrorMinInterval: envDuration("POOLD_POLL_ERROR_MIN_INTERVAL", 30*time.Second),
+		PollErrorMaxInterval: envDuration("POOLD_POLL_ERROR_MAX_INTERVAL", 5*time.Minute),
+		CommandConfirmDelay:  envDuration("POOLD_COMMAND_CONFIRM_DELAY", 10*time.Second),
+		EventHeartbeat:       envDuration("POOLD_EVENT_HEARTBEAT", 30*time.Minute),
 		ObservationRetention: envDuration("POOLD_OBSERVATION_RETENTION", 14*24*time.Hour),
 		EventRetention:       envDuration("POOLD_EVENT_RETENTION", 14*24*time.Hour),
 	}
@@ -49,7 +63,14 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.Token, "token", cfg.Token, "HTTP bearer token")
 	fs.Float64Var(&cfg.HeatingRateCPerHour, "heating-rate", cfg.HeatingRateCPerHour, "heating rate in C per hour")
 	fs.DurationVar(&cfg.ReadinessBuffer, "readiness-buffer", cfg.ReadinessBuffer, "ready-by safety buffer")
-	fs.DurationVar(&cfg.PollInterval, "poll-interval", cfg.PollInterval, "scheduler/status poll interval")
+	fs.DurationVar(&cfg.PollStableInterval, "poll-interval", cfg.PollStableInterval, "stable scheduler/status poll interval")
+	fs.DurationVar(&cfg.PollStartupInterval, "poll-startup-interval", cfg.PollStartupInterval, "startup status poll interval before first success")
+	fs.DurationVar(&cfg.PollIdleInterval, "poll-idle-interval", cfg.PollIdleInterval, "idle or power-off status poll interval")
+	fs.DurationVar(&cfg.PollActiveInterval, "poll-active-interval", cfg.PollActiveInterval, "status poll interval while equipment is active")
+	fs.DurationVar(&cfg.PollErrorMinInterval, "poll-error-min-interval", cfg.PollErrorMinInterval, "initial status error backoff interval")
+	fs.DurationVar(&cfg.PollErrorMaxInterval, "poll-error-max-interval", cfg.PollErrorMaxInterval, "maximum status error backoff interval")
+	fs.DurationVar(&cfg.CommandConfirmDelay, "command-confirm-delay", cfg.CommandConfirmDelay, "delayed status confirmation after commands")
+	fs.DurationVar(&cfg.EventHeartbeat, "event-heartbeat", cfg.EventHeartbeat, "maximum interval between unchanged observation/error events")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}

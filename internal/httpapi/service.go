@@ -20,15 +20,30 @@ type Service struct {
 	startedAt            time.Time
 	observationRetention time.Duration
 	eventRetention       time.Duration
+	eventHeartbeat       time.Duration
+	commandConfirmDelay  time.Duration
+	refreshRequests      chan time.Duration
 	commandMu            sync.Mutex
+	statusEventMu        sync.Mutex
+	lastStatusEventAt    time.Time
+	lastStatusError      string
+	lastStatusErrorAt    time.Time
 }
 
 type ServiceConfig struct {
 	ObservationRetention time.Duration
 	EventRetention       time.Duration
+	EventHeartbeat       time.Duration
+	CommandConfirmDelay  time.Duration
 }
 
 func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Scheduler, cfg ServiceConfig) *Service {
+	if cfg.EventHeartbeat <= 0 {
+		cfg.EventHeartbeat = 30 * time.Minute
+	}
+	if cfg.CommandConfirmDelay <= 0 {
+		cfg.CommandConfirmDelay = 10 * time.Second
+	}
 	return &Service{
 		store:                st,
 		client:               client,
@@ -36,7 +51,14 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		startedAt:            time.Now().UTC(),
 		observationRetention: cfg.ObservationRetention,
 		eventRetention:       cfg.EventRetention,
+		eventHeartbeat:       cfg.EventHeartbeat,
+		commandConfirmDelay:  cfg.CommandConfirmDelay,
+		refreshRequests:      make(chan time.Duration, 16),
 	}
+}
+
+func (s *Service) RefreshRequests() <-chan time.Duration {
+	return s.refreshRequests
 }
 
 func (s *Service) Health(ctx context.Context) pool.Health {
@@ -63,9 +85,13 @@ func (s *Service) Health(ctx context.Context) pool.Health {
 }
 
 func (s *Service) RefreshStatus(ctx context.Context) (pool.Status, error) {
+	previous, previousOK, err := s.store.LatestStatus(ctx)
+	if err != nil {
+		return pool.Status{}, err
+	}
 	status, err := s.client.Status(ctx)
 	if err != nil {
-		_, _ = s.store.AddEvent(ctx, "status_error", "status refresh failed", map[string]string{"error": err.Error()})
+		s.recordStatusError(ctx, err)
 		return pool.Status{}, err
 	}
 	if status.ObservedAt.IsZero() {
@@ -75,7 +101,7 @@ func (s *Service) RefreshStatus(ctx context.Context) (pool.Status, error) {
 	if _, err := s.store.SaveObservation(ctx, status); err != nil {
 		return pool.Status{}, err
 	}
-	_, _ = s.store.AddEvent(ctx, "observation", "status refreshed", status)
+	s.recordObservationEvent(ctx, previous, previousOK, status)
 	_ = s.store.Prune(ctx, s.observationRetention, s.eventRetention)
 	_ = s.Enforce(ctx, status)
 	return status, nil
@@ -130,6 +156,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, request pool.CommandReques
 		return record, err
 	}
 	_, _ = s.store.AddEvent(ctx, "command", "command completed", record)
+	s.requestRefreshAfter(s.commandConfirmDelay)
 	_ = s.store.Prune(ctx, s.observationRetention, s.eventRetention)
 	return record, nil
 }
@@ -143,6 +170,7 @@ func (s *Service) SaveDesiredState(ctx context.Context, desired pool.DesiredStat
 		return err
 	}
 	_, _ = s.store.AddEvent(ctx, "desired_state", "desired state updated", desired)
+	s.requestRefreshAfter(0)
 	return nil
 }
 
@@ -155,6 +183,7 @@ func (s *Service) SavePlans(ctx context.Context, plans []pool.Plan) error {
 		return err
 	}
 	_, _ = s.store.AddEvent(ctx, "plans", "plans updated", map[string]int{"count": len(plans)})
+	s.requestRefreshAfter(0)
 	return nil
 }
 
@@ -205,6 +234,90 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 		_, _ = s.store.AddEvent(ctx, "scheduler", "desired state enforced", evaluation)
 	}
 	return nil
+}
+
+func (s *Service) NextScheduleWake(ctx context.Context, now time.Time, status pool.Status) (time.Time, bool, error) {
+	plans, err := s.store.Plans(ctx)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	wake, ok := s.scheduler.NextWake(now, status, plans)
+	return wake, ok, nil
+}
+
+func (s *Service) requestRefreshAfter(delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	select {
+	case s.refreshRequests <- delay:
+	default:
+	}
+}
+
+func (s *Service) recordObservationEvent(ctx context.Context, previous pool.Status, previousOK bool, status pool.Status) {
+	now := time.Now().UTC()
+	s.statusEventMu.Lock()
+	hadError := s.lastStatusError != ""
+	heartbeatDue := s.lastStatusEventAt.IsZero() || now.Sub(s.lastStatusEventAt) >= s.eventHeartbeat
+	changed := !previousOK || statusMeaningfullyChanged(previous, status)
+	shouldRecord := changed || hadError || heartbeatDue
+	if shouldRecord {
+		s.lastStatusEventAt = now
+	}
+	s.lastStatusError = ""
+	s.lastStatusErrorAt = time.Time{}
+	s.statusEventMu.Unlock()
+
+	if !shouldRecord {
+		return
+	}
+	message := "status refreshed"
+	if !changed && !hadError {
+		message = "status heartbeat"
+	}
+	_, _ = s.store.AddEvent(ctx, "observation", message, status)
+}
+
+func (s *Service) recordStatusError(ctx context.Context, err error) {
+	now := time.Now().UTC()
+	errText := err.Error()
+
+	s.statusEventMu.Lock()
+	heartbeatDue := s.lastStatusErrorAt.IsZero() || now.Sub(s.lastStatusErrorAt) >= s.eventHeartbeat
+	shouldRecord := s.lastStatusError != errText || heartbeatDue
+	if shouldRecord {
+		s.lastStatusError = errText
+		s.lastStatusErrorAt = now
+	}
+	s.statusEventMu.Unlock()
+
+	if shouldRecord {
+		_, _ = s.store.AddEvent(ctx, "status_error", "status refresh failed", map[string]string{"error": errText})
+	}
+}
+
+func statusMeaningfullyChanged(a, b pool.Status) bool {
+	if a.Connected != b.Connected ||
+		a.Power != b.Power ||
+		a.Filter != b.Filter ||
+		a.Heater != b.Heater ||
+		a.Jets != b.Jets ||
+		a.Bubbles != b.Bubbles ||
+		a.Sanitizer != b.Sanitizer ||
+		a.TargetTemp != b.TargetTemp ||
+		a.Unit != b.Unit ||
+		a.ErrorCode != b.ErrorCode {
+		return true
+	}
+	return intPointerValue(a.CurrentTemp) != intPointerValue(b.CurrentTemp)
+}
+
+func intPointerValue(value *int) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *value)
 }
 
 type commandDiff struct {

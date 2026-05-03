@@ -31,6 +31,18 @@ Set these in the environment or with `poold` flags:
 - `POOLD_TIMEZONE`
 - `POOLD_HEATING_RATE_C_PER_HOUR`
 - `POOLD_READINESS_BUFFER`
+- `POOLD_POLL_STARTUP_INTERVAL` default `10s`
+- `POOLD_POLL_IDLE_INTERVAL` default `10m`
+- `POOLD_POLL_STABLE_INTERVAL` default `5m`
+- `POOLD_POLL_ACTIVE_INTERVAL` default `1m`
+- `POOLD_POLL_ERROR_MIN_INTERVAL` default `30s`
+- `POOLD_POLL_ERROR_MAX_INTERVAL` default `5m`
+- `POOLD_COMMAND_CONFIRM_DELAY` default `10s`
+- `POOLD_EVENT_HEARTBEAT` default `30m`
+
+`POOLD_POLL_INTERVAL` is still accepted as a compatibility alias for the stable interval. `poold` wakes immediately for desired-state or plan updates, confirms commands after `POOLD_COMMAND_CONFIRM_DELAY`, and caps sleep at the next known plan boundary.
+
+`poolctl watch` prints compact event lines by default. Use `poolctl watch --json` to see the full event JSON stream.
 
 ## Builds
 

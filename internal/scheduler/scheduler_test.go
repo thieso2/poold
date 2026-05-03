@@ -30,6 +30,30 @@ func TestDailyFilterWindow(t *testing.T) {
 	}
 }
 
+func TestOvernightWindowUsesStartDay(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	plan := pool.Plan{
+		ID:         "filter",
+		Type:       pool.PlanTimeWindow,
+		Enabled:    true,
+		Capability: "filter",
+		From:       "23:00",
+		To:         "01:00",
+		Days:       []string{"mon"},
+	}
+
+	on := s.Evaluate(at(loc, 2026, 5, 5, 0, 30), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
+	if on.Desired.Filter == nil || !*on.Desired.Filter {
+		t.Fatalf("filter should stay on after midnight for Monday window: %+v", on)
+	}
+
+	off := s.Evaluate(at(loc, 2026, 5, 6, 0, 30), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
+	if off.Desired.Filter == nil || *off.Desired.Filter {
+		t.Fatalf("filter should be off when previous day was not included: %+v", off)
+	}
+}
+
 func TestReadyByHeatingStartCalculation(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
@@ -108,6 +132,65 @@ func TestExpiredOverrideFallsThrough(t *testing.T) {
 	}
 	if eval.Desired.Filter == nil || *eval.Desired.Filter {
 		t.Fatalf("default desired state not used: %+v", eval)
+	}
+}
+
+func TestNextWakeTimeWindow(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	plan := pool.Plan{
+		ID:         "filter",
+		Type:       pool.PlanTimeWindow,
+		Enabled:    true,
+		Capability: "filter",
+		From:       "02:00",
+		To:         "04:00",
+	}
+
+	wake, ok := s.NextWake(at(loc, 2026, 5, 4, 1, 0), pool.Status{}, []pool.Plan{plan})
+	if !ok || !wake.Equal(at(loc, 2026, 5, 4, 2, 0)) {
+		t.Fatalf("wake = %s ok=%v, want 02:00", wake, ok)
+	}
+
+	wake, ok = s.NextWake(at(loc, 2026, 5, 4, 2, 30), pool.Status{}, []pool.Plan{plan})
+	if !ok || !wake.Equal(at(loc, 2026, 5, 4, 4, 0)) {
+		t.Fatalf("wake = %s ok=%v, want 04:00", wake, ok)
+	}
+}
+
+func TestNextWakeReadyBy(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 0.75, ReadinessBuffer: 30 * time.Minute})
+	current := 30
+	readyAt := at(loc, 2026, 5, 9, 8, 30)
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		At:         &readyAt,
+	}
+
+	wake, ok := s.NextWake(at(loc, 2026, 5, 8, 23, 0), pool.Status{CurrentTemp: &current}, []pool.Plan{plan})
+	if !ok || !wake.Equal(at(loc, 2026, 5, 9, 0, 0)) {
+		t.Fatalf("wake = %s ok=%v, want heating start", wake, ok)
+	}
+}
+
+func TestNextWakeManualOverrideExpiry(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	expiresAt := at(loc, 2026, 5, 3, 12, 30)
+	plan := pool.Plan{
+		ID:        "override",
+		Type:      pool.PlanManualOverride,
+		Enabled:   true,
+		ExpiresAt: &expiresAt,
+	}
+
+	wake, ok := s.NextWake(at(loc, 2026, 5, 3, 12, 0), pool.Status{}, []pool.Plan{plan})
+	if !ok || !wake.Equal(expiresAt) {
+		t.Fatalf("wake = %s ok=%v, want override expiry", wake, ok)
 	}
 }
 

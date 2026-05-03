@@ -73,11 +73,46 @@ func (s *Scheduler) Evaluate(now time.Time, status pool.Status, base pool.Desire
 	return Evaluation{Desired: base, Source: "default", Reason: "default desired state"}
 }
 
+func (s *Scheduler) NextWake(now time.Time, status pool.Status, plans []pool.Plan) (time.Time, bool) {
+	now = now.In(s.config.Location)
+	var next time.Time
+	ok := false
+	add := func(t time.Time) {
+		t = t.In(s.config.Location)
+		if !t.After(now) {
+			return
+		}
+		if !ok || t.Before(next) {
+			next = t
+			ok = true
+		}
+	}
+
+	for _, plan := range plans {
+		if !plan.Enabled {
+			continue
+		}
+		switch plan.Type {
+		case pool.PlanManualOverride:
+			if plan.ExpiresAt != nil {
+				add(*plan.ExpiresAt)
+			}
+		case pool.PlanReadyBy:
+			if startAt, readyAt, ok := s.readyByTimes(status, plan); ok {
+				add(startAt)
+				add(readyAt)
+			}
+		case pool.PlanTimeWindow:
+			s.addTimeWindowWakeTimes(now, plan, add)
+		}
+	}
+	return next, ok
+}
+
 func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool.DesiredState, plan pool.Plan) (pool.DesiredState, bool, string) {
 	if plan.TargetTemp == nil || plan.At == nil {
 		return base, false, ""
 	}
-	at := plan.At.In(s.config.Location)
 	current := 0
 	if status.CurrentTemp != nil {
 		current = *status.CurrentTemp
@@ -90,8 +125,7 @@ func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool
 		return desired, true, "target temperature reached"
 	}
 
-	required := time.Duration((float64(*plan.TargetTemp-current) / s.config.HeatingRateCPerHour) * float64(time.Hour))
-	startAt := at.Add(-required).Add(-s.config.ReadinessBuffer)
+	startAt, _, _ := s.readyByTimes(status, plan)
 	if now.Before(startAt) {
 		return base, false, ""
 	}
@@ -99,6 +133,23 @@ func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool
 	desired.Filter = pool.BoolPtr(true)
 	desired.Heater = pool.BoolPtr(true)
 	return desired, true, fmt.Sprintf("ready-by heating window started at %s", startAt.Format(time.RFC3339))
+}
+
+func (s *Scheduler) readyByTimes(status pool.Status, plan pool.Plan) (time.Time, time.Time, bool) {
+	if plan.TargetTemp == nil || plan.At == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	at := plan.At.In(s.config.Location)
+	current := *plan.TargetTemp
+	if status.CurrentTemp != nil {
+		current = *status.CurrentTemp
+	}
+	delta := *plan.TargetTemp - current
+	if delta < 0 {
+		delta = 0
+	}
+	required := time.Duration((float64(delta) / s.config.HeatingRateCPerHour) * float64(time.Hour))
+	return at.Add(-required).Add(-s.config.ReadinessBuffer), at, true
 }
 
 func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, plans []pool.Plan) (pool.DesiredState, bool, string) {
@@ -128,9 +179,6 @@ func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, p
 
 func timeWindowActive(now time.Time, plan pool.Plan, loc *time.Location) bool {
 	now = now.In(loc)
-	if len(plan.Days) > 0 && !dayIncluded(now.Weekday(), plan.Days) {
-		return false
-	}
 	from, err := pool.ParseClock(plan.From)
 	if err != nil {
 		return false
@@ -143,12 +191,65 @@ func timeWindowActive(now time.Time, plan pool.Plan, loc *time.Location) bool {
 	start := from.Minutes()
 	end := to.Minutes()
 	if start == end {
-		return true
+		return dayAllowed(now, plan.Days)
 	}
 	if start < end {
-		return current >= start && current < end
+		return dayAllowed(now, plan.Days) && current >= start && current < end
 	}
-	return current >= start || current < end
+	if current >= start {
+		return dayAllowed(now, plan.Days)
+	}
+	return current < end && dayAllowed(now.AddDate(0, 0, -1), plan.Days)
+}
+
+func (s *Scheduler) addTimeWindowWakeTimes(now time.Time, plan pool.Plan, add func(time.Time)) {
+	from, err := pool.ParseClock(plan.From)
+	if err != nil {
+		return
+	}
+	to, err := pool.ParseClock(plan.To)
+	if err != nil {
+		return
+	}
+	if from.Minutes() == to.Minutes() {
+		return
+	}
+
+	loc := s.config.Location
+	today := midnight(now.In(loc), loc)
+	for offset := 0; offset <= 8; offset++ {
+		day := today.AddDate(0, 0, offset)
+		if dayAllowed(day, plan.Days) {
+			start := clockTime(day, from, loc)
+			endDay := day
+			if to.Minutes() <= from.Minutes() {
+				endDay = endDay.AddDate(0, 0, 1)
+			}
+			add(start)
+			add(clockTime(endDay, to, loc))
+		}
+	}
+
+	if to.Minutes() < from.Minutes() {
+		previousDay := today.AddDate(0, 0, -1)
+		if dayAllowed(previousDay, plan.Days) {
+			add(clockTime(today, to, loc))
+		}
+	}
+}
+
+func midnight(t time.Time, loc *time.Location) time.Time {
+	t = t.In(loc)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+}
+
+func clockTime(day time.Time, clock pool.Clock, loc *time.Location) time.Time {
+	day = day.In(loc)
+	return time.Date(day.Year(), day.Month(), day.Day(), clock.Hour, clock.Minute, 0, 0, loc)
+}
+
+func dayAllowed(day time.Time, days []string) bool {
+	return len(days) == 0 || dayIncluded(day.Weekday(), days)
 }
 
 func dayIncluded(weekday time.Weekday, days []string) bool {

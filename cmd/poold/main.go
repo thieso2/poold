@@ -12,6 +12,7 @@ import (
 
 	"pooly/services/poold/internal/config"
 	"pooly/services/poold/internal/httpapi"
+	"pooly/services/poold/internal/pool"
 	"pooly/services/poold/internal/protocol/intex"
 	"pooly/services/poold/internal/scheduler"
 	"pooly/services/poold/internal/store"
@@ -41,6 +42,8 @@ func main() {
 	service := httpapi.NewService(st, poolClient, sched, httpapi.ServiceConfig{
 		ObservationRetention: cfg.ObservationRetention,
 		EventRetention:       cfg.EventRetention,
+		EventHeartbeat:       cfg.EventHeartbeat,
+		CommandConfirmDelay:  cfg.CommandConfirmDelay,
 	})
 
 	server := &http.Server{
@@ -49,7 +52,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	go poll(ctx, cfg.PollInterval, service)
+	go poll(ctx, cfg, service)
 
 	go func() {
 		log.Printf("poold listening on %s, pool=%s, db=%s", cfg.ListenAddr, cfg.PoolAddr, cfg.DatabasePath)
@@ -66,21 +69,124 @@ func main() {
 	}
 }
 
-func poll(ctx context.Context, interval time.Duration, service *httpapi.Service) {
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+func poll(ctx context.Context, cfg config.Config, service *httpapi.Service) {
+	poller := newAdaptivePoller(cfg)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	nextDue := time.Now()
 
 	for {
-		if _, err := service.RefreshStatus(ctx); err != nil {
-			log.Printf("status refresh: %v", err)
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case delay := <-service.RefreshRequests():
+			if delay < 0 {
+				delay = 0
+			}
+			due := time.Now().Add(delay)
+			if !due.Before(nextDue) && delay != 0 {
+				continue
+			}
+			resetTimer(timer, delay)
+			nextDue = due
+		case <-timer.C:
+			status, err := service.RefreshStatus(ctx)
+			if err != nil {
+				log.Printf("status refresh: %v", err)
+			}
+			interval := poller.Next(status, err)
+			if err == nil {
+				now := time.Now()
+				wake, ok, wakeErr := service.NextScheduleWake(ctx, now, status)
+				if wakeErr != nil {
+					log.Printf("next schedule wake: %v", wakeErr)
+				} else if ok {
+					untilWake := time.Until(wake)
+					if untilWake < 0 {
+						untilWake = 0
+					}
+					if untilWake < interval {
+						interval = untilWake
+					}
+				}
+			}
+			nextDue = time.Now().Add(interval)
+			resetTimer(timer, interval)
 		}
 	}
+}
+
+type adaptivePoller struct {
+	startupInterval  time.Duration
+	idleInterval     time.Duration
+	stableInterval   time.Duration
+	activeInterval   time.Duration
+	errorMinInterval time.Duration
+	errorMaxInterval time.Duration
+	hadSuccess       bool
+	errorCount       int
+}
+
+func newAdaptivePoller(cfg config.Config) *adaptivePoller {
+	return &adaptivePoller{
+		startupInterval:  durationDefault(cfg.PollStartupInterval, 10*time.Second),
+		idleInterval:     durationDefault(cfg.PollIdleInterval, 10*time.Minute),
+		stableInterval:   durationDefault(cfg.PollStableInterval, 5*time.Minute),
+		activeInterval:   durationDefault(cfg.PollActiveInterval, time.Minute),
+		errorMinInterval: durationDefault(cfg.PollErrorMinInterval, 30*time.Second),
+		errorMaxInterval: durationDefault(cfg.PollErrorMaxInterval, 5*time.Minute),
+	}
+}
+
+func (p *adaptivePoller) Next(status pool.Status, err error) time.Duration {
+	if err != nil {
+		if !p.hadSuccess {
+			return p.startupInterval
+		}
+		p.errorCount++
+		return cappedBackoff(p.errorMinInterval, p.errorMaxInterval, p.errorCount)
+	}
+	p.hadSuccess = true
+	p.errorCount = 0
+	if !status.Power {
+		return p.idleInterval
+	}
+	if status.Filter || status.Heater || status.Jets || status.Bubbles || status.Sanitizer {
+		return p.activeInterval
+	}
+	return p.stableInterval
+}
+
+func cappedBackoff(minInterval, maxInterval time.Duration, failures int) time.Duration {
+	if failures <= 1 {
+		return minInterval
+	}
+	interval := minInterval
+	for i := 1; i < failures; i++ {
+		interval *= 2
+		if interval >= maxInterval {
+			return maxInterval
+		}
+	}
+	return interval
+}
+
+func durationDefault(value, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func resetTimer(timer *time.Timer, delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(delay)
 }
