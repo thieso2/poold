@@ -44,6 +44,9 @@ func TestWebUIIsPublic(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "webui-manual") {
 		t.Fatal("manual control plan id missing")
 	}
+	if !strings.Contains(rec.Body.String(), "Make permanent") {
+		t.Fatal("manual permanent action missing")
+	}
 	if strings.Contains(rec.Body.String(), "Desired State") || strings.Contains(rec.Body.String(), "Set Temperature") {
 		t.Fatal("legacy desired/direct controls should not be visible")
 	}

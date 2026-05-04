@@ -285,7 +285,7 @@ h3 {
 }
 .manual-actions {
   display: none;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 .manual-strip.active .manual-actions {
@@ -549,6 +549,7 @@ h3 {
         <div class="manual-actions">
           <button id="manualMinus">-30m</button>
           <button id="manualPlus">+30m</button>
+          <button class="primary" id="manualPermanent">Make permanent</button>
           <button class="danger" id="manualClear">Clear</button>
         </div>
       </div>
@@ -1003,6 +1004,26 @@ function clearManual() {
   updatePlans(state.plans.filter(function(plan) { return !isReservedManualPlan(plan); }), "Manual cleared");
 }
 
+function makeManualPermanent() {
+  var plan = activeManualPlan();
+  if (!plan) return;
+  var manualDesired = Object.assign({}, plan.desired_state || {});
+  if (!Object.keys(manualDesired).length) return;
+  runAction(function() {
+    return api("/desired-state").then(function(base) {
+      var desired = permanentDesired(base || {}, manualDesired);
+      return api("/desired-state", {method: "PUT", body: JSON.stringify(desired)}).then(function() {
+        return api("/plans", {method: "PUT", body: JSON.stringify({
+          plans: state.plans.filter(function(existing) { return !isReservedManualPlan(existing); })
+        })}).then(function(data) {
+          state.plans = data.plans || [];
+          state.manualDraft = null;
+        });
+      });
+    });
+  }, "Manual control made permanent");
+}
+
 function updateManualPlan(desired, expiresAt, message) {
   state.manualDraft = Object.assign({}, desired);
   var plan = {
@@ -1016,6 +1037,35 @@ function updateManualPlan(desired, expiresAt, message) {
   updatePlans(state.plans.filter(function(existing) {
     return !isReservedManualPlan(existing);
   }).concat([plan]), message || "Manual control saved");
+}
+
+function permanentDesired(base, manual) {
+  var desired = Object.assign({}, base || {}, manual || {});
+  if (manual.power === false) {
+    desired.filter = false;
+    desired.heater = false;
+    desired.jets = false;
+    desired.bubbles = false;
+    desired.sanitizer = false;
+  }
+  if (manual.filter === false) {
+    desired.heater = false;
+  }
+  if (desired.heater === true) {
+    desired.power = true;
+    desired.filter = true;
+  }
+  caps.forEach(function(cap) {
+    if (cap !== "power" && desired[cap] === true) desired.power = true;
+  });
+  if (desired.power === false) {
+    desired.filter = false;
+    desired.heater = false;
+    desired.jets = false;
+    desired.bubbles = false;
+    desired.sanitizer = false;
+  }
+  return desired;
 }
 
 function runAction(action, message) {
@@ -1172,6 +1222,7 @@ $("reloadPlans").onclick = function() {
 $("saveWeatherSettings").onclick = saveWeatherSettings;
 $("manualMinus").onclick = function() { adjustManual(-30); };
 $("manualPlus").onclick = function() { adjustManual(30); };
+$("manualPermanent").onclick = makeManualPermanent;
 $("manualClear").onclick = clearManual;
 $("tempInput").oninput = function() { scheduleManualTemp($("tempInput").value); };
 $("tempDown").onclick = function() {
