@@ -22,10 +22,10 @@ func TestFormatWatchEventObservation(t *testing.T) {
 }
 
 func TestFormatWatchObservation(t *testing.T) {
-	raw := `{"id":9,"status":{"observed_at":"2000-01-02T03:04:05Z","connected":true,"power":true,"filter":true,"heater":true,"jets":false,"bubbles":false,"sanitizer":false,"unit":"\u00b0C","current_temp":30,"preset_temp":36,"raw_data":"FFFF"}}`
+	raw := `{"id":9,"observation_count":3,"status":{"observed_at":"2000-01-02T03:04:05Z","connected":true,"power":true,"filter":true,"heater":true,"jets":false,"bubbles":false,"sanitizer":false,"unit":"\u00b0C","current_temp":30,"preset_temp":36,"raw_data":"FFFF"}}`
 
 	got := formatWatchObservation(raw, time.UTC)
-	want := "2000-01-02 03:04:05  #9  POLL    30\u00b0C -> 36\u00b0C  power filter heater"
+	want := "2000-01-02 03:04:05  #9  POLL    30\u00b0C -> 36\u00b0C  power filter heater  span=3"
 	if got != want {
 		t.Fatalf("formatWatchObservation() = %q, want %q", got, want)
 	}
@@ -113,7 +113,7 @@ func TestReplayPollHistoryDefaultsToLastHour(t *testing.T) {
 		after := r.URL.Query().Get("after")
 		switch after {
 		case "0":
-			fmt.Fprint(w, `{"observations":[{"id":1,"status":{"observed_at":"2026-05-03T10:00:00Z"}},{"id":2,"status":{"observed_at":"2026-05-03T11:30:00Z"}}]}`)
+			fmt.Fprint(w, `{"observations":[{"id":1,"observation_count":1,"status":{"observed_at":"2026-05-03T10:00:00Z"}},{"id":2,"observation_count":4,"status":{"observed_at":"2026-05-03T11:30:00Z"}}]}`)
 		case "2":
 			fmt.Fprint(w, `{"observations":[]}`)
 		default:
@@ -131,8 +131,8 @@ func TestReplayPollHistoryDefaultsToLastHour(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 2 {
-		t.Fatalf("after = %d, want latest observation id 2", got)
+	if got.ID != 2 || got.Count != 4 {
+		t.Fatalf("cursor = %+v, want latest observation id 2 count 4", got)
 	}
 	if len(emitted) != 1 || emitted[0] != 2 {
 		t.Fatalf("emitted = %+v, want only last-hour observation 2", emitted)

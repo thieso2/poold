@@ -929,7 +929,7 @@ function renderActivity() {
     var item = document.createElement("div");
     item.className = "activity";
     if (state.activityView === "polls") {
-      item.innerHTML = "<time>" + formatTime(row.status.observed_at) + "</time><div><strong>Poll #" + row.id + "</strong><span>" + tempLine(row.status) + " · " + activeCaps(row.status).map(title).join(", ") + "</span></div>";
+      item.innerHTML = "<time>" + formatTime(row.last_observed_at || row.status.observed_at) + "</time><div><strong>Span #" + row.id + "</strong><span>" + tempLine(row.status) + " · " + (row.observation_count || 1) + " polls · " + activeCaps(row.status).map(title).join(", ") + "</span></div>";
     } else {
       item.innerHTML = "<time>" + formatTime(row.created_at) + "</time><div><strong>" + title(row.type) + " #" + row.id + "</strong><span>" + eventLine(row) + "</span></div>";
     }

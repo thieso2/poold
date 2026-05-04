@@ -146,6 +146,8 @@ The control tiles create a temporary manual-override plan named `webui-manual` w
 
 Weather settings are stored locally in SQLite. When configured, `poold` resolves the pool location through OpenWeatherMap geocoding, polls current weather every 5 minutes, and stores the complete JSON response for future heating/cooling analysis.
 
+Pool observations are stored as spans. Repeated identical pool states extend the latest row by updating `last_observed_at` and `observation_count`; a new row is inserted only when the meaningful state changes. Each span can also carry a compact weather snapshot linked to the latest fresh weather observation.
+
 ## CLI
 
 ```sh

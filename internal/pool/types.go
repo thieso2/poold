@@ -246,8 +246,12 @@ type Event struct {
 }
 
 type Observation struct {
-	ID     int64  `json:"id"`
-	Status Status `json:"status"`
+	ID               int64            `json:"id"`
+	FirstObservedAt  time.Time        `json:"first_observed_at"`
+	LastObservedAt   time.Time        `json:"last_observed_at"`
+	ObservationCount int              `json:"observation_count"`
+	Status           Status           `json:"status"`
+	Weather          *WeatherSnapshot `json:"weather,omitempty"`
 }
 
 type Health struct {
@@ -286,4 +290,14 @@ type WeatherObservation struct {
 	ObservedAt time.Time       `json:"observed_at"`
 	Location   WeatherLocation `json:"location"`
 	Data       json.RawMessage `json:"data"`
+}
+
+type WeatherSnapshot struct {
+	ObservationID     int64    `json:"observation_id"`
+	OutsideTempC      *float64 `json:"outside_temp_c,omitempty"`
+	CloudsPercent     *int     `json:"clouds_percent,omitempty"`
+	Main              string   `json:"main,omitempty"`
+	Description       string   `json:"description,omitempty"`
+	WindSpeed         *float64 `json:"wind_speed,omitempty"`
+	WeatherAgeSeconds int64    `json:"weather_age_seconds"`
 }

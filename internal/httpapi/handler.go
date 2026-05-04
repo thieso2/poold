@@ -158,11 +158,18 @@ func (a *API) handleObservationStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	afterCount, _ := strconv.Atoi(r.URL.Query().Get("after_count"))
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	emit := func(observation pool.Observation) {
+		body, _ := json.Marshal(observation)
+		fmt.Fprintf(w, "id: %d\nevent: observation\ndata: %s\n\n", observation.ID, body)
+		after = observation.ID
+		afterCount = observation.ObservationCount
+	}
 
 	for {
 		observations, err := a.service.Observations(r.Context(), after, 100)
@@ -172,9 +179,18 @@ func (a *API) handleObservationStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, observation := range observations {
-			body, _ := json.Marshal(observation)
-			fmt.Fprintf(w, "id: %d\nevent: observation\ndata: %s\n\n", observation.ID, body)
-			after = observation.ID
+			emit(observation)
+		}
+		if len(observations) == 0 && after > 0 {
+			latest, err := a.service.LatestObservations(r.Context(), 1)
+			if err != nil {
+				fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+				flusher.Flush()
+				return
+			}
+			if len(latest) == 1 && latest[0].ID == after && latest[0].ObservationCount > afterCount {
+				emit(latest[0])
+			}
 		}
 		flusher.Flush()
 		select {

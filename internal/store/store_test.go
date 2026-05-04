@@ -25,18 +25,33 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	repeated := status
+	repeated.ObservedAt = status.ObservedAt.Add(time.Minute)
+	repeatedID, err := st.SaveObservation(ctx, repeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatedID != observationID {
+		t.Fatalf("repeated observation id = %d, want span id %d", repeatedID, observationID)
+	}
 	latest, ok, err := st.LatestStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || latest.CurrentTemp == nil || *latest.CurrentTemp != 32 {
+	if !ok || latest.CurrentTemp == nil || *latest.CurrentTemp != 32 || !latest.ObservedAt.Equal(repeated.ObservedAt) {
 		t.Fatalf("latest = %+v, ok=%v", latest, ok)
 	}
 	observations, err := st.Observations(ctx, observationID-1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(observations) != 1 || observations[0].ID != observationID || observations[0].Status.CurrentTemp == nil || *observations[0].Status.CurrentTemp != 32 {
+	if len(observations) != 1 ||
+		observations[0].ID != observationID ||
+		observations[0].ObservationCount != 2 ||
+		!observations[0].FirstObservedAt.Equal(status.ObservedAt) ||
+		!observations[0].LastObservedAt.Equal(repeated.ObservedAt) ||
+		observations[0].Status.CurrentTemp == nil ||
+		*observations[0].Status.CurrentTemp != 32 {
 		t.Fatalf("observations = %+v", observations)
 	}
 	latestObservations, err := st.LatestObservations(ctx, 1)
@@ -130,6 +145,19 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	}
 	if !ok || latestWeather.ID != weatherID || latestWeather.Location.Name != "Berlin" || len(latestWeather.Data) == 0 {
 		t.Fatalf("latest weather = %+v ok=%v", latestWeather, ok)
+	}
+	weatherStatus := status
+	weatherStatus.ObservedAt = status.ObservedAt.Add(2 * time.Minute)
+	weatherStatus.CurrentTemp = pool.IntPtr(33)
+	if _, err := st.SaveObservation(ctx, weatherStatus); err != nil {
+		t.Fatal(err)
+	}
+	latestObservations, err = st.LatestObservations(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latestObservations) != 1 || latestObservations[0].Weather == nil || latestObservations[0].Weather.ObservationID != weatherID {
+		t.Fatalf("weather snapshot not attached to observation: %+v", latestObservations)
 	}
 }
 

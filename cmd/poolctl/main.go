@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -288,6 +289,11 @@ type watchOptions struct {
 	History   time.Duration
 }
 
+type observationCursor struct {
+	ID    int64
+	Count int
+}
+
 func (c client) watch(options watchOptions) error {
 	if options.AllPolls {
 		return c.watchPolls(options)
@@ -341,7 +347,7 @@ func (c client) watchEvents(options watchOptions) error {
 
 func (c client) watchPolls(options watchOptions) error {
 	location := poolctlLocation()
-	after, err := c.replayPollHistory(options, time.Now(), func(observation pool.Observation) error {
+	cursor, err := c.replayPollHistory(options, time.Now(), func(observation pool.Observation) error {
 		printWatchObservation(observation, options, location)
 		return nil
 	})
@@ -352,8 +358,13 @@ func (c client) watchPolls(options watchOptions) error {
 		return err
 	}
 	path := "/observations/stream"
-	if after > 0 {
-		path += "?after=" + strconv.FormatInt(after, 10)
+	if cursor.ID > 0 {
+		values := url.Values{}
+		values.Set("after", strconv.FormatInt(cursor.ID, 10))
+		if cursor.Count > 0 {
+			values.Set("after_count", strconv.Itoa(cursor.Count))
+		}
+		path += "?" + values.Encode()
 	}
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -416,7 +427,7 @@ func (c client) replayWatchHistory(options watchOptions, now time.Time, emit fun
 	}, emit)
 }
 
-func (c client) replayPollHistory(options watchOptions, now time.Time, emit func(pool.Observation) error) (int64, error) {
+func (c client) replayPollHistory(options watchOptions, now time.Time, emit func(pool.Observation) error) (observationCursor, error) {
 	if options.After >= 0 {
 		return c.replayPollsAfter(options.After, func(observation pool.Observation) bool {
 			return true
@@ -468,32 +479,33 @@ func (c client) replayEventsAfter(after int64, include func(pool.Event) bool, em
 	}
 }
 
-func (c client) replayPollsAfter(after int64, include func(pool.Observation) bool, emit func(pool.Observation) error) (int64, error) {
+func (c client) replayPollsAfter(after int64, include func(pool.Observation) bool, emit func(pool.Observation) error) (observationCursor, error) {
 	if after < 0 {
 		after = 0
 	}
-	lastSeen := after
+	cursor := observationCursor{ID: after}
 	for {
 		var response struct {
 			Observations []pool.Observation `json:"observations"`
 		}
-		path := fmt.Sprintf("/observations?after=%d&limit=500", lastSeen)
+		path := fmt.Sprintf("/observations?after=%d&limit=500", cursor.ID)
 		if err := c.doJSON(http.MethodGet, path, nil, &response); err != nil {
-			return 0, err
+			return observationCursor{}, err
 		}
 		if len(response.Observations) == 0 {
-			return lastSeen, nil
+			return cursor, nil
 		}
 		for _, observation := range response.Observations {
-			lastSeen = observation.ID
+			cursor.ID = observation.ID
+			cursor.Count = observation.ObservationCount
 			if include(observation) {
 				if err := emit(observation); err != nil {
-					return 0, err
+					return observationCursor{}, err
 				}
 			}
 		}
 		if len(response.Observations) < 500 {
-			return lastSeen, nil
+			return cursor, nil
 		}
 	}
 }
@@ -569,11 +581,16 @@ func formatWatchObservation(raw string, location *time.Location) string {
 		return raw
 	}
 	prefix := fmt.Sprintf("%s  #%d", formatEventTime(observation.Status.ObservedAt, location), observation.ID)
+	span := ""
+	if observation.ObservationCount > 1 {
+		span = fmt.Sprintf("  span=%d", observation.ObservationCount)
+	}
 	return fmt.Sprintf(
-		"%s  POLL    %s  %s",
+		"%s  POLL    %s  %s%s",
 		prefix,
 		formatTemperature(observation.Status),
 		formatEquipment(observation.Status),
+		span,
 	)
 }
 

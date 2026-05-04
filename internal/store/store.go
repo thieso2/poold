@@ -19,6 +19,18 @@ type Store struct {
 	db *sql.DB
 }
 
+const weatherSnapshotMaxAge = 15 * time.Minute
+
+type compactObservationRow struct {
+	id     int64
+	first  string
+	last   string
+	count  int
+	body   []byte
+	status pool.Status
+	dirty  bool
+}
+
 func Open(ctx context.Context, path string) (*Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("database path is required")
@@ -57,19 +69,103 @@ func (s *Store) SaveObservation(ctx context.Context, status pool.Status) (int64,
 	if err != nil {
 		return 0, err
 	}
-	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO observations (observed_at, status_json)
-		VALUES (?, ?)
-	`, encodeTime(status.ObservedAt), body)
+	weather := s.weatherSnapshot(ctx, status.ObservedAt)
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	defer tx.Rollback()
+
+	var latestID int64
+	var latestBody []byte
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, status_json
+		FROM observations
+		ORDER BY id DESC
+		LIMIT 1
+	`)
+	if err := row.Scan(&latestID, &latestBody); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if len(latestBody) > 0 {
+		var latest pool.Status
+		if err := json.Unmarshal(latestBody, &latest); err != nil {
+			return 0, err
+		}
+		if sameObservationState(latest, status) {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE observations
+				SET last_observed_at = ?,
+					observation_count = COALESCE(observation_count, 1) + 1,
+					status_json = ?,
+					connected = ?,
+					power = ?,
+					filter = ?,
+					heater = ?,
+					jets = ?,
+					bubbles = ?,
+					sanitizer = ?,
+					current_temp = ?,
+					target_temp = ?,
+					unit = ?,
+					error_code = ?,
+					raw_data = ?,
+					weather_observation_id = ?,
+					outside_temp_c = ?,
+					clouds_percent = ?,
+					weather_main = ?,
+					weather_description = ?,
+					wind_speed = ?,
+					weather_age_seconds = ?
+				WHERE id = ?
+			`, observationValues(status, body, weather, latestID, false)...); err != nil {
+				return 0, err
+			}
+			return latestID, tx.Commit()
+		}
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO observations (
+			observed_at,
+			last_observed_at,
+			observation_count,
+			status_json,
+			connected,
+			power,
+			filter,
+			heater,
+			jets,
+			bubbles,
+			sanitizer,
+			current_temp,
+			target_temp,
+			unit,
+			error_code,
+			raw_data,
+			weather_observation_id,
+			outside_temp_c,
+			clouds_percent,
+			weather_main,
+			weather_description,
+			wind_speed,
+			weather_age_seconds
+		) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, observationValues(status, body, weather, 0, true)...)
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT observed_at, status_json
+		SELECT COALESCE(last_observed_at, observed_at), status_json
 		FROM observations
 		ORDER BY id DESC
 		LIMIT 1
@@ -86,9 +182,7 @@ func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
 	if err := json.Unmarshal(body, &status); err != nil {
 		return pool.Status{}, false, err
 	}
-	if status.ObservedAt.IsZero() {
-		status.ObservedAt = decodeTime(observedAt)
-	}
+	status.ObservedAt = decodeTime(observedAt)
 	return status, true, nil
 }
 
@@ -97,7 +191,18 @@ func (s *Store) Observations(ctx context.Context, afterID int64, limit int) ([]p
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, observed_at, status_json
+		SELECT id,
+			observed_at,
+			COALESCE(last_observed_at, observed_at),
+			COALESCE(observation_count, 1),
+			status_json,
+			weather_observation_id,
+			outside_temp_c,
+			clouds_percent,
+			weather_main,
+			weather_description,
+			wind_speed,
+			weather_age_seconds
 		FROM observations
 		WHERE id > ?
 		ORDER BY id ASC
@@ -108,23 +213,7 @@ func (s *Store) Observations(ctx context.Context, afterID int64, limit int) ([]p
 	}
 	defer rows.Close()
 
-	var observations []pool.Observation
-	for rows.Next() {
-		var observation pool.Observation
-		var observedAt string
-		var body []byte
-		if err := rows.Scan(&observation.ID, &observedAt, &body); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(body, &observation.Status); err != nil {
-			return nil, err
-		}
-		if observation.Status.ObservedAt.IsZero() {
-			observation.Status.ObservedAt = decodeTime(observedAt)
-		}
-		observations = append(observations, observation)
-	}
-	return observations, rows.Err()
+	return scanObservations(rows)
 }
 
 func (s *Store) LatestObservations(ctx context.Context, limit int) ([]pool.Observation, error) {
@@ -132,7 +221,18 @@ func (s *Store) LatestObservations(ctx context.Context, limit int) ([]pool.Obser
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, observed_at, status_json
+		SELECT id,
+			observed_at,
+			COALESCE(last_observed_at, observed_at),
+			COALESCE(observation_count, 1),
+			status_json,
+			weather_observation_id,
+			outside_temp_c,
+			clouds_percent,
+			weather_main,
+			weather_description,
+			wind_speed,
+			weather_age_seconds
 		FROM observations
 		ORDER BY id DESC
 		LIMIT ?
@@ -142,23 +242,110 @@ func (s *Store) LatestObservations(ctx context.Context, limit int) ([]pool.Obser
 	}
 	defer rows.Close()
 
+	return scanObservations(rows)
+}
+
+func scanObservations(rows *sql.Rows) ([]pool.Observation, error) {
 	var observations []pool.Observation
 	for rows.Next() {
 		var observation pool.Observation
-		var observedAt string
+		var firstObservedAt, lastObservedAt string
 		var body []byte
-		if err := rows.Scan(&observation.ID, &observedAt, &body); err != nil {
+		var weatherID sql.NullInt64
+		var outsideTemp sql.NullFloat64
+		var clouds sql.NullInt64
+		var weatherMain sql.NullString
+		var weatherDescription sql.NullString
+		var windSpeed sql.NullFloat64
+		var weatherAgeSeconds sql.NullInt64
+		if err := rows.Scan(
+			&observation.ID,
+			&firstObservedAt,
+			&lastObservedAt,
+			&observation.ObservationCount,
+			&body,
+			&weatherID,
+			&outsideTemp,
+			&clouds,
+			&weatherMain,
+			&weatherDescription,
+			&windSpeed,
+			&weatherAgeSeconds,
+		); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(body, &observation.Status); err != nil {
 			return nil, err
 		}
-		if observation.Status.ObservedAt.IsZero() {
-			observation.Status.ObservedAt = decodeTime(observedAt)
+		observation.FirstObservedAt = decodeTime(firstObservedAt)
+		observation.LastObservedAt = decodeTime(lastObservedAt)
+		observation.Status.ObservedAt = observation.LastObservedAt
+		if observation.ObservationCount <= 0 {
+			observation.ObservationCount = 1
+		}
+		if weatherID.Valid {
+			observation.Weather = &pool.WeatherSnapshot{
+				ObservationID:     weatherID.Int64,
+				Main:              weatherMain.String,
+				Description:       weatherDescription.String,
+				WeatherAgeSeconds: weatherAgeSeconds.Int64,
+			}
+			if outsideTemp.Valid {
+				v := outsideTemp.Float64
+				observation.Weather.OutsideTempC = &v
+			}
+			if clouds.Valid {
+				v := int(clouds.Int64)
+				observation.Weather.CloudsPercent = &v
+			}
+			if windSpeed.Valid {
+				v := windSpeed.Float64
+				observation.Weather.WindSpeed = &v
+			}
 		}
 		observations = append(observations, observation)
 	}
 	return observations, rows.Err()
+}
+
+func observationValues(status pool.Status, body []byte, weather *pool.WeatherSnapshot, id int64, includeFirstObservedAt bool) []any {
+	values := []any{}
+	if includeFirstObservedAt {
+		values = append(values, encodeTime(status.ObservedAt))
+	}
+	values = append(values,
+		encodeTime(status.ObservedAt),
+		body,
+		boolInt(status.Connected),
+		boolInt(status.Power),
+		boolInt(status.Filter),
+		boolInt(status.Heater),
+		boolInt(status.Jets),
+		boolInt(status.Bubbles),
+		boolInt(status.Sanitizer),
+		intPtrValue(status.CurrentTemp),
+		status.TargetTemp,
+		nullString(status.Unit),
+		nullString(status.ErrorCode),
+		nullString(status.RawData),
+	)
+	if weather == nil {
+		values = append(values, nil, nil, nil, nil, nil, nil, nil)
+	} else {
+		values = append(values,
+			weather.ObservationID,
+			floatPtrValue(weather.OutsideTempC),
+			intPtrValueFromInt(weather.CloudsPercent),
+			nullString(weather.Main),
+			nullString(weather.Description),
+			floatPtrValue(weather.WindSpeed),
+			weather.WeatherAgeSeconds,
+		)
+	}
+	if id != 0 {
+		values = append(values, id)
+	}
+	return values
 }
 
 func (s *Store) AddEvent(ctx context.Context, typ, message string, data any) (pool.Event, error) {
@@ -327,6 +514,50 @@ func (s *Store) LatestWeatherObservation(ctx context.Context) (pool.WeatherObser
 	return observation, true, nil
 }
 
+func (s *Store) weatherSnapshot(ctx context.Context, observedAt time.Time) *pool.WeatherSnapshot {
+	weather, ok, err := s.LatestWeatherObservation(ctx)
+	if err != nil || !ok {
+		return nil
+	}
+	age := observedAt.Sub(weather.ObservedAt)
+	if age < 0 {
+		age = -age
+	}
+	if age > weatherSnapshotMaxAge {
+		return nil
+	}
+	var body struct {
+		Main struct {
+			Temp *float64 `json:"temp"`
+		} `json:"main"`
+		Weather []struct {
+			Main        string `json:"main"`
+			Description string `json:"description"`
+		} `json:"weather"`
+		Clouds struct {
+			All *int `json:"all"`
+		} `json:"clouds"`
+		Wind struct {
+			Speed *float64 `json:"speed"`
+		} `json:"wind"`
+	}
+	if err := json.Unmarshal(weather.Data, &body); err != nil {
+		return nil
+	}
+	snapshot := &pool.WeatherSnapshot{
+		ObservationID:     weather.ID,
+		OutsideTempC:      body.Main.Temp,
+		CloudsPercent:     body.Clouds.All,
+		WindSpeed:         body.Wind.Speed,
+		WeatherAgeSeconds: int64(age.Seconds()),
+	}
+	if len(body.Weather) > 0 {
+		snapshot.Main = body.Weather[0].Main
+		snapshot.Description = body.Weather[0].Description
+	}
+	return snapshot
+}
+
 func (s *Store) Plans(ctx context.Context) ([]pool.Plan, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT plan_json
@@ -443,7 +674,7 @@ func (s *Store) LastCommandAt(ctx context.Context) (*time.Time, error) {
 func (s *Store) Prune(ctx context.Context, observationRetention, eventRetention time.Duration) error {
 	now := time.Now().UTC()
 	if observationRetention > 0 {
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM observations WHERE observed_at < ?`, encodeTime(now.Add(-observationRetention))); err != nil {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM observations WHERE COALESCE(last_observed_at, observed_at) < ?`, encodeTime(now.Add(-observationRetention))); err != nil {
 			return err
 		}
 	}
@@ -463,7 +694,28 @@ func (s *Store) migrate(ctx context.Context) error {
 		CREATE TABLE IF NOT EXISTS observations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			observed_at TEXT NOT NULL,
-			status_json BLOB NOT NULL
+			last_observed_at TEXT,
+			observation_count INTEGER NOT NULL DEFAULT 1,
+			status_json BLOB NOT NULL,
+			connected INTEGER,
+			power INTEGER,
+			filter INTEGER,
+			heater INTEGER,
+			jets INTEGER,
+			bubbles INTEGER,
+			sanitizer INTEGER,
+			current_temp INTEGER,
+			target_temp INTEGER,
+			unit TEXT,
+			error_code TEXT,
+			raw_data TEXT,
+			weather_observation_id INTEGER,
+			outside_temp_c REAL,
+			clouds_percent INTEGER,
+			weather_main TEXT,
+			weather_description TEXT,
+			wind_speed REAL,
+			weather_age_seconds INTEGER
 		);
 		CREATE INDEX IF NOT EXISTS observations_observed_at_idx ON observations(observed_at);
 
@@ -510,7 +762,192 @@ func (s *Store) migrate(ctx context.Context) error {
 		);
 		CREATE INDEX IF NOT EXISTS weather_observations_observed_at_idx ON weather_observations(observed_at);
 	`)
+	if err != nil {
+		return err
+	}
+	if err := s.migrateObservationSpans(ctx); err != nil {
+		return err
+	}
+	return s.compactObservationSpans(ctx)
+}
+
+func (s *Store) migrateObservationSpans(ctx context.Context) error {
+	columns := map[string]string{
+		"last_observed_at":       "TEXT",
+		"observation_count":      "INTEGER NOT NULL DEFAULT 1",
+		"connected":              "INTEGER",
+		"power":                  "INTEGER",
+		"filter":                 "INTEGER",
+		"heater":                 "INTEGER",
+		"jets":                   "INTEGER",
+		"bubbles":                "INTEGER",
+		"sanitizer":              "INTEGER",
+		"current_temp":           "INTEGER",
+		"target_temp":            "INTEGER",
+		"unit":                   "TEXT",
+		"error_code":             "TEXT",
+		"raw_data":               "TEXT",
+		"weather_observation_id": "INTEGER",
+		"outside_temp_c":         "REAL",
+		"clouds_percent":         "INTEGER",
+		"weather_main":           "TEXT",
+		"weather_description":    "TEXT",
+		"wind_speed":             "REAL",
+		"weather_age_seconds":    "INTEGER",
+	}
+	for name, definition := range columns {
+		ok, err := s.columnExists(ctx, "observations", name)
+		if err != nil {
+			return err
+		}
+		if ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE observations ADD COLUMN %s %s`, name, definition)); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS observations_last_observed_at_idx ON observations(last_observed_at);
+		UPDATE observations
+		SET last_observed_at = COALESCE(last_observed_at, observed_at),
+			observation_count = COALESCE(observation_count, 1),
+			connected = COALESCE(connected, json_extract(status_json, '$.connected')),
+			power = COALESCE(power, json_extract(status_json, '$.power')),
+			filter = COALESCE(filter, json_extract(status_json, '$.filter')),
+			heater = COALESCE(heater, json_extract(status_json, '$.heater')),
+			jets = COALESCE(jets, json_extract(status_json, '$.jets')),
+			bubbles = COALESCE(bubbles, json_extract(status_json, '$.bubbles')),
+			sanitizer = COALESCE(sanitizer, json_extract(status_json, '$.sanitizer')),
+			current_temp = COALESCE(current_temp, json_extract(status_json, '$.current_temp')),
+			target_temp = COALESCE(target_temp, json_extract(status_json, '$.preset_temp')),
+			unit = COALESCE(unit, json_extract(status_json, '$.unit')),
+			error_code = COALESCE(error_code, json_extract(status_json, '$.error_code')),
+			raw_data = COALESCE(raw_data, json_extract(status_json, '$.raw_data'));
+	`)
 	return err
+}
+
+func (s *Store) compactObservationSpans(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, observed_at, COALESCE(last_observed_at, observed_at), COALESCE(observation_count, 1), status_json
+		FROM observations
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return err
+	}
+
+	var allRows []compactObservationRow
+	for rows.Next() {
+		current := compactObservationRow{}
+		if err := rows.Scan(&current.id, &current.first, &current.last, &current.count, &current.body); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := json.Unmarshal(current.body, &current.status); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if current.count <= 0 {
+			current.count = 1
+			current.dirty = true
+		}
+		allRows = append(allRows, current)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	var previous *compactObservationRow
+	var updates []compactObservationRow
+	var deleteIDs []int64
+	for _, current := range allRows {
+		if previous != nil && sameObservationState(previous.status, current.status) {
+			previous.last = current.last
+			previous.count += current.count
+			previous.body = current.body
+			previous.status = current.status
+			previous.dirty = true
+			deleteIDs = append(deleteIDs, current.id)
+			continue
+		}
+		if previous != nil && previous.dirty {
+			updates = append(updates, *previous)
+		}
+		currentCopy := current
+		previous = &currentCopy
+	}
+	if previous != nil && previous.dirty {
+		updates = append(updates, *previous)
+	}
+	if len(deleteIDs) == 0 && len(updates) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, update := range updates {
+		if err := updateCompactedObservationTx(ctx, tx, update); err != nil {
+			return err
+		}
+	}
+	for _, id := range deleteIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM observations WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func updateCompactedObservationTx(ctx context.Context, tx *sql.Tx, row compactObservationRow) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE observations
+		SET last_observed_at = ?,
+			observation_count = ?,
+			status_json = ?,
+			connected = ?,
+			power = ?,
+			filter = ?,
+			heater = ?,
+			jets = ?,
+			bubbles = ?,
+			sanitizer = ?,
+			current_temp = ?,
+			target_temp = ?,
+			unit = ?,
+			error_code = ?,
+			raw_data = ?
+		WHERE id = ?
+	`, row.last, row.count, row.body, boolInt(row.status.Connected), boolInt(row.status.Power), boolInt(row.status.Filter), boolInt(row.status.Heater), boolInt(row.status.Jets), boolInt(row.status.Bubbles), boolInt(row.status.Sanitizer), intPtrValue(row.status.CurrentTemp), row.status.TargetTemp, nullString(row.status.Unit), nullString(row.status.ErrorCode), nullString(row.status.RawData), row.id)
+	return err
+}
+
+func (s *Store) columnExists(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) getKV(ctx context.Context, key string) ([]byte, bool, error) {
@@ -561,6 +998,60 @@ func jsonBool(value *bool) any {
 	}
 	body, _ := json.Marshal(value)
 	return body
+}
+
+func sameObservationState(a, b pool.Status) bool {
+	if a.Connected != b.Connected ||
+		a.Power != b.Power ||
+		a.Filter != b.Filter ||
+		a.Heater != b.Heater ||
+		a.Jets != b.Jets ||
+		a.Bubbles != b.Bubbles ||
+		a.Sanitizer != b.Sanitizer ||
+		a.TargetTemp != b.TargetTemp ||
+		a.Unit != b.Unit ||
+		a.ErrorCode != b.ErrorCode {
+		return false
+	}
+	if a.CurrentTemp == nil || b.CurrentTemp == nil {
+		return a.CurrentTemp == nil && b.CurrentTemp == nil
+	}
+	return *a.CurrentTemp == *b.CurrentTemp
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func intPtrValue(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func intPtrValueFromInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func floatPtrValue(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func encodeTime(t time.Time) string {
