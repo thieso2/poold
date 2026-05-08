@@ -10,45 +10,47 @@ import (
 )
 
 type Config struct {
-	ListenAddr           string
-	PoolAddr             string
-	DatabasePath         string
-	Token                string
-	Location             *time.Location
-	HeatingRateCPerHour  float64
-	ReadinessBuffer      time.Duration
-	PollStartupInterval  time.Duration
-	PollIdleInterval     time.Duration
-	PollStableInterval   time.Duration
-	PollActiveInterval   time.Duration
-	PollErrorMinInterval time.Duration
-	PollErrorMaxInterval time.Duration
-	WeatherPollInterval  time.Duration
-	CommandConfirmDelay  time.Duration
-	EventHeartbeat       time.Duration
-	ObservationRetention time.Duration
-	EventRetention       time.Duration
+	ListenAddr               string
+	PoolAddr                 string
+	DatabasePath             string
+	Token                    string
+	Location                 *time.Location
+	HeatingRateCPerHour      float64
+	ReadinessBuffer          time.Duration
+	PollStartupInterval      time.Duration
+	PollIdleInterval         time.Duration
+	PollStableInterval       time.Duration
+	PollActiveInterval       time.Duration
+	PollErrorMinInterval     time.Duration
+	PollErrorMaxInterval     time.Duration
+	WeatherPollInterval      time.Duration
+	CommandConfirmDelay      time.Duration
+	EventHeartbeat           time.Duration
+	ObservationFlushInterval time.Duration
+	ObservationRetention     time.Duration
+	EventRetention           time.Duration
 }
 
 func Load(args []string) (Config, error) {
 	cfg := Config{
-		ListenAddr:           envString("POOLD_LISTEN_ADDR", "127.0.0.1:8090"),
-		PoolAddr:             envString("POOLD_POOL_ADDR", "127.0.0.1:8990"),
-		DatabasePath:         envString("POOLD_DB_PATH", defaultDBPath()),
-		Token:                envString("POOLD_TOKEN", "dev-token"),
-		HeatingRateCPerHour:  envFloat("POOLD_HEATING_RATE_C_PER_HOUR", 0.75),
-		ReadinessBuffer:      envDuration("POOLD_READINESS_BUFFER", 30*time.Minute),
-		PollStartupInterval:  envDuration("POOLD_POLL_STARTUP_INTERVAL", 10*time.Second),
-		PollIdleInterval:     envDuration("POOLD_POLL_IDLE_INTERVAL", 10*time.Minute),
-		PollStableInterval:   envDuration("POOLD_POLL_STABLE_INTERVAL", envDuration("POOLD_POLL_INTERVAL", 5*time.Minute)),
-		PollActiveInterval:   envDuration("POOLD_POLL_ACTIVE_INTERVAL", 1*time.Minute),
-		PollErrorMinInterval: envDuration("POOLD_POLL_ERROR_MIN_INTERVAL", 30*time.Second),
-		PollErrorMaxInterval: envDuration("POOLD_POLL_ERROR_MAX_INTERVAL", 5*time.Minute),
-		WeatherPollInterval:  envDuration("POOLD_WEATHER_POLL_INTERVAL", 5*time.Minute),
-		CommandConfirmDelay:  envDuration("POOLD_COMMAND_CONFIRM_DELAY", 10*time.Second),
-		EventHeartbeat:       envDuration("POOLD_EVENT_HEARTBEAT", 30*time.Minute),
-		ObservationRetention: envDuration("POOLD_OBSERVATION_RETENTION", 14*24*time.Hour),
-		EventRetention:       envDuration("POOLD_EVENT_RETENTION", 14*24*time.Hour),
+		ListenAddr:               envString("POOLD_LISTEN_ADDR", "127.0.0.1:8090"),
+		PoolAddr:                 envString("POOLD_POOL_ADDR", "127.0.0.1:8990"),
+		DatabasePath:             envString("POOLD_DB_PATH", defaultDBPath()),
+		Token:                    envString("POOLD_TOKEN", "dev-token"),
+		HeatingRateCPerHour:      envFloat("POOLD_HEATING_RATE_C_PER_HOUR", 0.75),
+		ReadinessBuffer:          envDuration("POOLD_READINESS_BUFFER", 30*time.Minute),
+		PollStartupInterval:      envDuration("POOLD_POLL_STARTUP_INTERVAL", 10*time.Second),
+		PollIdleInterval:         envDuration("POOLD_POLL_IDLE_INTERVAL", 10*time.Minute),
+		PollStableInterval:       envDuration("POOLD_POLL_STABLE_INTERVAL", envDuration("POOLD_POLL_INTERVAL", 5*time.Minute)),
+		PollActiveInterval:       envDuration("POOLD_POLL_ACTIVE_INTERVAL", 1*time.Minute),
+		PollErrorMinInterval:     envDuration("POOLD_POLL_ERROR_MIN_INTERVAL", 30*time.Second),
+		PollErrorMaxInterval:     envDuration("POOLD_POLL_ERROR_MAX_INTERVAL", 5*time.Minute),
+		WeatherPollInterval:      envDuration("POOLD_WEATHER_POLL_INTERVAL", 5*time.Minute),
+		CommandConfirmDelay:      envDuration("POOLD_COMMAND_CONFIRM_DELAY", 10*time.Second),
+		EventHeartbeat:           envDuration("POOLD_EVENT_HEARTBEAT", 30*time.Minute),
+		ObservationFlushInterval: envDuration("POOLD_OBSERVATION_FLUSH_INTERVAL", 15*time.Minute),
+		ObservationRetention:     envDuration("POOLD_OBSERVATION_RETENTION", 14*24*time.Hour),
+		EventRetention:           envDuration("POOLD_EVENT_RETENTION", 14*24*time.Hour),
 	}
 
 	locationName := envString("POOLD_TIMEZONE", "Europe/Berlin")
@@ -74,6 +76,7 @@ func Load(args []string) (Config, error) {
 	fs.DurationVar(&cfg.WeatherPollInterval, "weather-poll-interval", cfg.WeatherPollInterval, "OpenWeatherMap poll interval")
 	fs.DurationVar(&cfg.CommandConfirmDelay, "command-confirm-delay", cfg.CommandConfirmDelay, "delayed status confirmation after commands")
 	fs.DurationVar(&cfg.EventHeartbeat, "event-heartbeat", cfg.EventHeartbeat, "maximum interval between unchanged observation/error events")
+	fs.DurationVar(&cfg.ObservationFlushInterval, "observation-flush-interval", cfg.ObservationFlushInterval, "maximum interval between unchanged observation database writes")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -82,10 +85,10 @@ func Load(args []string) (Config, error) {
 
 func defaultDBPath() string {
 	if os.Getenv("POOLD_ENV") == "openwrt" || os.Getenv("POOLD_ENV") == "production" {
-		return "/var/lib/poold/poold.db"
+		return "/data/poold.db"
 	}
 	if runtime.GOOS == "linux" && os.Getuid() == 0 {
-		return "/var/lib/poold/poold.db"
+		return "/data/poold.db"
 	}
 	return "./var/poold.db"
 }

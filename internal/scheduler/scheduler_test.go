@@ -30,6 +30,34 @@ func TestDailyFilterWindow(t *testing.T) {
 	}
 }
 
+func TestEveningFilterWindowOverridesOffBaseDesiredState(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	plan := pool.Plan{
+		ID:         "evening",
+		Type:       pool.PlanTimeWindow,
+		Enabled:    true,
+		Capability: "filter",
+		From:       "18:00",
+		To:         "21:00",
+		Days:       []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"},
+	}
+	base := pool.DesiredState{
+		Power:      pool.BoolPtr(false),
+		Filter:     pool.BoolPtr(false),
+		Heater:     pool.BoolPtr(false),
+		Jets:       pool.BoolPtr(false),
+		Bubbles:    pool.BoolPtr(false),
+		Sanitizer:  pool.BoolPtr(false),
+		TargetTemp: pool.IntPtr(36),
+	}
+
+	eval := s.Evaluate(at(loc, 2026, 5, 4, 18, 10), pool.Status{}, base, []pool.Plan{plan})
+	if eval.Source != "time_window" || eval.Desired.Power == nil || !*eval.Desired.Power || eval.Desired.Filter == nil || !*eval.Desired.Filter {
+		t.Fatalf("evening filter window should turn power/filter on: %+v", eval)
+	}
+}
+
 func TestDesiredHeaterWinsOverInactiveFilterWindow(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})

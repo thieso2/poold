@@ -78,7 +78,18 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := st.Events(ctx, event.ID-1, 10)
+	if _, err := st.AddEvent(ctx, "observation", "status heartbeat", status); err != nil {
+		t.Fatal(err)
+	}
+	changedEvent, err := st.AddEvent(ctx, "observation", "status refreshed", repeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedulerEvent, err := st.AddEvent(ctx, "scheduler", "desired state enforced", map[string]string{"source": "daily-filter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.Events(ctx, event.ID-1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +100,31 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(latestEvents) != 1 || latestEvents[0].ID != event.ID {
+	if len(latestEvents) != 1 || latestEvents[0].ID != schedulerEvent.ID {
 		t.Fatalf("latest events = %+v", latestEvents)
+	}
+	changedEvents, err := st.EventsPage(ctx, EventQuery{Limit: 10, Latest: true, ChangesOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range changedEvents {
+		if event.Message == "status heartbeat" {
+			t.Fatalf("heartbeat was not filtered: %+v", changedEvents)
+		}
+	}
+	schedulerEvents, err := st.EventsPage(ctx, EventQuery{Limit: 1, Offset: 0, Latest: true, Type: "scheduler"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schedulerEvents) != 1 || schedulerEvents[0].ID != schedulerEvent.ID {
+		t.Fatalf("scheduler events = %+v", schedulerEvents)
+	}
+	observationEvents, err := st.EventsPage(ctx, EventQuery{Limit: 1, Offset: 0, Latest: true, Type: "observation", ChangesOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observationEvents) != 1 || observationEvents[0].ID != changedEvent.ID {
+		t.Fatalf("observation events = %+v", observationEvents)
 	}
 
 	plan := pool.Plan{
@@ -161,6 +195,99 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	}
 }
 
+func TestStoreThrottlesUnchangedObservationFlushes(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+
+	base := pool.Status{
+		ObservedAt:  time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC),
+		Connected:   true,
+		Power:       true,
+		CurrentTemp: pool.IntPtr(30),
+		TargetTemp:  36,
+	}
+	id, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repeated := base
+	repeated.ObservedAt = base.ObservedAt.Add(time.Minute)
+	repeatedID, err := st.SaveObservationThrottled(ctx, repeated, 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatedID != id {
+		t.Fatalf("repeated observation id = %d, want %d", repeatedID, id)
+	}
+	latest, ok, err := st.LatestStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !latest.ObservedAt.Equal(repeated.ObservedAt) {
+		t.Fatalf("latest = %+v, ok=%v", latest, ok)
+	}
+	observations, err := st.Observations(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 1 || observations[0].ObservationCount != 1 || !observations[0].LastObservedAt.Equal(base.ObservedAt) {
+		t.Fatalf("observations before flush = %+v", observations)
+	}
+
+	if err := st.FlushObservations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	observations, err = st.Observations(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 1 || observations[0].ObservationCount != 2 || !observations[0].LastObservedAt.Equal(repeated.ObservedAt) {
+		t.Fatalf("observations after flush = %+v", observations)
+	}
+}
+
+func TestStoreFlushesPendingObservationBeforeStateChange(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+
+	base := pool.Status{
+		ObservedAt:  time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC),
+		Connected:   true,
+		Power:       true,
+		CurrentTemp: pool.IntPtr(30),
+		TargetTemp:  36,
+	}
+	if _, err := st.SaveObservation(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	repeated := base
+	repeated.ObservedAt = base.ObservedAt.Add(time.Minute)
+	if _, err := st.SaveObservationThrottled(ctx, repeated, 15*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	changed := repeated
+	changed.ObservedAt = base.ObservedAt.Add(2 * time.Minute)
+	changed.CurrentTemp = pool.IntPtr(31)
+	if _, err := st.SaveObservationThrottled(ctx, changed, 15*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	observations, err := st.Observations(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("observations = %+v", observations)
+	}
+	if observations[0].ObservationCount != 2 || !observations[0].LastObservedAt.Equal(repeated.ObservedAt) {
+		t.Fatalf("first span = %+v", observations[0])
+	}
+	if observations[1].ObservationCount != 1 || observations[1].Status.CurrentTemp == nil || *observations[1].Status.CurrentTemp != 31 {
+		t.Fatalf("changed span = %+v", observations[1])
+	}
+}
+
 func TestStoreCommandAndRetention(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
@@ -172,6 +299,20 @@ func TestStoreCommandAndRetention(t *testing.T) {
 	status := pool.Status{ObservedAt: time.Now().UTC(), Connected: true}
 	if err := st.FinishCommand(ctx, id, true, &status, nil); err != nil {
 		t.Fatal(err)
+	}
+	commands, err := st.LatestCommands(ctx, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].ID != id || commands[0].State == nil || !*commands[0].State || !commands[0].Success || commands[0].Status == nil {
+		t.Fatalf("commands = %+v", commands)
+	}
+	commands, err = st.Commands(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].ID != id {
+		t.Fatalf("commands after = %+v", commands)
 	}
 	lastCommandAt, err := st.LastCommandAt(ctx)
 	if err != nil {
@@ -192,6 +333,55 @@ func TestStoreCommandAndRetention(t *testing.T) {
 		t.Fatal(err)
 	} else if ok && latest.ObservedAt.Equal(old.ObservedAt) {
 		t.Fatalf("old observation was not pruned: %+v", latest)
+	}
+}
+
+func TestStoreHeatingSessions(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+
+	at := time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC)
+	save := func(offset time.Duration, heater bool, current int) {
+		t.Helper()
+		if _, err := st.SaveObservation(ctx, pool.Status{
+			ObservedAt:  at.Add(offset),
+			Connected:   true,
+			Power:       true,
+			Filter:      heater,
+			Heater:      heater,
+			CurrentTemp: pool.IntPtr(current),
+			TargetTemp:  36,
+			Unit:        "°C",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(0, false, 29)
+	save(10*time.Minute, true, 30)
+	save(20*time.Minute, true, 30)
+	save(30*time.Minute, true, 31)
+	save(45*time.Minute, false, 31)
+	save(60*time.Minute, true, 32)
+
+	sessions, err := st.LatestHeatingSessions(ctx, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+	if !sessions[0].Active || sessions[0].StartTemp == nil || *sessions[0].StartTemp != 32 {
+		t.Fatalf("active session = %+v", sessions[0])
+	}
+	if sessions[1].Active || sessions[1].EndedAt == nil || sessions[1].DurationSeconds != int64((35*time.Minute).Seconds()) || sessions[1].ObservationCount != 3 {
+		t.Fatalf("ended session = %+v", sessions[1])
+	}
+	paged, err := st.LatestHeatingSessions(ctx, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paged) != 1 || paged[0].ID != sessions[1].ID {
+		t.Fatalf("paged sessions = %+v", paged)
 	}
 }
 

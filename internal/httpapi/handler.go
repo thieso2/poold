@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"pooly/services/poold/internal/pool"
+	"pooly/services/poold/internal/store"
 )
 
 type API struct {
@@ -37,7 +38,9 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("POST /weather/refresh", api.handleRefreshWeather)
 	mux.HandleFunc("GET /plans", api.handleGetPlans)
 	mux.HandleFunc("PUT /plans", api.handlePutPlans)
+	mux.HandleFunc("GET /commands", api.handleGetCommands)
 	mux.HandleFunc("POST /commands", api.handleCommands)
+	mux.HandleFunc("GET /heating-sessions", api.handleHeatingSessions)
 	return api.auth(mux)
 }
 
@@ -82,14 +85,26 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	var (
 		events []pool.Event
 		err    error
 	)
 	if truthy(r.URL.Query().Get("latest")) {
-		events, err = a.service.LatestEvents(r.Context(), limit)
+		events, err = a.service.EventsPage(r.Context(), store.EventQuery{
+			Limit:       limit,
+			Offset:      offset,
+			Latest:      true,
+			Type:        strings.TrimSpace(r.URL.Query().Get("type")),
+			ChangesOnly: truthy(r.URL.Query().Get("changes")),
+		})
 	} else {
-		events, err = a.service.Events(r.Context(), after, limit)
+		events, err = a.service.EventsPage(r.Context(), store.EventQuery{
+			AfterID:     after,
+			Limit:       limit,
+			Type:        strings.TrimSpace(r.URL.Query().Get("type")),
+			ChangesOnly: truthy(r.URL.Query().Get("changes")),
+		})
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -101,12 +116,13 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleObservations(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	var (
 		observations []pool.Observation
 		err          error
 	)
 	if truthy(r.URL.Query().Get("latest")) {
-		observations, err = a.service.LatestObservations(r.Context(), limit)
+		observations, err = a.service.LatestObservationsPage(r.Context(), limit, offset)
 	} else {
 		observations, err = a.service.Observations(r.Context(), after, limit)
 	}
@@ -310,6 +326,26 @@ func (a *API) handlePutPlans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
 }
 
+func (a *API) handleGetCommands(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	var (
+		commands []pool.CommandRecord
+		err      error
+	)
+	if truthy(r.URL.Query().Get("latest")) {
+		commands, err = a.service.LatestCommands(r.Context(), limit, offset)
+	} else {
+		commands, err = a.service.Commands(r.Context(), after, limit)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commands": commands})
+}
+
 func (a *API) handleCommands(w http.ResponseWriter, r *http.Request) {
 	var command pool.CommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&command); err != nil {
@@ -322,6 +358,17 @@ func (a *API) handleCommands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, record)
+}
+
+func (a *API) handleHeatingSessions(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	sessions, err := a.service.LatestHeatingSessions(r.Context(), limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"heating_sessions": sessions})
 }
 
 func decodePlans(r *http.Request) ([]pool.Plan, error) {

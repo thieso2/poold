@@ -98,7 +98,7 @@ Set options with environment variables or daemon flags.
 | --- | --- | --- |
 | `POOLD_LISTEN_ADDR` | `127.0.0.1:8090` | HTTP listen address |
 | `POOLD_POOL_ADDR` | `127.0.0.1:8990` | Intex spa TCP address |
-| `POOLD_DB_PATH` | `./var/poold.db` | SQLite database path |
+| `POOLD_DB_PATH` | `./var/poold.db` (`/data/poold.db` on OpenWrt/production) | SQLite database path |
 | `POOLD_TOKEN` | `dev-token` | Bearer token for API calls |
 | `POOLD_TIMEZONE` | `Europe/Berlin` | Local timezone for plans |
 | `POOLD_HEATING_RATE_C_PER_HOUR` | `0.75` | Heating estimate for ready-by plans |
@@ -111,6 +111,7 @@ Set options with environment variables or daemon flags.
 | `POOLD_POLL_ERROR_MAX_INTERVAL` | `5m` | Maximum error backoff interval |
 | `POOLD_COMMAND_CONFIRM_DELAY` | `10s` | Delayed refresh after commands |
 | `POOLD_EVENT_HEARTBEAT` | `30m` | Max interval between unchanged event records |
+| `POOLD_OBSERVATION_FLUSH_INTERVAL` | `15m` | Max interval between unchanged poll span writes; set `0` for every poll |
 | `POOLD_OBSERVATION_RETENTION` | `14d` | Observation retention |
 | `POOLD_EVENT_RETENTION` | `14d` | Event retention |
 
@@ -138,7 +139,7 @@ It supports:
 - Plan list, toggle, and delete.
 - Ready-by plan creation.
 - Time-window plan creation.
-- Recent events, polls, and command activity.
+- Paginated activity lists for changed events, poll spans, commands, plan executions, and heating sessions.
 
 The web shell itself is public, but all data and actions still require the bearer token.
 
@@ -208,10 +209,11 @@ Authorization: Bearer <token>
 | `GET` | `/health` | Process and latest pool connection health |
 | `GET` | `/status` | Refresh and return current spa status |
 | `GET` | `/events?after=<id>&limit=<n>` | Deduplicated event history |
-| `GET` | `/events?latest=1&limit=<n>` | Latest events in descending order |
+| `GET` | `/events?latest=1&limit=<n>&offset=<n>` | Latest events in descending order |
+| `GET` | `/events?latest=1&type=scheduler&changes=1` | Filtered latest events; `changes=1` hides status heartbeats |
 | `GET` | `/events/stream` | Server-sent event stream |
 | `GET` | `/observations?after=<id>&limit=<n>` | Stored poll observations |
-| `GET` | `/observations?latest=1&limit=<n>` | Latest observations in descending order |
+| `GET` | `/observations?latest=1&limit=<n>&offset=<n>` | Latest observations in descending order |
 | `GET` | `/observations/stream` | Server-sent observation stream |
 | `GET` | `/desired-state` | Stored base desired state |
 | `PUT` | `/desired-state` | Replace base desired state |
@@ -220,7 +222,9 @@ Authorization: Bearer <token>
 | `POST` | `/weather/refresh` | Fetch and store weather immediately |
 | `GET` | `/plans` | List plans |
 | `PUT` | `/plans` | Replace plans |
+| `GET` | `/commands?latest=1&limit=<n>&offset=<n>` | Latest command history |
 | `POST` | `/commands` | Execute one command |
+| `GET` | `/heating-sessions?limit=<n>&offset=<n>` | Derived heating sessions from poll spans |
 
 ### Command Example
 
@@ -382,7 +386,7 @@ ssh root@<router> 'logread -e poold'
 ssh root@<router> 'logread -f -e poold'
 ```
 
-The provided init script uses `/var/lib/poold/poold.db`, `procd` respawn, and waits for the configured Tailscale listen address to appear before starting.
+The provided init script uses `/data/poold.db`, creates its parent directory, flushes unchanged poll spans every `15m`, uses `procd` respawn, and waits for the configured Tailscale listen address to appear before starting. When migrating from an older install, stop `poold`, move `/var/lib/poold/poold.db` to `/data/poold.db`, then restart.
 
 ## Development
 

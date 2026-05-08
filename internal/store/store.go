@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"pooly/services/poold/internal/pool"
@@ -16,10 +17,28 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db                 *sql.DB
+	observationMu      sync.Mutex
+	pendingObservation *pendingObservation
 }
 
 const weatherSnapshotMaxAge = 15 * time.Minute
+
+type pendingObservation struct {
+	id          int64
+	lastFlushAt time.Time
+	countDelta  int
+	body        []byte
+	status      pool.Status
+	weather     *pool.WeatherSnapshot
+}
+
+type latestObservation struct {
+	id             int64
+	lastObservedAt time.Time
+	body           []byte
+	status         pool.Status
+}
 
 type compactObservationRow struct {
 	id     int64
@@ -29,6 +48,25 @@ type compactObservationRow struct {
 	body   []byte
 	status pool.Status
 	dirty  bool
+}
+
+type EventQuery struct {
+	AfterID     int64
+	Limit       int
+	Offset      int
+	Latest      bool
+	Type        string
+	ChangesOnly bool
+}
+
+type heatingObservationRow struct {
+	id          int64
+	first       time.Time
+	last        time.Time
+	count       int
+	heater      bool
+	currentTemp *int
+	targetTemp  int
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -58,10 +96,26 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	_ = s.FlushObservations(context.Background())
 	return s.db.Close()
 }
 
 func (s *Store) SaveObservation(ctx context.Context, status pool.Status) (int64, error) {
+	return s.saveObservation(ctx, status, 0)
+}
+
+func (s *Store) SaveObservationThrottled(ctx context.Context, status pool.Status, flushInterval time.Duration) (int64, error) {
+	return s.saveObservation(ctx, status, flushInterval)
+}
+
+func (s *Store) FlushObservations(ctx context.Context) error {
+	s.observationMu.Lock()
+	defer s.observationMu.Unlock()
+
+	return s.flushPendingObservationLocked(ctx)
+}
+
+func (s *Store) saveObservation(ctx context.Context, status pool.Status, flushInterval time.Duration) (int64, error) {
 	if status.ObservedAt.IsZero() {
 		status.ObservedAt = time.Now().UTC()
 	}
@@ -71,62 +125,50 @@ func (s *Store) SaveObservation(ctx context.Context, status pool.Status) (int64,
 	}
 	weather := s.weatherSnapshot(ctx, status.ObservedAt)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	s.observationMu.Lock()
+	defer s.observationMu.Unlock()
+
+	if pending := s.pendingObservation; pending != nil {
+		if flushInterval > 0 && sameObservationState(pending.status, status) {
+			pending.countDelta++
+			pending.body = body
+			pending.status = status
+			pending.weather = weather
+			if observationFlushDue(pending.lastFlushAt, status.ObservedAt, flushInterval) {
+				if err := s.flushPendingObservationLocked(ctx); err != nil {
+					return 0, err
+				}
+			}
+			return pending.id, nil
+		}
+		if err := s.flushPendingObservationLocked(ctx); err != nil {
+			return 0, err
+		}
+	}
+
+	latest, ok, err := s.latestObservationLocked(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
-
-	var latestID int64
-	var latestBody []byte
-	row := tx.QueryRowContext(ctx, `
-		SELECT id, status_json
-		FROM observations
-		ORDER BY id DESC
-		LIMIT 1
-	`)
-	if err := row.Scan(&latestID, &latestBody); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
-	}
-	if len(latestBody) > 0 {
-		var latest pool.Status
-		if err := json.Unmarshal(latestBody, &latest); err != nil {
+	if ok && sameObservationState(latest.status, status) {
+		if flushInterval > 0 && !observationFlushDue(latest.lastObservedAt, status.ObservedAt, flushInterval) {
+			s.pendingObservation = &pendingObservation{
+				id:          latest.id,
+				lastFlushAt: latest.lastObservedAt,
+				countDelta:  1,
+				body:        body,
+				status:      status,
+				weather:     weather,
+			}
+			return latest.id, nil
+		}
+		if err := s.updateObservationSpanLocked(ctx, latest.id, status, body, weather, 1); err != nil {
 			return 0, err
 		}
-		if sameObservationState(latest, status) {
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE observations
-				SET last_observed_at = ?,
-					observation_count = COALESCE(observation_count, 1) + 1,
-					status_json = ?,
-					connected = ?,
-					power = ?,
-					filter = ?,
-					heater = ?,
-					jets = ?,
-					bubbles = ?,
-					sanitizer = ?,
-					current_temp = ?,
-					target_temp = ?,
-					unit = ?,
-					error_code = ?,
-					raw_data = ?,
-					weather_observation_id = ?,
-					outside_temp_c = ?,
-					clouds_percent = ?,
-					weather_main = ?,
-					weather_description = ?,
-					wind_speed = ?,
-					weather_age_seconds = ?
-				WHERE id = ?
-			`, observationValues(status, body, weather, latestID, false)...); err != nil {
-				return 0, err
-			}
-			return latestID, tx.Commit()
-		}
+		return latest.id, nil
 	}
 
-	result, err := tx.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO observations (
 			observed_at,
 			last_observed_at,
@@ -160,19 +202,93 @@ func (s *Store) SaveObservation(ctx context.Context, status pool.Status) (int64,
 	if err != nil {
 		return 0, err
 	}
-	return id, tx.Commit()
+	return id, nil
 }
 
-func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
+func (s *Store) latestObservationLocked(ctx context.Context) (latestObservation, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(last_observed_at, observed_at), status_json
+		SELECT id, COALESCE(last_observed_at, observed_at), status_json
 		FROM observations
 		ORDER BY id DESC
 		LIMIT 1
 	`)
+	var latest latestObservation
+	var observedAt string
+	if err := row.Scan(&latest.id, &observedAt, &latest.body); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return latestObservation{}, false, nil
+		}
+		return latestObservation{}, false, err
+	}
+	if err := json.Unmarshal(latest.body, &latest.status); err != nil {
+		return latestObservation{}, false, err
+	}
+	latest.lastObservedAt = decodeTime(observedAt)
+	latest.status.ObservedAt = latest.lastObservedAt
+	return latest, true, nil
+}
+
+func (s *Store) updateObservationSpanLocked(ctx context.Context, id int64, status pool.Status, body []byte, weather *pool.WeatherSnapshot, countDelta int) error {
+	values := observationUpdateValues(status, body, weather, id, countDelta)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE observations
+		SET last_observed_at = ?,
+			observation_count = COALESCE(observation_count, 1) + ?,
+			status_json = ?,
+			connected = ?,
+			power = ?,
+			filter = ?,
+			heater = ?,
+			jets = ?,
+			bubbles = ?,
+			sanitizer = ?,
+			current_temp = ?,
+			target_temp = ?,
+			unit = ?,
+			error_code = ?,
+			raw_data = ?,
+			weather_observation_id = ?,
+			outside_temp_c = ?,
+			clouds_percent = ?,
+			weather_main = ?,
+			weather_description = ?,
+			wind_speed = ?,
+			weather_age_seconds = ?
+		WHERE id = ?
+	`, values...)
+	return err
+}
+
+func (s *Store) flushPendingObservationLocked(ctx context.Context) error {
+	pending := s.pendingObservation
+	if pending == nil {
+		return nil
+	}
+	if err := s.updateObservationSpanLocked(ctx, pending.id, pending.status, pending.body, pending.weather, pending.countDelta); err != nil {
+		return err
+	}
+	s.pendingObservation = nil
+	return nil
+}
+
+func observationFlushDue(lastFlushAt, observedAt time.Time, flushInterval time.Duration) bool {
+	if flushInterval <= 0 || lastFlushAt.IsZero() || observedAt.Before(lastFlushAt) {
+		return true
+	}
+	return !observedAt.Before(lastFlushAt.Add(flushInterval))
+}
+
+func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(last_observed_at, observed_at), status_json
+		FROM observations
+		ORDER BY id DESC
+		LIMIT 1
+	`)
+	var id int64
 	var observedAt string
 	var body []byte
-	if err := row.Scan(&observedAt, &body); err != nil {
+	if err := row.Scan(&id, &observedAt, &body); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return pool.Status{}, false, nil
 		}
@@ -183,13 +299,16 @@ func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
 		return pool.Status{}, false, err
 	}
 	status.ObservedAt = decodeTime(observedAt)
+	s.observationMu.Lock()
+	if pending := s.pendingObservation; pending != nil && pending.id == id {
+		status = pending.status
+	}
+	s.observationMu.Unlock()
 	return status, true, nil
 }
 
 func (s *Store) Observations(ctx context.Context, afterID int64, limit int) ([]pool.Observation, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+	limit = normalizedListLimit(limit)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,
 			observed_at,
@@ -217,9 +336,12 @@ func (s *Store) Observations(ctx context.Context, afterID int64, limit int) ([]p
 }
 
 func (s *Store) LatestObservations(ctx context.Context, limit int) ([]pool.Observation, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+	return s.LatestObservationsPage(ctx, limit, 0)
+}
+
+func (s *Store) LatestObservationsPage(ctx context.Context, limit, offset int) ([]pool.Observation, error) {
+	limit = normalizedListLimit(limit)
+	offset = normalizedListOffset(offset)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,
 			observed_at,
@@ -236,7 +358,8 @@ func (s *Store) LatestObservations(ctx context.Context, limit int) ([]pool.Obser
 		FROM observations
 		ORDER BY id DESC
 		LIMIT ?
-	`, limit)
+		OFFSET ?
+	`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +471,40 @@ func observationValues(status pool.Status, body []byte, weather *pool.WeatherSna
 	return values
 }
 
+func observationUpdateValues(status pool.Status, body []byte, weather *pool.WeatherSnapshot, id int64, countDelta int) []any {
+	values := []any{encodeTime(status.ObservedAt), countDelta}
+	values = append(values,
+		body,
+		boolInt(status.Connected),
+		boolInt(status.Power),
+		boolInt(status.Filter),
+		boolInt(status.Heater),
+		boolInt(status.Jets),
+		boolInt(status.Bubbles),
+		boolInt(status.Sanitizer),
+		intPtrValue(status.CurrentTemp),
+		status.TargetTemp,
+		nullString(status.Unit),
+		nullString(status.ErrorCode),
+		nullString(status.RawData),
+	)
+	if weather == nil {
+		values = append(values, nil, nil, nil, nil, nil, nil, nil)
+	} else {
+		values = append(values,
+			weather.ObservationID,
+			floatPtrValue(weather.OutsideTempC),
+			intPtrValueFromInt(weather.CloudsPercent),
+			nullString(weather.Main),
+			nullString(weather.Description),
+			floatPtrValue(weather.WindSpeed),
+			weather.WeatherAgeSeconds,
+		)
+	}
+	values = append(values, id)
+	return values
+}
+
 func (s *Store) AddEvent(ctx context.Context, typ, message string, data any) (pool.Event, error) {
 	createdAt := time.Now().UTC()
 	raw, err := marshalRaw(data)
@@ -369,21 +526,52 @@ func (s *Store) AddEvent(ctx context.Context, typ, message string, data any) (po
 }
 
 func (s *Store) Events(ctx context.Context, afterID int64, limit int) ([]pool.Event, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
+	return s.EventsPage(ctx, EventQuery{AfterID: afterID, Limit: limit})
+}
+
+func (s *Store) LatestEvents(ctx context.Context, limit int) ([]pool.Event, error) {
+	return s.EventsPage(ctx, EventQuery{Limit: limit, Latest: true})
+}
+
+func (s *Store) EventsPage(ctx context.Context, query EventQuery) ([]pool.Event, error) {
+	limit := normalizedListLimit(query.Limit)
+	offset := normalizedListOffset(query.Offset)
+	where := "WHERE 1 = 1"
+	args := []any{}
+	if !query.Latest {
+		where += " AND id > ?"
+		args = append(args, query.AfterID)
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	if query.Type != "" {
+		where += " AND type = ?"
+		args = append(args, query.Type)
+	}
+	if query.ChangesOnly {
+		where += " AND NOT (type = 'observation' AND message = 'status heartbeat')"
+	}
+	order := "ASC"
+	if query.Latest {
+		order = "DESC"
+	}
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, created_at, type, message, data_json
 		FROM events
-		WHERE id > ?
-		ORDER BY id ASC
+		%s
+		ORDER BY id %s
 		LIMIT ?
-	`, afterID, limit)
+		OFFSET ?
+	`, where, order), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	return scanEvents(rows)
+}
+
+func scanEvents(rows *sql.Rows) ([]pool.Event, error) {
 	var events []pool.Event
 	for rows.Next() {
 		var event pool.Event
@@ -397,32 +585,99 @@ func (s *Store) Events(ctx context.Context, afterID int64, limit int) ([]pool.Ev
 	return events, rows.Err()
 }
 
-func (s *Store) LatestEvents(ctx context.Context, limit int) ([]pool.Event, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+func (s *Store) Commands(ctx context.Context, afterID int64, limit int) ([]pool.CommandRecord, error) {
+	limit = normalizedListLimit(limit)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, created_at, type, message, data_json
-		FROM events
-		ORDER BY id DESC
+		SELECT id, issued_at, completed_at, capability, state_json, value_json, source, success, error, status_json
+		FROM commands
+		WHERE id > ?
+		ORDER BY id ASC
 		LIMIT ?
-	`, limit)
+	`, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var events []pool.Event
+	return scanCommands(rows)
+}
+
+func (s *Store) LatestCommands(ctx context.Context, limit, offset int) ([]pool.CommandRecord, error) {
+	limit = normalizedListLimit(limit)
+	offset = normalizedListOffset(offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, issued_at, completed_at, capability, state_json, value_json, source, success, error, status_json
+		FROM commands
+		ORDER BY id DESC
+		LIMIT ?
+		OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanCommands(rows)
+}
+
+func scanCommands(rows *sql.Rows) ([]pool.CommandRecord, error) {
+	var commands []pool.CommandRecord
 	for rows.Next() {
-		var event pool.Event
-		var createdAt string
-		if err := rows.Scan(&event.ID, &createdAt, &event.Type, &event.Message, &event.Data); err != nil {
+		var command pool.CommandRecord
+		var issuedAt string
+		var completedAt sql.NullString
+		var stateJSON []byte
+		var valueJSON []byte
+		var source sql.NullString
+		var success int
+		var errorText sql.NullString
+		var statusJSON []byte
+		if err := rows.Scan(
+			&command.ID,
+			&issuedAt,
+			&completedAt,
+			&command.Capability,
+			&stateJSON,
+			&valueJSON,
+			&source,
+			&success,
+			&errorText,
+			&statusJSON,
+		); err != nil {
 			return nil, err
 		}
-		event.CreatedAt = decodeTime(createdAt)
-		events = append(events, event)
+		command.IssuedAt = decodeTime(issuedAt)
+		if completedAt.Valid {
+			t := decodeTime(completedAt.String)
+			command.CompletedAt = &t
+		}
+		if len(stateJSON) > 0 {
+			var state bool
+			if err := json.Unmarshal(stateJSON, &state); err != nil {
+				return nil, err
+			}
+			command.State = &state
+		}
+		if len(valueJSON) > 0 {
+			command.Value = append(json.RawMessage(nil), valueJSON...)
+		}
+		if source.Valid {
+			command.Source = source.String
+		}
+		command.Success = success != 0
+		if errorText.Valid {
+			command.Error = errorText.String
+		}
+		if len(statusJSON) > 0 {
+			var status pool.Status
+			if err := json.Unmarshal(statusJSON, &status); err != nil {
+				return nil, err
+			}
+			command.Status = &status
+		}
+		commands = append(commands, command)
 	}
-	return events, rows.Err()
+	return commands, rows.Err()
 }
 
 func (s *Store) DesiredState(ctx context.Context) (pool.DesiredState, error) {
@@ -671,6 +926,100 @@ func (s *Store) LastCommandAt(ctx context.Context) (*time.Time, error) {
 	return &t, nil
 }
 
+func (s *Store) LatestHeatingSessions(ctx context.Context, limit, offset int) ([]pool.HeatingSession, error) {
+	limit = normalizedListLimit(limit)
+	offset = normalizedListOffset(offset)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id,
+			observed_at,
+			COALESCE(last_observed_at, observed_at),
+			COALESCE(observation_count, 1),
+			COALESCE(heater, 0),
+			current_temp,
+			target_temp
+		FROM observations
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []pool.HeatingSession
+	var active *pool.HeatingSession
+	for rows.Next() {
+		row := heatingObservationRow{}
+		var firstObservedAt, lastObservedAt string
+		var currentTemp sql.NullInt64
+		var targetTemp sql.NullInt64
+		var heater int
+		if err := rows.Scan(&row.id, &firstObservedAt, &lastObservedAt, &row.count, &heater, &currentTemp, &targetTemp); err != nil {
+			return nil, err
+		}
+		row.first = decodeTime(firstObservedAt)
+		row.last = decodeTime(lastObservedAt)
+		row.heater = heater != 0
+		if row.count <= 0 {
+			row.count = 1
+		}
+		if currentTemp.Valid {
+			v := int(currentTemp.Int64)
+			row.currentTemp = &v
+		}
+		if targetTemp.Valid {
+			row.targetTemp = int(targetTemp.Int64)
+		}
+
+		if !row.heater {
+			if active != nil {
+				endedAt := row.first
+				active.EndedAt = &endedAt
+				active.DurationSeconds = durationSeconds(active.StartedAt, endedAt)
+				active.Active = false
+				sessions = append(sessions, *active)
+				active = nil
+			}
+			continue
+		}
+		if active == nil {
+			active = &pool.HeatingSession{
+				ID:                 row.id,
+				FirstObservationID: row.id,
+				StartedAt:          row.first,
+				StartTemp:          cloneInt(row.currentTemp),
+				TargetTemp:         row.targetTemp,
+				Active:             true,
+			}
+		}
+		active.LastObservationID = row.id
+		active.LastObservedAt = row.last
+		active.ObservationCount += row.count
+		active.SpanCount++
+		active.EndTemp = cloneInt(row.currentTemp)
+		active.TargetTemp = row.targetTemp
+		active.DurationSeconds = durationSeconds(active.StartedAt, row.last)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if active != nil {
+		sessions = append(sessions, *active)
+	}
+
+	for i, j := 0, len(sessions)-1; i < j; i, j = i+1, j-1 {
+		sessions[i], sessions[j] = sessions[j], sessions[i]
+	}
+	if offset >= len(sessions) {
+		return nil, nil
+	}
+	end := offset + limit
+	if end > len(sessions) {
+		end = len(sessions)
+	}
+	return sessions[offset:end], nil
+}
+
 func (s *Store) Prune(ctx context.Context, observationRetention, eventRetention time.Duration) error {
 	now := time.Now().UTC()
 	if observationRetention > 0 {
@@ -689,7 +1038,9 @@ func (s *Store) Prune(ctx context.Context, observationRetention, eventRetention 
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
 		PRAGMA journal_mode = WAL;
+		PRAGMA synchronous = NORMAL;
 		PRAGMA busy_timeout = 5000;
+		PRAGMA journal_size_limit = 1048576;
 
 		CREATE TABLE IF NOT EXISTS observations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1064,4 +1415,33 @@ func decodeTime(value string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+func normalizedListLimit(limit int) int {
+	if limit <= 0 || limit > 500 {
+		return 100
+	}
+	return limit
+}
+
+func normalizedListOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return offset
+}
+
+func durationSeconds(start, end time.Time) int64 {
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return 0
+	}
+	return int64(end.Sub(start).Seconds())
+}
+
+func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	v := *value
+	return &v
 }

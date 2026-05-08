@@ -403,13 +403,14 @@ h3 {
   gap: 8px;
 }
 .activity {
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 92px 1fr;
   align-items: start;
 }
 .activity time {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
+  line-height: 1.35;
   padding-top: 2px;
 }
 .activity strong {
@@ -420,15 +421,37 @@ h3 {
   color: var(--muted);
   font-size: 13px;
 }
+.activity-head {
+  align-items: start;
+  flex-wrap: wrap;
+}
 .tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
 }
+.activity-tabs {
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .tabs button.active {
   background: #172126;
   border-color: #172126;
   color: #fff;
+}
+.pager {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.pager span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  text-transform: uppercase;
 }
 .toast {
   position: sticky;
@@ -472,6 +495,7 @@ h3 {
   .controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .activity-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); width: min(560px, 100%); }
 }
 </style>
 </head>
@@ -575,15 +599,18 @@ h3 {
     </section>
 
     <section class="panel span-2">
-      <div class="panel-head">
+      <div class="panel-head activity-head">
         <h2>Activity</h2>
-        <div class="tabs" style="width:min(340px,100%)">
+        <div class="tabs activity-tabs">
           <button class="active" data-activity="events">Events</button>
           <button data-activity="polls">Polls</button>
           <button data-activity="commands">Commands</button>
+          <button data-activity="plan_executions">Plans</button>
+          <button data-activity="heating_sessions">Heating</button>
         </div>
       </div>
       <div class="activity-list" id="activity"></div>
+      <div class="pager" id="activityPager"></div>
     </section>
   </div>
   <div class="toast" id="toast"></div>
@@ -596,6 +623,8 @@ var days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 var manualPlanID = "webui-manual";
 var legacyPausePlanID = "webui-pause";
 var manualDefaultMinutes = 30;
+var activityPageSize = 12;
+var activityKeys = ["events", "polls", "commands", "plan_executions", "heating_sessions"];
 var tempDebounceTimer = null;
 var state = {
   token: localStorage.getItem("poold.token") || "",
@@ -605,6 +634,17 @@ var state = {
   events: [],
   polls: [],
   commands: [],
+  planExecutions: [],
+  heatingSessions: [],
+  activityRaw: {},
+  activityPages: {
+    events: 0,
+    polls: 0,
+    commands: 0,
+    plan_executions: 0,
+    heating_sessions: 0
+  },
+  activityHasOlder: {},
   manualDraft: null,
   settingsOpen: false,
   planView: "plans",
@@ -670,8 +710,7 @@ function loadAll() {
     loadStatus(),
     loadWeather(),
     loadPlans(),
-    loadEvents(),
-    loadPolls()
+    loadActivities()
   ]).finally(function() {
     setBusy(false);
     renderAll();
@@ -708,19 +747,48 @@ function loadWeather() {
   });
 }
 
-function loadEvents() {
-  return api("/events?latest=1&limit=12").then(function(data) {
-    state.events = data.events || [];
-    state.commands = state.events.filter(function(event) {
-      return event.type === "command" || event.type === "command_error" || event.type === "scheduler";
-    });
-  }).catch(function() {});
+function loadActivities() {
+  return Promise.all(activityKeys.map(function(view) { return loadActivity(view); }));
 }
 
-function loadPolls() {
-  return api("/observations?latest=1&limit=12").then(function(data) {
-    state.polls = data.observations || [];
-  }).catch(function() {});
+function loadActivity(view) {
+  var page = state.activityPages[view] || 0;
+  var limit = activityPageSize + 1;
+  var offset = page * activityPageSize;
+  return api(activityPath(view, limit, offset)).then(function(data) {
+    var rows = activityRowsFromResponse(view, data || []);
+    state.activityRaw[view] = rows;
+    state.activityHasOlder[view] = rows.length > activityPageSize;
+    setActivityRows(view, rows.slice(0, activityPageSize));
+  }).catch(function() {
+    state.activityRaw[view] = [];
+    state.activityHasOlder[view] = false;
+    setActivityRows(view, []);
+  });
+}
+
+function activityPath(view, limit, offset) {
+  var suffix = "limit=" + limit + "&offset=" + offset;
+  if (view === "events") return "/events?latest=1&changes=1&" + suffix;
+  if (view === "polls") return "/observations?latest=1&" + suffix;
+  if (view === "commands") return "/commands?latest=1&" + suffix;
+  if (view === "plan_executions") return "/events?latest=1&type=scheduler&" + suffix;
+  return "/heating-sessions?latest=1&" + suffix;
+}
+
+function activityRowsFromResponse(view, data) {
+  if (view === "events" || view === "plan_executions") return data.events || [];
+  if (view === "polls") return data.observations || [];
+  if (view === "commands") return data.commands || [];
+  return data.heating_sessions || [];
+}
+
+function setActivityRows(view, rows) {
+  if (view === "events") state.events = rows;
+  if (view === "polls") state.polls = rows;
+  if (view === "commands") state.commands = rows;
+  if (view === "plan_executions") state.planExecutions = rows;
+  if (view === "heating_sessions") state.heatingSessions = rows;
 }
 
 function renderAll() {
@@ -920,21 +988,62 @@ function renderActivity() {
     button.classList.toggle("active", button.dataset.activity === state.activityView);
   });
   var list = $("activity");
-  var rows = state.activityView === "polls" ? state.polls : state.activityView === "commands" ? state.commands : state.events;
+  var rows = currentActivityRows();
+  var rawRows = state.activityRaw[state.activityView] || rows;
   if (!rows.length) {
     list.innerHTML = "<p class=\"muted\">No activity</p>";
+    renderActivityPager();
     return;
   }
   list.innerHTML = "";
-  rows.forEach(function(row) {
+  rows.forEach(function(row, index) {
     var item = document.createElement("div");
     item.className = "activity";
     if (state.activityView === "polls") {
-      item.innerHTML = "<time>" + formatTime(row.last_observed_at || row.status.observed_at) + "</time><div><strong>Span #" + row.id + "</strong><span>" + tempLine(row.status) + " · " + (row.observation_count || 1) + " polls · " + activeCaps(row.status).map(title).join(", ") + "</span></div>";
+      item.innerHTML = "<time>" + formatActivityTime(row.last_observed_at || row.status.observed_at) + "</time><div><strong>Span #" + row.id + "</strong><span>" + observationLine(row, rawRows[index + 1]) + "</span></div>";
+    } else if (state.activityView === "commands") {
+      item.innerHTML = "<time>" + formatActivityTime(row.completed_at || row.issued_at) + "</time><div><strong>Command #" + row.id + "</strong><span>" + commandLine(row) + "</span></div>";
+    } else if (state.activityView === "plan_executions") {
+      item.innerHTML = "<time>" + formatActivityTime(row.created_at) + "</time><div><strong>Plan #" + row.id + "</strong><span>" + planExecutionLine(row) + "</span></div>";
+    } else if (state.activityView === "heating_sessions") {
+      item.innerHTML = "<time>" + formatActivityTime(row.started_at) + "</time><div><strong>Heating #" + row.first_observation_id + "-" + row.last_observation_id + "</strong><span>" + heatingSessionLine(row) + "</span></div>";
     } else {
-      item.innerHTML = "<time>" + formatTime(row.created_at) + "</time><div><strong>" + title(row.type) + " #" + row.id + "</strong><span>" + eventLine(row) + "</span></div>";
+      item.innerHTML = "<time>" + formatActivityTime(row.created_at) + "</time><div><strong>" + title(row.type) + " #" + row.id + "</strong><span>" + eventLine(row, previousObservationEvent(rawRows, index)) + "</span></div>";
     }
     list.appendChild(item);
+  });
+  renderActivityPager();
+}
+
+function currentActivityRows() {
+  if (state.activityView === "polls") return state.polls;
+  if (state.activityView === "commands") return state.commands;
+  if (state.activityView === "plan_executions") return state.planExecutions;
+  if (state.activityView === "heating_sessions") return state.heatingSessions;
+  return state.events;
+}
+
+function renderActivityPager() {
+  var pager = $("activityPager");
+  var page = state.activityPages[state.activityView] || 0;
+  var hasOlder = !!state.activityHasOlder[state.activityView];
+  pager.innerHTML = "<button data-page=\"newer\">Newer</button><span>Page " + (page + 1) + "</span><button data-page=\"older\">Older</button>";
+  var newer = pager.querySelector("[data-page=\"newer\"]");
+  var older = pager.querySelector("[data-page=\"older\"]");
+  newer.disabled = page <= 0 || state.pending;
+  older.disabled = !hasOlder || state.pending;
+  newer.onclick = function() { changeActivityPage(-1); };
+  older.onclick = function() { changeActivityPage(1); };
+}
+
+function changeActivityPage(delta) {
+  var next = Math.max(0, (state.activityPages[state.activityView] || 0) + delta);
+  if (next === state.activityPages[state.activityView]) return;
+  state.activityPages[state.activityView] = next;
+  setBusy(true);
+  loadActivity(state.activityView).finally(function() {
+    setBusy(false);
+    renderActivity();
   });
 }
 
@@ -1073,7 +1182,7 @@ function runAction(action, message) {
   setBusy(true);
   action().then(function() {
     toast(message, "ok");
-    return Promise.all([loadStatus(), loadWeather(), loadPlans(), loadEvents(), loadPolls()]);
+    return Promise.all([loadStatus(), loadWeather(), loadPlans(), loadActivities()]);
   }).catch(function(err) {
     toast(err.message, "bad");
   }).finally(function() {
@@ -1092,11 +1201,119 @@ function tempLine(status) {
   return current + " → " + (status.preset_temp || "--") + unit;
 }
 
-function eventLine(event) {
-  if (event.type === "observation" && event.data) return tempLine(event.data);
+function observationLine(observation, previous) {
+  var parts = [
+    formatSpanDuration(observation.first_observed_at, observation.last_observed_at) + " span",
+    (observation.observation_count || 1) + " polls",
+    statusChangeLine(observation.status || {}, previous && previous.status)
+  ];
+  return parts.join(" · ");
+}
+
+function eventLine(event, previousObservation) {
+  if (event.type === "observation" && event.data) return statusChangeLine(event.data, previousObservation && previousObservation.data);
   if (event.type === "status_error" && event.data && event.data.error) return event.data.error;
-  if (event.type === "command" && event.data) return title(event.data.capability) + " ok";
+  if (event.type === "command" && event.data) return commandLine(event.data);
+  if (event.type === "command_error" && event.data) return title(event.data.capability) + " failed · " + (event.data.error || event.message || "");
+  if (event.type === "scheduler" && event.data) return planExecutionLine(event);
   return event.message || "";
+}
+
+function previousObservationEvent(rows, index) {
+  for (var i = index + 1; i < rows.length; i++) {
+    if (rows[i].type === "observation" && rows[i].data) return rows[i];
+  }
+  return null;
+}
+
+function commandLine(command) {
+  var value = commandValueText(command);
+  var result = command.success ? "ok" : "failed";
+  var parts = [title(command.capability) + (value ? " " + value : ""), result];
+  if (command.source) parts.push(command.source);
+  if (command.error) parts.push(command.error);
+  return parts.join(" · ");
+}
+
+function commandValueText(command) {
+  if (Object.prototype.hasOwnProperty.call(command, "state") && command.state !== null) return boolText(!!command.state);
+  if (command.value !== undefined && command.value !== null) return String(command.value).replace(/^"|"$/g, "");
+  return "";
+}
+
+function planExecutionLine(event) {
+  var data = event.data || {};
+  var parts = [];
+  parts.push(data.source ? data.source : event.message || "Scheduler");
+  if (data.reason) parts.push(data.reason);
+  if (data.desired) parts.push(desiredSummary(data.desired));
+  return parts.join(" · ");
+}
+
+function desiredSummary(desired) {
+  var parts = [];
+  caps.forEach(function(cap) {
+    if (Object.prototype.hasOwnProperty.call(desired, cap)) {
+      parts.push(capLabels[cap] + " " + boolText(!!desired[cap]));
+    }
+  });
+  if (desired.target_temp != null) parts.push("Target " + desired.target_temp + "°");
+  return parts.length ? parts.join(", ") : "No desired changes";
+}
+
+function heatingSessionLine(session) {
+  var unit = "°C";
+  var temp = formatTempValue(session.start_temp, unit) + " to " + formatTempValue(session.end_temp, unit);
+  var parts = [
+    formatDurationSeconds(session.duration_seconds) + (session.active ? " active" : ""),
+    temp,
+    "Target " + (session.target_temp || "--") + unit,
+    (session.span_count || 0) + " spans",
+    (session.observation_count || 0) + " polls"
+  ];
+  return parts.join(" · ");
+}
+
+function statusChangeLine(status, previous) {
+  status = status || {};
+  var fields = ["connected", "power", "filter", "heater", "jets", "bubbles", "sanitizer", "current_temp", "preset_temp", "error_code"];
+  if (!previous) return "Initial state · " + tempLine(status);
+  var unit = status.unit || previous.unit || "°C";
+  var changes = [];
+  fields.forEach(function(field) {
+    var before = statusFieldValue(previous, field);
+    var after = statusFieldValue(status, field);
+    if (before !== after) {
+      changes.push(statusFieldLabel(field) + " " + formatStatusField(field, after, unit) + " from " + formatStatusField(field, before, unit));
+    }
+  });
+  return changes.length ? changes.join(" · ") : "No changed fields";
+}
+
+function statusFieldValue(status, field) {
+  if (!status) return null;
+  if (field === "current_temp") return status.current_temp == null ? null : Number(status.current_temp);
+  if (field === "preset_temp") return status.preset_temp == null ? null : Number(status.preset_temp);
+  if (field === "error_code") return status.error_code || "";
+  return !!status[field];
+}
+
+function statusFieldLabel(field) {
+  if (field === "current_temp") return "Temp";
+  if (field === "preset_temp") return "Target";
+  if (field === "error_code") return "Error";
+  return capLabels[field] || title(field);
+}
+
+function formatStatusField(field, value, unit) {
+  if (field === "current_temp" || field === "preset_temp") return formatTempValue(value, unit);
+  if (field === "connected") return value ? "Connected" : "Disconnected";
+  if (field === "error_code") return value || "None";
+  return boolText(!!value);
+}
+
+function formatTempValue(value, unit) {
+  return value == null ? "--" : value + (unit || "°C");
 }
 
 function describePlan(plan) {
@@ -1119,6 +1336,14 @@ function formatTime(value) {
   return new Date(value).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
 }
 
+function formatActivityTime(value) {
+  if (!value) return "--";
+  var date = new Date(value);
+  var now = new Date();
+  var dateOptions = date.getFullYear() === now.getFullYear() ? {month: "short", day: "numeric"} : {year: "numeric", month: "short", day: "numeric"};
+  return date.toLocaleDateString([], dateOptions) + "<br>" + date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false});
+}
+
 function formatDateTime(value) {
   if (!value) return "--";
   return new Date(value).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
@@ -1131,6 +1356,25 @@ function formatAge(value) {
   var minutes = Math.round(seconds / 60);
   if (minutes < 60) return minutes + "m ago";
   return Math.round(minutes / 60) + "h ago";
+}
+
+function formatSpanDuration(start, end) {
+  if (!start || !end) return "0s";
+  var seconds = Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000));
+  return formatDurationSeconds(seconds);
+}
+
+function formatDurationSeconds(seconds) {
+  seconds = Math.max(0, Math.round(Number(seconds) || 0));
+  if (seconds < 60) return seconds + "s";
+  var minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes + "m";
+  var hours = Math.floor(minutes / 60);
+  var rest = minutes % 60;
+  if (hours < 48) return rest ? hours + "h " + rest + "m" : hours + "h";
+  var days = Math.floor(hours / 24);
+  var dayHours = hours % 24;
+  return dayHours ? days + "d " + dayHours + "h" : days + "d";
 }
 
 function localDateTime(date) {
@@ -1250,7 +1494,7 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (state.token && !state.pending) Promise.all([loadStatus(), loadWeather(), loadEvents(), loadPolls()]).then(renderLivePanels);
+  if (state.token && !state.pending) Promise.all([loadStatus(), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
 setInterval(renderManual, 1000);
 </script>

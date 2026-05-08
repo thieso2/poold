@@ -237,6 +237,22 @@ type CommandRecord struct {
 	Status      *Status         `json:"status,omitempty"`
 }
 
+type HeatingSession struct {
+	ID                 int64      `json:"id"`
+	FirstObservationID int64      `json:"first_observation_id"`
+	LastObservationID  int64      `json:"last_observation_id"`
+	StartedAt          time.Time  `json:"started_at"`
+	LastObservedAt     time.Time  `json:"last_observed_at"`
+	EndedAt            *time.Time `json:"ended_at,omitempty"`
+	DurationSeconds    int64      `json:"duration_seconds"`
+	ObservationCount   int        `json:"observation_count"`
+	SpanCount          int        `json:"span_count"`
+	StartTemp          *int       `json:"start_temp,omitempty"`
+	EndTemp            *int       `json:"end_temp,omitempty"`
+	TargetTemp         int        `json:"target_temp"`
+	Active             bool       `json:"active"`
+}
+
 type Event struct {
 	ID        int64           `json:"id"`
 	CreatedAt time.Time       `json:"created_at"`

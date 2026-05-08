@@ -20,6 +20,17 @@ Shared code lives under `internal/`: `config` for settings, `httpapi` for handle
 
 Useful defaults are `POOLD_LISTEN_ADDR=127.0.0.1:8090`, `POOLD_POOL_ADDR=127.0.0.1:8990`, `POOLD_DB_PATH=./var/poold.db`, and `POOLD_TOKEN=dev-token`.
 
+## OpenWrt Deployment Notes
+
+The current poold router target is the Tailscale node `gl-mt3000`; resolve its current address with `tailscale status`. It runs OpenWrt on `aarch64_cortex-a53`, so build with `GOOS=linux GOARCH=arm64 CGO_ENABLED=0`.
+
+Use legacy scp mode when copying to OpenWrt because the router does not provide `sftp-server`:
+
+- `scp -O dist/openwrt-arm64/poold root@<gl-mt3000-ip>:/tmp/poold.new`
+- `scp -O packaging/openwrt/init.d/poold root@<gl-mt3000-ip>:/tmp/poold.init.new`
+
+Router-specific values live in `/etc/poold.env` on the device and must not be committed. The init script sources that file for `POOLD_TOKEN`, `POOLD_LISTEN_ADDR`, `POOLD_POOL_ADDR`, and related settings. The production SQLite path is `/data/poold.db` on the USB-backed `/data` mount.
+
 ## Coding Style & Naming Conventions
 
 Use standard Go formatting: run `gofmt` on changed `.go` files before committing. Keep package names short and lowercase. Document exported identifiers at package boundaries; otherwise prefer unexported helpers. Follow existing organization: handlers in `handler.go`, service behavior in `service.go`, protocol code under `internal/protocol/intex`, and tests beside the code they cover.

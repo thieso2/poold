@@ -16,22 +16,23 @@ import (
 )
 
 type Service struct {
-	store                *store.Store
-	client               intex.PoolClient
-	scheduler            *scheduler.Scheduler
-	weather              WeatherProvider
-	startedAt            time.Time
-	observationRetention time.Duration
-	eventRetention       time.Duration
-	eventHeartbeat       time.Duration
-	commandConfirmDelay  time.Duration
-	refreshRequests      chan time.Duration
-	commandMu            sync.Mutex
-	weatherMu            sync.Mutex
-	statusEventMu        sync.Mutex
-	lastStatusEventAt    time.Time
-	lastStatusError      string
-	lastStatusErrorAt    time.Time
+	store                    *store.Store
+	client                   intex.PoolClient
+	scheduler                *scheduler.Scheduler
+	weather                  WeatherProvider
+	startedAt                time.Time
+	observationRetention     time.Duration
+	eventRetention           time.Duration
+	eventHeartbeat           time.Duration
+	observationFlushInterval time.Duration
+	commandConfirmDelay      time.Duration
+	refreshRequests          chan time.Duration
+	commandMu                sync.Mutex
+	weatherMu                sync.Mutex
+	statusEventMu            sync.Mutex
+	lastStatusEventAt        time.Time
+	lastStatusError          string
+	lastStatusErrorAt        time.Time
 }
 
 var ErrWeatherNotConfigured = errors.New("weather is not configured")
@@ -48,11 +49,12 @@ type WeatherSettingsView struct {
 }
 
 type ServiceConfig struct {
-	ObservationRetention time.Duration
-	EventRetention       time.Duration
-	EventHeartbeat       time.Duration
-	CommandConfirmDelay  time.Duration
-	WeatherProvider      WeatherProvider
+	ObservationRetention     time.Duration
+	EventRetention           time.Duration
+	EventHeartbeat           time.Duration
+	ObservationFlushInterval time.Duration
+	CommandConfirmDelay      time.Duration
+	WeatherProvider          WeatherProvider
 }
 
 func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
@@ -76,16 +78,17 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		cfg.CommandConfirmDelay = 10 * time.Second
 	}
 	return &Service{
-		store:                st,
-		client:               client,
-		scheduler:            sched,
-		weather:              cfg.WeatherProvider,
-		startedAt:            time.Now().UTC(),
-		observationRetention: cfg.ObservationRetention,
-		eventRetention:       cfg.EventRetention,
-		eventHeartbeat:       cfg.EventHeartbeat,
-		commandConfirmDelay:  cfg.CommandConfirmDelay,
-		refreshRequests:      make(chan time.Duration, 16),
+		store:                    st,
+		client:                   client,
+		scheduler:                sched,
+		weather:                  cfg.WeatherProvider,
+		startedAt:                time.Now().UTC(),
+		observationRetention:     cfg.ObservationRetention,
+		eventRetention:           cfg.EventRetention,
+		eventHeartbeat:           cfg.EventHeartbeat,
+		observationFlushInterval: cfg.ObservationFlushInterval,
+		commandConfirmDelay:      cfg.CommandConfirmDelay,
+		refreshRequests:          make(chan time.Duration, 16),
 	}
 }
 
@@ -130,7 +133,7 @@ func (s *Service) RefreshStatus(ctx context.Context) (pool.Status, error) {
 		status.ObservedAt = time.Now().UTC()
 	}
 	status.Connected = true
-	if _, err := s.store.SaveObservation(ctx, status); err != nil {
+	if _, err := s.store.SaveObservationThrottled(ctx, status, s.observationFlushInterval); err != nil {
 		return pool.Status{}, err
 	}
 	s.recordObservationEvent(ctx, previous, previousOK, status)
@@ -288,12 +291,32 @@ func (s *Service) LatestEvents(ctx context.Context, limit int) ([]pool.Event, er
 	return s.store.LatestEvents(ctx, limit)
 }
 
+func (s *Service) EventsPage(ctx context.Context, query store.EventQuery) ([]pool.Event, error) {
+	return s.store.EventsPage(ctx, query)
+}
+
 func (s *Service) Observations(ctx context.Context, afterID int64, limit int) ([]pool.Observation, error) {
 	return s.store.Observations(ctx, afterID, limit)
 }
 
 func (s *Service) LatestObservations(ctx context.Context, limit int) ([]pool.Observation, error) {
 	return s.store.LatestObservations(ctx, limit)
+}
+
+func (s *Service) LatestObservationsPage(ctx context.Context, limit, offset int) ([]pool.Observation, error) {
+	return s.store.LatestObservationsPage(ctx, limit, offset)
+}
+
+func (s *Service) Commands(ctx context.Context, afterID int64, limit int) ([]pool.CommandRecord, error) {
+	return s.store.Commands(ctx, afterID, limit)
+}
+
+func (s *Service) LatestCommands(ctx context.Context, limit, offset int) ([]pool.CommandRecord, error) {
+	return s.store.LatestCommands(ctx, limit, offset)
+}
+
+func (s *Service) LatestHeatingSessions(ctx context.Context, limit, offset int) ([]pool.HeatingSession, error) {
+	return s.store.LatestHeatingSessions(ctx, limit, offset)
 }
 
 func (s *Service) EnforceLatest(ctx context.Context) error {

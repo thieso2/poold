@@ -143,6 +143,20 @@ func TestCommandsEndpoint(t *testing.T) {
 	if fake.lastCapability() != "filter" {
 		t.Fatalf("last capability = %q", fake.lastCapability())
 	}
+
+	rec = authed(handler, http.MethodGet, "/commands?latest=1&limit=10", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Commands []pool.CommandRecord `json:"commands"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Commands) != 1 || response.Commands[0].Capability != "filter" || !response.Commands[0].Success {
+		t.Fatalf("commands = %+v", response.Commands)
+	}
 }
 
 func TestInactiveTimeWindowDoesNotUndoDirectFilterCommand(t *testing.T) {
@@ -235,6 +249,44 @@ func TestObservationsEndpoint(t *testing.T) {
 	}
 	if len(response.Observations) != 1 || response.Observations[0].Status.CurrentTemp == nil || *response.Observations[0].Status.CurrentTemp != 32 {
 		t.Fatalf("observations = %+v", response.Observations)
+	}
+}
+
+func TestHeatingSessionsEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/poold.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	at := time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC)
+	for _, status := range []pool.Status{
+		{ObservedAt: at, Connected: true, Power: true, Filter: true, Heater: true, CurrentTemp: pool.IntPtr(30), TargetTemp: 36},
+		{ObservedAt: at.Add(10 * time.Minute), Connected: true, Power: true, Filter: true, Heater: true, CurrentTemp: pool.IntPtr(31), TargetTemp: 36},
+		{ObservedAt: at.Add(20 * time.Minute), Connected: true, Power: true, Filter: true, Heater: false, CurrentTemp: pool.IntPtr(31), TargetTemp: 36},
+	} {
+		if _, err := st.SaveObservation(ctx, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fake := &fakePoolClient{status: pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}}
+	service := NewService(st, fake, scheduler.New(scheduler.Config{}), ServiceConfig{})
+	handler := New(service, "secret")
+
+	rec := authed(handler, http.MethodGet, "/heating-sessions?limit=10", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Sessions []pool.HeatingSession `json:"heating_sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Sessions) != 1 || response.Sessions[0].DurationSeconds != int64((20*time.Minute).Seconds()) || response.Sessions[0].Active {
+		t.Fatalf("sessions = %+v", response.Sessions)
 	}
 }
 

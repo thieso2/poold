@@ -309,14 +309,29 @@ func setCapability(desired *pool.DesiredState, capability string, state bool) {
 		desired.Power = pool.BoolPtr(state)
 	case "filter":
 		desired.Filter = pool.BoolPtr(state)
+		if state {
+			desired.Power = pool.BoolPtr(true)
+		}
 	case "heater":
 		desired.Heater = pool.BoolPtr(state)
+		if state {
+			desired.Power = pool.BoolPtr(true)
+		}
 	case "jets":
 		desired.Jets = pool.BoolPtr(state)
+		if state {
+			desired.Power = pool.BoolPtr(true)
+		}
 	case "bubbles":
 		desired.Bubbles = pool.BoolPtr(state)
+		if state {
+			desired.Power = pool.BoolPtr(true)
+		}
 	case "sanitizer":
 		desired.Sanitizer = pool.BoolPtr(state)
+		if state {
+			desired.Power = pool.BoolPtr(true)
+		}
 	}
 }
 

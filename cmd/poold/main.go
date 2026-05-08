@@ -41,11 +41,12 @@ func main() {
 		Location:            cfg.Location,
 	})
 	service := httpapi.NewService(st, poolClient, sched, httpapi.ServiceConfig{
-		ObservationRetention: cfg.ObservationRetention,
-		EventRetention:       cfg.EventRetention,
-		EventHeartbeat:       cfg.EventHeartbeat,
-		CommandConfirmDelay:  cfg.CommandConfirmDelay,
-		WeatherProvider:      weather.New(),
+		ObservationRetention:     cfg.ObservationRetention,
+		EventRetention:           cfg.EventRetention,
+		EventHeartbeat:           cfg.EventHeartbeat,
+		ObservationFlushInterval: cfg.ObservationFlushInterval,
+		CommandConfirmDelay:      cfg.CommandConfirmDelay,
+		WeatherProvider:          weather.New(),
 	})
 
 	server := &http.Server{
