@@ -31,6 +31,8 @@ Use legacy scp mode when copying to OpenWrt because the router does not provide 
 
 Router-specific values live in `/etc/poold.env` on the device and must not be committed. The init script sources that file for `POOLD_TOKEN`, `POOLD_LISTEN_ADDR`, `POOLD_POOL_ADDR`, and related settings. The production SQLite path is `/data/poold.db` on the USB-backed `/data` mount.
 
+Cloudflare Tunnel is provided by the OpenWrt `cloudflared` package. The public hostname is `pool.tc42.uk`, routed through the dedicated Cloudflare tunnel `poold-router`. The router stores tunnel credentials under `/etc/cloudflared/`; do not commit them. The router config points `pool.tc42.uk` at the local poold origin and enables `/etc/init.d/cloudflared`.
+
 ## Coding Style & Naming Conventions
 
 Use standard Go formatting: run `gofmt` on changed `.go` files before committing. Keep package names short and lowercase. Document exported identifiers at package boundaries; otherwise prefer unexported helpers. Follow existing organization: handlers in `handler.go`, service behavior in `service.go`, protocol code under `internal/protocol/intex`, and tests beside the code they cover.
