@@ -33,6 +33,8 @@ Router-specific values live in `/etc/poold.env` on the device and must not be co
 
 Cloudflare Tunnel is provided by the OpenWrt `cloudflared` package. The public hostname is `pool.tc42.uk`, routed through the dedicated Cloudflare tunnel `poold-router`. The router stores tunnel credentials under `/etc/cloudflared/`; do not commit them. The router config points `pool.tc42.uk` at the local poold origin and enables `/etc/init.d/cloudflared`. The router's `cloudflared` init script is patched to wait for DNS before starting, because the package default can start before DNS is ready and fall into a procd crash loop after reboot.
 
+The pool Wi-Fi module is sensitive to WMM power-save. On the router, the 2.4 GHz `Jaribio` SSID has `wireless.wifi2g.uapsd=0` so hostapd advertises `uapsd_advertisement_enabled=0`. Without this, pings to the spa are buffered in multi-second bursts and poold can hit TCP dial timeouts.
+
 ## Coding Style & Naming Conventions
 
 Use standard Go formatting: run `gofmt` on changed `.go` files before committing. Keep package names short and lowercase. Document exported identifiers at package boundaries; otherwise prefer unexported helpers. Follow existing organization: handlers in `handler.go`, service behavior in `service.go`, protocol code under `internal/protocol/intex`, and tests beside the code they cover.
