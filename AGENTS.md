@@ -31,7 +31,7 @@ Use legacy scp mode when copying to OpenWrt because the router does not provide 
 
 Router-specific values live in `/etc/poold.env` on the device and must not be committed. The init script sources that file for `POOLD_TOKEN`, `POOLD_LISTEN_ADDR`, `POOLD_POOL_ADDR`, and related settings. The production SQLite path is `/data/poold.db` on the USB-backed `/data` mount.
 
-Cloudflare Tunnel is provided by the OpenWrt `cloudflared` package. The public hostname is `pool.tc42.uk`, routed through the dedicated Cloudflare tunnel `poold-router`. The router stores tunnel credentials under `/etc/cloudflared/`; do not commit them. The router config points `pool.tc42.uk` at the local poold origin and enables `/etc/init.d/cloudflared`.
+Cloudflare Tunnel is provided by the OpenWrt `cloudflared` package. The public hostname is `pool.tc42.uk`, routed through the dedicated Cloudflare tunnel `poold-router`. The router stores tunnel credentials under `/etc/cloudflared/`; do not commit them. The router config points `pool.tc42.uk` at the local poold origin and enables `/etc/init.d/cloudflared`. The router's `cloudflared` init script is patched to wait for DNS before starting, because the package default can start before DNS is ready and fall into a procd crash loop after reboot.
 
 ## Coding Style & Naming Conventions
 
