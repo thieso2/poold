@@ -23,10 +23,12 @@ func New(service *Service, token string) http.Handler {
 	api := &API{service: service, token: token}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", api.handleWebUI)
+	mux.HandleFunc("GET /history", api.handleHistoryUI)
 	mux.HandleFunc("GET /favicon.svg", api.handleFavicon)
 	mux.HandleFunc("GET /apple-touch-icon.png", api.handleAppleTouchIcon)
 	mux.HandleFunc("GET /health", api.handleHealth)
 	mux.HandleFunc("GET /status", api.handleStatus)
+	mux.HandleFunc("GET /dashboard/timeline", api.handleDashboardTimeline)
 	mux.HandleFunc("GET /observations", api.handleObservations)
 	mux.HandleFunc("GET /observations/stream", api.handleObservationStream)
 	mux.HandleFunc("GET /events", api.handleEvents)
@@ -66,7 +68,7 @@ func (a *API) auth(next http.Handler) http.Handler {
 }
 
 func publicWebPath(r *http.Request) bool {
-	return r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/apple-touch-icon.png")
+	return r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/history" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/apple-touch-icon.png")
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +82,24 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (a *API) handleDashboardTimeline(w http.ResponseWriter, r *http.Request) {
+	query := TimelineQuery{
+		Range: strings.TrimSpace(r.URL.Query().Get("range")),
+	}
+	if from, ok := parseTimelineTime(r.URL.Query().Get("from")); ok {
+		query.From = from
+	}
+	if to, ok := parseTimelineTime(r.URL.Query().Get("to")); ok {
+		query.To = to
+	}
+	timeline, err := a.service.DashboardTimeline(r.Context(), query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, timeline)
 }
 
 func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {

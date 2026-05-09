@@ -102,6 +102,7 @@ Set options with environment variables or daemon flags.
 | `POOLD_TOKEN` | `dev-token` | Bearer token for API calls |
 | `POOLD_TIMEZONE` | `Europe/Berlin` | Local timezone for plans |
 | `POOLD_HEATING_RATE_C_PER_HOUR` | `0.75` | Heating estimate for ready-by plans |
+| `POOLD_COOLING_RATE_C_PER_HOUR` | `0.10` | Fallback cooling estimate for dashboard predictions |
 | `POOLD_READINESS_BUFFER` | `30m` | Extra lead time before ready-by target |
 | `POOLD_POLL_STARTUP_INTERVAL` | `10s` | Retry interval before first successful poll |
 | `POOLD_POLL_IDLE_INTERVAL` | `10m` | Poll interval when powered off |
@@ -136,8 +137,9 @@ It supports:
 - Timed manual control for power, filter, heater, jets, bubbles, sanitizer, and target temperature.
 - Active manual override display with remaining time, `+30m`, `-30m`, and clear actions.
 - Settings screen for the OpenWeatherMap API key and pool location.
-- Plan list, toggle, and delete.
-- Ready-by plan creation.
+- History graph with measured/predicted pool temperature, outside temperature, target temperature, feature lanes, and command/plan annotations.
+- Plan list, active yes/no toggle, and delete.
+- One-shot and recurring ready-by plan creation.
 - Time-window plan creation.
 - Paginated activity lists for changed events, poll spans, commands, plan executions, and heating sessions.
 
@@ -160,6 +162,7 @@ poolctl set filter on|off
 poolctl plans list
 poolctl plans apply <file>
 poolctl ready-by --temp 36 --at "Sat 08:30"
+poolctl ready-by --temp 36 --cron "30 8 * * 6"
 poolctl filter --from "02:00" --to "04:00"
 ```
 
@@ -208,6 +211,7 @@ Authorization: Bearer <token>
 | `GET` | `/` | Web UI shell |
 | `GET` | `/health` | Process and latest pool connection health |
 | `GET` | `/status` | Refresh and return current spa status |
+| `GET` | `/dashboard/timeline?range=24h` | Chart-ready dashboard timeline with measured/predicted series |
 | `GET` | `/events?after=<id>&limit=<n>` | Deduplicated event history |
 | `GET` | `/events?latest=1&limit=<n>&offset=<n>` | Latest events in descending order |
 | `GET` | `/events?latest=1&type=scheduler&changes=1` | Filtered latest events; `changes=1` hides status heartbeats |
@@ -271,6 +275,19 @@ Ready-by:
   "enabled": true,
   "target_temp": 36,
   "at": "2026-05-09T08:30:00+02:00"
+}
+```
+
+Recurring ready-by:
+
+```json
+{
+  "id": "saturday-ready",
+  "type": "ready_by",
+  "name": "Saturday morning",
+  "enabled": true,
+  "target_temp": 36,
+  "cron": "30 8 * * 6"
 }
 ```
 

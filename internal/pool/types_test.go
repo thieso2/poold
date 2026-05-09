@@ -1,6 +1,9 @@
 package pool
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestPowerOffConstrainsEquipmentOff(t *testing.T) {
 	desired := DesiredState{
@@ -41,5 +44,57 @@ func TestEquipmentOnConstrainsPowerOn(t *testing.T) {
 		if desired.Power == nil || !*desired.Power {
 			t.Fatalf("%s on should imply power on: %+v", name, desired)
 		}
+	}
+}
+
+func TestReadyByPlanValidationAllowsCron(t *testing.T) {
+	plan := Plan{
+		ID:         "weekend-ready",
+		Type:       PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: IntPtr(36),
+		Cron:       "30 8 * * sat,sun",
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestReadyByPlanValidationRequiresOneSchedule(t *testing.T) {
+	at := time.Date(2026, 5, 9, 8, 30, 0, 0, time.UTC)
+	plan := Plan{
+		ID:         "ready",
+		Type:       PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: IntPtr(36),
+		At:         &at,
+		Cron:       "30 8 * * sat",
+	}
+	if err := plan.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want schedule conflict")
+	}
+}
+
+func TestNextCronTime(t *testing.T) {
+	loc := time.FixedZone("TEST", 2*60*60)
+	next, ok, err := NextCronTime("30 8 * * sat", time.Date(2026, 5, 8, 23, 0, 0, 0, loc), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 5, 9, 8, 30, 0, 0, loc)
+	if !ok || !next.Equal(want) {
+		t.Fatalf("next = %s ok=%v, want %s", next, ok, want)
+	}
+}
+
+func TestNextCronTimeIncludesCurrentMinute(t *testing.T) {
+	loc := time.FixedZone("TEST", 2*60*60)
+	next, ok, err := NextCronTime("30 8 * * sat", time.Date(2026, 5, 9, 8, 30, 45, 0, loc), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 5, 9, 8, 30, 0, 0, loc)
+	if !ok || !next.Equal(want) {
+		t.Fatalf("next = %s ok=%v, want %s", next, ok, want)
 	}
 }

@@ -26,6 +26,11 @@ type Service struct {
 	eventHeartbeat           time.Duration
 	observationFlushInterval time.Duration
 	commandConfirmDelay      time.Duration
+	heatingRateCPerHour      float64
+	coolingRateCPerHour      float64
+	pollIdleInterval         time.Duration
+	pollStableInterval       time.Duration
+	pollActiveInterval       time.Duration
 	refreshRequests          chan time.Duration
 	commandMu                sync.Mutex
 	weatherMu                sync.Mutex
@@ -54,6 +59,11 @@ type ServiceConfig struct {
 	EventHeartbeat           time.Duration
 	ObservationFlushInterval time.Duration
 	CommandConfirmDelay      time.Duration
+	HeatingRateCPerHour      float64
+	CoolingRateCPerHour      float64
+	PollIdleInterval         time.Duration
+	PollStableInterval       time.Duration
+	PollActiveInterval       time.Duration
 	WeatherProvider          WeatherProvider
 }
 
@@ -77,6 +87,21 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 	if cfg.CommandConfirmDelay <= 0 {
 		cfg.CommandConfirmDelay = 10 * time.Second
 	}
+	if cfg.HeatingRateCPerHour <= 0 {
+		cfg.HeatingRateCPerHour = 0.75
+	}
+	if cfg.CoolingRateCPerHour <= 0 {
+		cfg.CoolingRateCPerHour = 0.10
+	}
+	if cfg.PollIdleInterval <= 0 {
+		cfg.PollIdleInterval = 10 * time.Minute
+	}
+	if cfg.PollStableInterval <= 0 {
+		cfg.PollStableInterval = 5 * time.Minute
+	}
+	if cfg.PollActiveInterval <= 0 {
+		cfg.PollActiveInterval = time.Minute
+	}
 	return &Service{
 		store:                    st,
 		client:                   client,
@@ -88,6 +113,11 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		eventHeartbeat:           cfg.EventHeartbeat,
 		observationFlushInterval: cfg.ObservationFlushInterval,
 		commandConfirmDelay:      cfg.CommandConfirmDelay,
+		heatingRateCPerHour:      cfg.HeatingRateCPerHour,
+		coolingRateCPerHour:      cfg.CoolingRateCPerHour,
+		pollIdleInterval:         cfg.PollIdleInterval,
+		pollStableInterval:       cfg.PollStableInterval,
+		pollActiveInterval:       cfg.PollActiveInterval,
 		refreshRequests:          make(chan time.Duration, 16),
 	}
 }

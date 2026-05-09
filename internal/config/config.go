@@ -16,6 +16,7 @@ type Config struct {
 	Token                    string
 	Location                 *time.Location
 	HeatingRateCPerHour      float64
+	CoolingRateCPerHour      float64
 	ReadinessBuffer          time.Duration
 	PollStartupInterval      time.Duration
 	PollIdleInterval         time.Duration
@@ -38,6 +39,7 @@ func Load(args []string) (Config, error) {
 		DatabasePath:             envString("POOLD_DB_PATH", defaultDBPath()),
 		Token:                    envString("POOLD_TOKEN", "dev-token"),
 		HeatingRateCPerHour:      envFloat("POOLD_HEATING_RATE_C_PER_HOUR", 0.75),
+		CoolingRateCPerHour:      envFloat("POOLD_COOLING_RATE_C_PER_HOUR", 0.10),
 		ReadinessBuffer:          envDuration("POOLD_READINESS_BUFFER", 30*time.Minute),
 		PollStartupInterval:      envDuration("POOLD_POLL_STARTUP_INTERVAL", 10*time.Second),
 		PollIdleInterval:         envDuration("POOLD_POLL_IDLE_INTERVAL", 10*time.Minute),
@@ -66,6 +68,7 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.DatabasePath, "db", cfg.DatabasePath, "SQLite database path")
 	fs.StringVar(&cfg.Token, "token", cfg.Token, "HTTP bearer token")
 	fs.Float64Var(&cfg.HeatingRateCPerHour, "heating-rate", cfg.HeatingRateCPerHour, "heating rate in C per hour")
+	fs.Float64Var(&cfg.CoolingRateCPerHour, "cooling-rate", cfg.CoolingRateCPerHour, "fallback cooling rate in C per hour")
 	fs.DurationVar(&cfg.ReadinessBuffer, "readiness-buffer", cfg.ReadinessBuffer, "ready-by safety buffer")
 	fs.DurationVar(&cfg.PollStableInterval, "poll-interval", cfg.PollStableInterval, "stable scheduler/status poll interval")
 	fs.DurationVar(&cfg.PollStartupInterval, "poll-startup-interval", cfg.PollStartupInterval, "startup status poll interval before first success")

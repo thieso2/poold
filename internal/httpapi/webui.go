@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -17,7 +18,17 @@ func (a *API) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(webUIHTML))
+	_, _ = w.Write([]byte(webUIHTML("dashboard")))
+}
+
+func (a *API) handleHistoryUI(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/history" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(webUIHTML("history")))
 }
 
 func (a *API) handleFavicon(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +55,16 @@ func appleTouchIconPNG() []byte {
 	return appleTouchIconData
 }
 
-const webUIHTML = `<!doctype html>
+func webUIHTML(page string) string {
+	if page != "history" {
+		page = "dashboard"
+	}
+	return strings.Replace(webUIHTMLTemplate, "__POOLD_PAGE__", page, 1)
+}
+
+const eChartsCDN = "https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"
+
+const webUIHTMLTemplate = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -52,6 +72,7 @@ const webUIHTML = `<!doctype html>
 <meta name="theme-color" content="#007c89">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <title>Pooly Control</title>
 <style>
 :root {
@@ -67,7 +88,10 @@ const webUIHTML = `<!doctype html>
   --warn: #a45f00;
   --bad: #b42318;
   --cool: #235ea8;
-  --shadow: 0 12px 32px rgba(23, 33, 38, .10);
+  --soft: #eef6f8;
+  --field: #fbfdfe;
+  --shadow: 0 14px 34px rgba(23, 33, 38, .09);
+  --shadow-soft: 0 6px 18px rgba(23, 33, 38, .06);
 }
 * { box-sizing: border-box; }
 body {
@@ -81,18 +105,33 @@ body {
 button, input, select {
   font: inherit;
 }
-button {
+button, .button-link {
   min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   color: var(--text);
   font-weight: 700;
+  transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
-button.primary {
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  text-decoration: none;
+}
+button.primary, .button-link.primary {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+}
+button:hover:not(:disabled), .button-link:hover {
+  border-color: rgba(0, 124, 137, .42);
+  box-shadow: var(--shadow-soft);
+}
+button:active:not(:disabled), .button-link:active {
+  transform: translateY(1px);
 }
 button.danger {
   border-color: #f0b8b3;
@@ -106,10 +145,42 @@ input, select {
   min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--field);
   color: var(--text);
   font-size: 16px;
   padding: 9px 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72);
+  transition: background .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+input:hover, select:hover {
+  border-color: #b8cbd2;
+  background: #fff;
+}
+input:focus, select:focus {
+  outline: 0;
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0, 124, 137, .14);
+}
+select {
+  appearance: none;
+  padding-right: 36px;
+  background-image: linear-gradient(45deg, transparent 50%, #5d6b73 50%), linear-gradient(135deg, #5d6b73 50%, transparent 50%);
+  background-position: calc(100% - 18px) 18px, calc(100% - 13px) 18px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+input[type="datetime-local"], input[type="time"] {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  background: linear-gradient(180deg, #fff, #f8fbfc);
+}
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  border-radius: 7px;
+  padding: 5px;
+  background-color: #edf6f8;
+  cursor: pointer;
 }
 label {
   display: grid;
@@ -123,6 +194,16 @@ label {
   width: min(1120px, 100%);
   margin: 0 auto;
   padding: 14px;
+}
+body[data-page="history"] {
+  background: #fff;
+}
+body[data-page="history"] .app {
+  width: 100%;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
 .topbar {
   display: flex;
@@ -425,6 +506,110 @@ h3 {
   align-items: start;
   flex-wrap: wrap;
 }
+.timeline-panel {
+  min-height: 430px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(255, 255, 255, 1)),
+    radial-gradient(circle at 20% 0%, rgba(0, 124, 137, .08), transparent 34%);
+}
+.timeline-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.timeline-toolbar {
+  display: grid;
+  gap: 10px;
+}
+.timeline-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.timeline-controls .tabs {
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f2f7f9;
+  gap: 4px;
+}
+.timeline-controls .tabs:first-child {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.timeline-controls .tabs:last-child {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.timeline-controls .tabs button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+.timeline-controls .tabs button.active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 3px 10px rgba(23, 33, 38, .08);
+}
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 27px;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  padding: 4px 8px;
+  border: 1px solid #e3ebef;
+  border-radius: 999px;
+  background: #fbfdfe;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.legend-swatch {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+.legend-swatch.dot {
+  width: 8px;
+  height: 8px;
+}
+.legend-swatch.dash {
+  background: repeating-linear-gradient(90deg, #8f6f2a 0 6px, transparent 6px 10px);
+}
+.legend-swatch.band {
+  width: 16px;
+  height: 9px;
+  border-radius: 3px;
+}
+.timeline-chart {
+  margin-top: 12px;
+  min-height: 330px;
+  border: 1px solid #e3ebef;
+  border-radius: 8px;
+  padding: 8px;
+  background: linear-gradient(180deg, #fff, #fbfdfe);
+}
+.timeline-canvas {
+  width: 100%;
+  height: 330px;
+}
+.timeline-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.timeline-empty {
+  color: var(--muted);
+  padding: 18px 0;
+}
 .tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -487,6 +672,49 @@ h3 {
 .wide-only {
   display: none;
 }
+.history-only {
+  display: none !important;
+}
+body[data-page="history"] .dashboard-only {
+  display: none !important;
+}
+body[data-page="history"] .history-only {
+  display: initial !important;
+}
+body[data-page="history"] .button-link.history-only {
+  display: inline-flex !important;
+}
+body[data-page="history"] .timeline-controls.history-only {
+  display: grid !important;
+}
+body[data-page="history"] .grid {
+  display: block;
+}
+body[data-page="history"] .timeline-panel {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+body[data-page="history"] .timeline-toolbar {
+  margin-bottom: 8px;
+}
+body[data-page="history"] .timeline-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: min(760px, calc(100dvh - 220px));
+  padding-top: 8px;
+}
+body[data-page="history"] .timeline-canvas {
+  height: 100%;
+  min-height: 460px;
+}
+.hidden {
+  display: none !important;
+}
 @media (min-width: 760px) {
   .app { padding: 20px; }
   .grid { grid-template-columns: 1.05fr .95fr; align-items: start; }
@@ -495,11 +723,12 @@ h3 {
   .controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .timeline-controls { grid-template-columns: 1.4fr .8fr; align-items: start; }
   .activity-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); width: min(560px, 100%); }
 }
 </style>
 </head>
-<body>
+<body data-page="__POOLD_PAGE__">
 <main class="app">
   <header class="topbar">
     <div class="brand">
@@ -510,8 +739,9 @@ h3 {
       </div>
     </div>
     <div class="top-actions">
+      <a class="button-link primary history-only" href="/">Dashboard</a>
       <button id="editToken">Token</button>
-      <button id="settingsToggle">Settings</button>
+      <button class="dashboard-only" id="settingsToggle">Settings</button>
       <button id="refresh">Refresh</button>
     </div>
   </header>
@@ -521,7 +751,7 @@ h3 {
     <button class="primary" id="saveToken">Save</button>
   </section>
 
-  <section class="panel settings-panel" id="settingsPanel">
+  <section class="panel settings-panel dashboard-only" id="settingsPanel">
     <div class="panel-head">
       <h2>Settings</h2>
       <button id="settingsClose">Close</button>
@@ -537,7 +767,7 @@ h3 {
   </section>
 
   <div class="grid">
-    <section class="panel">
+    <section class="panel dashboard-only">
       <div class="panel-head">
         <h2>Status</h2>
         <span class="badge" id="connected">Unknown</span>
@@ -560,7 +790,7 @@ h3 {
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel dashboard-only">
       <div class="panel-head">
         <h2>Controls</h2>
         <span class="badge" id="busy">Ready</span>
@@ -585,7 +815,7 @@ h3 {
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel dashboard-only">
       <div class="panel-head">
         <h2>Plans</h2>
         <button id="reloadPlans">Reload</button>
@@ -598,7 +828,35 @@ h3 {
       <div id="plansView" class="forms" style="margin-top:12px"></div>
     </section>
 
-    <section class="panel span-2">
+    <section class="panel span-2 timeline-panel">
+      <div class="panel-head">
+        <div class="timeline-title">
+          <h2>History</h2>
+          <span class="badge" id="timelineBadge">24h</span>
+        </div>
+        <a class="button-link dashboard-only" href="/history">Open</a>
+      </div>
+      <div class="timeline-toolbar">
+        <div class="timeline-controls history-only">
+          <div class="tabs">
+            <button data-timeline-range="6h">6h</button>
+            <button class="active" data-timeline-range="24h">24h</button>
+            <button data-timeline-range="3d">3d</button>
+            <button data-timeline-range="7d">7d</button>
+            <button data-timeline-range="14d">14d</button>
+          </div>
+          <div class="tabs">
+            <button class="active" data-timeline-mode="measured">Measured</button>
+            <button data-timeline-mode="predicted">Predicted</button>
+          </div>
+        </div>
+        <div class="timeline-meta" id="timelineMeta">No history loaded</div>
+        <div class="timeline-legend" id="timelineLegend"></div>
+      </div>
+      <div class="timeline-chart" id="timelineChart"></div>
+    </section>
+
+    <section class="panel span-2 dashboard-only">
       <div class="panel-head activity-head">
         <h2>Activity</h2>
         <div class="tabs activity-tabs">
@@ -617,6 +875,8 @@ h3 {
 </main>
 
 <script>
+var pageMode = document.body.dataset.page || "dashboard";
+var isHistoryPage = pageMode === "history";
 var caps = ["power", "filter", "heater", "jets", "bubbles", "sanitizer"];
 var capLabels = {power:"Power", filter:"Filter", heater:"Heater", jets:"Jets", bubbles:"Bubbles", sanitizer:"Sanitizer"};
 var days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -630,6 +890,9 @@ var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
   weather: null,
+  timeline: null,
+  timelineRange: "24h",
+  timelineMode: "measured",
   plans: [],
   events: [],
   polls: [],
@@ -705,10 +968,19 @@ function loadAll() {
     renderAll();
     return;
   }
+  if (isHistoryPage) {
+    setBusy(true);
+    loadTimeline().finally(function() {
+      setBusy(false);
+      renderTimeline();
+    });
+    return;
+  }
   setBusy(true);
   Promise.all([
     loadStatus(),
     loadWeather(),
+    loadTimeline(),
     loadPlans(),
     loadActivities()
   ]).finally(function() {
@@ -744,6 +1016,15 @@ function loadWeather() {
     state.weather = data || {};
   }).catch(function(err) {
     toast("Weather: " + err.message, "bad");
+  });
+}
+
+function loadTimeline() {
+  return api("/dashboard/timeline?range=" + encodeURIComponent(state.timelineRange)).then(function(data) {
+    state.timeline = data || null;
+  }).catch(function(err) {
+    state.timeline = null;
+    toast("History: " + err.message, "bad");
   });
 }
 
@@ -792,21 +1073,31 @@ function setActivityRows(view, rows) {
 }
 
 function renderAll() {
+  if (isHistoryPage) {
+    renderTimeline();
+    return;
+  }
   renderStatus();
   renderWeather();
   renderSettings();
   renderManual();
   renderControls();
   renderPlans();
+  renderTimeline();
   renderActivity();
 }
 
 function renderLivePanels() {
+  if (isHistoryPage) {
+    renderTimeline();
+    return;
+  }
   renderStatus();
   renderWeather();
   renderSettings();
   renderManual();
   renderControls();
+  renderTimeline();
   renderActivity();
 }
 
@@ -920,14 +1211,15 @@ function renderPlanList(view) {
   visiblePlans.forEach(function(plan) {
     var item = document.createElement("div");
     item.className = "plan";
-    item.innerHTML = "<div class=\"plan-main\"><div><h3>" + escapeHTML(plan.name || plan.id) + "</h3><p class=\"muted\">" + describePlan(plan) + "</p></div><span class=\"badge " + (plan.enabled ? "ok" : "") + "\">" + (plan.enabled ? "On" : "Off") + "</span></div><div class=\"plan-actions\"><button data-toggle=\"" + plan.id + "\">" + (plan.enabled ? "Disable" : "Enable") + "</button><button class=\"danger\" data-delete=\"" + plan.id + "\">Delete</button></div>";
+    item.innerHTML = "<div class=\"plan-main\"><div><h3>" + escapeHTML(plan.name || plan.id) + "</h3><p class=\"muted\">" + escapeHTML(describePlan(plan)) + "</p></div><span class=\"badge " + (plan.enabled ? "ok" : "") + "\">" + (plan.enabled ? "Active" : "Paused") + "</span></div><div class=\"plan-actions\"><label>Active <select data-active=\"" + escapeHTML(plan.id) + "\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label><button class=\"danger\" data-delete=\"" + escapeHTML(plan.id) + "\">Delete</button></div>";
     list.appendChild(item);
   });
   view.appendChild(list);
-  qsa("[data-toggle]").forEach(function(button) {
-    button.onclick = function() {
+  qsa("[data-active]").forEach(function(select) {
+    select.onchange = function() {
+      var enabled = select.value === "true";
       updatePlans(state.plans.map(function(plan) {
-        if (plan.id === button.dataset.toggle) plan.enabled = !plan.enabled;
+        if (plan.id === select.dataset.active) return Object.assign({}, plan, {enabled: enabled});
         return plan;
       }));
     };
@@ -940,25 +1232,65 @@ function renderPlanList(view) {
 }
 
 function renderReadyForm(view) {
-  view.innerHTML = "<div class=\"row two\"><label>Name <input id=\"readyName\" value=\"Ready by\"></label><label>Target <input id=\"readyTemp\" type=\"number\" min=\"10\" max=\"40\" step=\"1\" value=\"36\"></label></div><label>At <input id=\"readyAt\" type=\"datetime-local\"></label><button class=\"primary\" id=\"addReady\">Add Ready Plan</button>";
+  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"readyName\" value=\"Ready by\"></label><label>Target <input id=\"readyTemp\" type=\"number\" min=\"10\" max=\"40\" step=\"1\" value=\"36\"></label><label>Active <select id=\"readyEnabled\"><option value=\"true\">Yes</option><option value=\"false\">No</option></select></label></div><div class=\"row two\"><label>Mode <select id=\"readyMode\"><option value=\"once\">Once</option><option value=\"cron\">Repeating</option></select></label><label id=\"readyAtWrap\">At <input id=\"readyAt\" type=\"datetime-local\"></label><label id=\"readyTimeWrap\" class=\"hidden\">At <input id=\"readyTime\" type=\"time\" value=\"08:30\"></label></div><div class=\"days hidden\" id=\"readyDays\"></div><button class=\"primary\" id=\"addReady\">Add Ready Plan</button>";
   $("readyAt").value = localDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  var dayWrap = $("readyDays");
+  days.forEach(function(day) {
+    var button = document.createElement("button");
+    button.className = "day active";
+    button.textContent = day.slice(0, 1).toUpperCase();
+    button.dataset.day = day;
+    button.onclick = function() { button.classList.toggle("active"); };
+    dayWrap.appendChild(button);
+  });
+  $("readyMode").onchange = updateReadyMode;
+  updateReadyMode();
   $("addReady").onclick = function() {
-    var at = $("readyAt").value;
-    if (!at) return toast("Ready time is required", "bad");
     var plan = {
       id: "ready-by-" + Date.now(),
       type: "ready_by",
       name: $("readyName").value || "Ready by",
-      enabled: true,
-      target_temp: Number($("readyTemp").value || 36),
-      at: new Date(at).toISOString()
+      enabled: $("readyEnabled").value === "true",
+      target_temp: Number($("readyTemp").value || 36)
     };
+    if ($("readyMode").value === "cron") {
+      var cron = readyCron();
+      if (!cron) return toast("Ready time is required", "bad");
+      plan.cron = cron;
+    } else {
+      var at = $("readyAt").value;
+      if (!at) return toast("Ready time is required", "bad");
+      plan.at = new Date(at).toISOString();
+    }
     updatePlans(state.plans.concat([plan]));
   };
 }
 
+function updateReadyMode() {
+  var repeating = $("readyMode").value === "cron";
+  $("readyAtWrap").classList.toggle("hidden", repeating);
+  $("readyTimeWrap").classList.toggle("hidden", !repeating);
+  $("readyDays").classList.toggle("hidden", !repeating);
+}
+
+function readyCron() {
+  var time = $("readyTime").value;
+  if (!time || time.indexOf(":") < 0) return "";
+  var parts = time.split(":");
+  var selectedDays = qsa("#readyDays .day.active").map(function(button) { return button.dataset.day; });
+  var dayField = "*";
+  if (selectedDays.length > 0 && selectedDays.length < days.length) {
+    dayField = selectedDays.map(cronDay).join(",");
+  }
+  return Number(parts[1]) + " " + Number(parts[0]) + " * * " + dayField;
+}
+
+function cronDay(day) {
+  return {sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6}[day];
+}
+
 function renderWindowForm(view) {
-  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"windowName\" value=\"Filter window\"></label><label>Capability <select id=\"windowCap\"><option value=\"filter\">Filter</option><option value=\"heater\">Heater</option><option value=\"jets\">Jets</option><option value=\"bubbles\">Bubbles</option><option value=\"sanitizer\">Sanitizer</option></select></label><label>Enabled <select id=\"windowEnabled\"><option value=\"true\">On</option><option value=\"false\">Off</option></select></label></div><div class=\"row two\"><label>From <input id=\"windowFrom\" type=\"time\" value=\"02:00\"></label><label>To <input id=\"windowTo\" type=\"time\" value=\"04:00\"></label></div><div class=\"days\" id=\"windowDays\"></div><button class=\"primary\" id=\"addWindow\">Add Window</button>";
+  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"windowName\" value=\"Filter window\"></label><label>Capability <select id=\"windowCap\"><option value=\"filter\">Filter</option><option value=\"heater\">Heater</option><option value=\"jets\">Jets</option><option value=\"bubbles\">Bubbles</option><option value=\"sanitizer\">Sanitizer</option></select></label><label>Active <select id=\"windowEnabled\"><option value=\"true\">Yes</option><option value=\"false\">No</option></select></label></div><div class=\"row two\"><label>From <input id=\"windowFrom\" type=\"time\" value=\"02:00\"></label><label>To <input id=\"windowTo\" type=\"time\" value=\"04:00\"></label></div><div class=\"days\" id=\"windowDays\"></div><button class=\"primary\" id=\"addWindow\">Add Window</button>";
   var dayWrap = $("windowDays");
   days.forEach(function(day) {
     var button = document.createElement("button");
@@ -981,6 +1313,391 @@ function renderWindowForm(view) {
     };
     updatePlans(state.plans.concat([plan]));
   };
+}
+
+var timelineChartInstance = null;
+
+function renderTimeline() {
+  qsa("[data-timeline-range]").forEach(function(button) {
+    button.classList.toggle("active", button.dataset.timelineRange === state.timelineRange);
+  });
+  qsa("[data-timeline-mode]").forEach(function(button) {
+    button.classList.toggle("active", button.dataset.timelineMode === state.timelineMode);
+  });
+  var chart = $("timelineChart");
+  if (!state.token) {
+    $("timelineBadge").textContent = "Token";
+    $("timelineMeta").textContent = "History locked";
+    renderTimelineLegend(null);
+    renderTimelineMessage(chart, "No history loaded");
+    return;
+  }
+  var data = state.timeline;
+  if (!data || !data.from || !data.to) {
+    $("timelineBadge").textContent = state.timelineRange;
+    $("timelineMeta").textContent = "No history loaded";
+    renderTimelineLegend(null);
+    renderTimelineMessage(chart, "No history loaded");
+    return;
+  }
+  if (typeof echarts === "undefined") {
+    $("timelineBadge").textContent = data.range || state.timelineRange;
+    $("timelineMeta").textContent = "Chart library unavailable";
+    renderTimelineLegend(data);
+    renderTimelineMessage(chart, "Chart library unavailable");
+    return;
+  }
+  $("timelineBadge").textContent = data.range || state.timelineRange;
+  $("timelineMeta").textContent = timelineMeta(data);
+  renderTimelineLegend(data);
+  renderTimelineChart(chart, data);
+}
+
+function timelineMeta(data) {
+  var model = data.model || {};
+  var parts = [
+    formatDateTime(data.from) + " to " + formatDateTime(data.to),
+    "bucket " + formatDurationSeconds(data.bucket_seconds || 0),
+    state.timelineMode === "predicted" ? model.heating_model + ", " + model.cooling_model : "measured"
+  ];
+  if (data.warnings && data.warnings.length) parts.push(data.warnings.length + " warning" + (data.warnings.length === 1 ? "" : "s"));
+  return parts.join(" · ");
+}
+
+function renderTimelineLegend(data) {
+  var box = $("timelineLegend");
+  if (!box) return;
+  if (!data || !data.from || !data.to) {
+    box.innerHTML = "";
+    return;
+  }
+  var items = [
+    {label: state.timelineMode === "predicted" ? "Pool predicted" : "Pool measured", color: state.timelineMode === "predicted" ? "#235ea8" : "#007c89"},
+    {label: "Outside", color: "#8aa1a8"},
+    {label: "Target", kind: "dash"}
+  ];
+  if (state.timelineMode === "predicted") {
+    items.push({label: "Measured", color: "#172126", kind: "dot"});
+    items.push({label: "Correction", color: "#d97904", kind: "dot"});
+  }
+  if ((data.annotations || []).length) {
+    items.push({label: "Command/plan", color: "#172126", kind: "dot"});
+  }
+  timelineFeatureLegendItems(data.feature_spans || []).forEach(function(item) {
+    items.push(item);
+  });
+  box.innerHTML = items.map(function(item) {
+    var kind = item.kind || "line";
+    var style = item.color ? " style=\"background:" + item.color + "\"" : "";
+    return "<span class=\"legend-item\"><i class=\"legend-swatch " + kind + "\"" + style + "></i>" + escapeHTML(item.label) + "</span>";
+  }).join("");
+}
+
+function timelineFeatureLegendItems(spans) {
+  var colors = timelineFeatureColors();
+  var lanes = timelineLanes(spans);
+  return lanes.filter(function(lane) {
+    return spans.some(function(span) { return lane === "connected" ? span.connected === false : !!span[lane]; });
+  }).map(function(lane) {
+    return {label: timelineLaneLabel(lane), color: colors[lane], kind: "band"};
+  });
+}
+
+function renderTimelineMessage(chart, message) {
+  disposeTimelineChart();
+  chart.innerHTML = "<div class=\"timeline-empty\">" + escapeHTML(message) + "</div>";
+}
+
+function renderTimelineChart(chart, data) {
+  disposeTimelineChart();
+  chart.innerHTML = "";
+  var canvas = document.createElement("div");
+  canvas.className = "timeline-canvas";
+  chart.appendChild(canvas);
+  timelineChartInstance = echarts.init(canvas, null, {renderer: "canvas"});
+  timelineChartInstance.setOption(timelineOption(data), true);
+  setTimeout(function() {
+    if (timelineChartInstance) timelineChartInstance.resize();
+  }, 0);
+}
+
+function disposeTimelineChart() {
+  if (timelineChartInstance) {
+    timelineChartInstance.dispose();
+    timelineChartInstance = null;
+  }
+}
+
+function timelineOption(data) {
+  var from = new Date(data.from).getTime();
+  var to = new Date(data.to).getTime();
+  var modePoints = state.timelineMode === "predicted" ? (data.predicted || []) : (data.measured || []);
+  var measured = data.measured || [];
+  var target = data.target || [];
+  var values = timelineValues(modePoints, measured, target);
+  if (!values.length || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+    return {title: {text: "No timeline data", left: "center", top: "middle", textStyle: {fontSize: 14, color: "#5d6b73", fontWeight: 600}}};
+  }
+  var min = Math.floor(Math.min.apply(null, values)) - 1;
+  var max = Math.ceil(Math.max.apply(null, values)) + 1;
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  var lanes = timelineLanes(data.feature_spans || []);
+  var laneGridHeight = Math.max(58, lanes.length * 24 + 14);
+  var gridBottom = laneGridHeight + (isHistoryPage ? 58 : 34);
+  var option = {
+    animation: false,
+    grid: [
+      {left: 48, right: isHistoryPage ? 28 : 12, top: isHistoryPage ? 42 : 16, bottom: gridBottom},
+      {left: 48, right: isHistoryPage ? 28 : 12, height: laneGridHeight, bottom: isHistoryPage ? 42 : 12}
+    ],
+    legend: {show: false},
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      axisPointer: {type: "cross"},
+      formatter: timelineTooltip
+    },
+    axisPointer: {link: [{xAxisIndex: [0, 1]}]},
+    xAxis: [
+      {type: "time", min: from, max: to, axisLabel: {color: "#5d6b73"}, axisLine: {lineStyle: {color: "#d8e1e5"}}, splitLine: {show: true, lineStyle: {color: "#eef3f5"}}},
+      {type: "time", min: from, max: to, gridIndex: 1, axisLabel: {show: isHistoryPage, color: "#5d6b73"}, axisLine: {lineStyle: {color: "#d8e1e5"}}, splitLine: {show: false}}
+    ],
+    yAxis: [
+      {type: "value", min: min, max: max, axisLabel: {formatter: "{value}°", color: "#5d6b73"}, axisLine: {show: false}, splitLine: {lineStyle: {color: "#e6edf0"}}},
+      {type: "category", gridIndex: 1, data: lanes.map(timelineLaneLabel), inverse: true, axisTick: {show: false}, axisLine: {show: false}, axisLabel: {color: "#5d6b73", fontSize: 12}, splitLine: {show: true, lineStyle: {color: "#eef3f5"}}}
+    ],
+    series: timelineSeries(data, lanes, min, max)
+  };
+  if (isHistoryPage) {
+    option.dataZoom = [
+      {type: "inside", xAxisIndex: [0, 1], filterMode: "none"},
+      {type: "slider", xAxisIndex: [0, 1], filterMode: "none", bottom: 6, height: 24, borderColor: "#d8e1e5"}
+    ];
+  }
+  return option;
+}
+
+function timelineSeries(data, lanes, min, max) {
+  var measured = data.measured || [];
+  var modePoints = state.timelineMode === "predicted" ? (data.predicted || []) : measured;
+  var linePoints = modePoints.filter(function(point) { return point.kind !== "correction"; });
+  var series = [
+    {
+      name: "Outside",
+      type: "line",
+      data: timelineLineData(measured, "outside_temp_c"),
+      showSymbol: false,
+      connectNulls: false,
+      lineStyle: {color: "#8aa1a8", width: 2, opacity: .75},
+      itemStyle: {color: "#8aa1a8"},
+      emphasis: {focus: "series"}
+    },
+    {
+      name: "Target",
+      type: "line",
+      data: timelineTargetData(data.target || []),
+      showSymbol: false,
+      step: "end",
+      lineStyle: {color: "#8f6f2a", width: 2, type: "dashed"},
+      itemStyle: {color: "#8f6f2a"},
+      emphasis: {focus: "series"}
+    },
+    {
+      name: state.timelineMode === "predicted" ? "Pool predicted" : "Pool measured",
+      type: "line",
+      data: timelineLineData(linePoints, "pool_temp"),
+      showSymbol: false,
+      connectNulls: false,
+      lineStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#007c89", width: 3},
+      itemStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#007c89"},
+      emphasis: {focus: "series"}
+    }
+  ];
+  if (state.timelineMode === "predicted") {
+    series.push({
+      name: "Measured anchors",
+      type: "scatter",
+      data: timelineLineData(measured, "pool_temp"),
+      symbolSize: isHistoryPage ? 6 : 4,
+      itemStyle: {color: "#172126"}
+    });
+    series.push({
+      name: "Corrections",
+      type: "scatter",
+      data: timelineLineData((data.predicted || []).filter(function(point) { return point.kind === "correction"; }), "pool_temp"),
+      symbolSize: isHistoryPage ? 10 : 7,
+      itemStyle: {color: "#d97904"}
+    });
+  }
+  var annotations = timelineAnnotationData(data.annotations || [], max);
+  if (annotations.length) {
+    series.push({
+      name: "Annotations",
+      type: "scatter",
+      data: annotations,
+      symbol: "pin",
+      symbolSize: isHistoryPage ? 18 : 13,
+      itemStyle: {color: "#172126"},
+      tooltip: {trigger: "item", formatter: timelineItemTooltip}
+    });
+  }
+  var featureData = timelineFeatureData(data.feature_spans || [], lanes);
+  if (featureData.length) {
+    series.push({
+      name: "Features",
+      type: "custom",
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+      clip: true,
+      data: featureData,
+      renderItem: renderTimelineFeature,
+      tooltip: {trigger: "item", formatter: timelineItemTooltip}
+    });
+  }
+  return series;
+}
+
+function timelineValues(points, measured, target) {
+  var values = [];
+  points.forEach(function(point) {
+    if (point.pool_temp != null) values.push(Number(point.pool_temp));
+  });
+  measured.forEach(function(point) {
+    if (point.outside_temp_c != null) values.push(Number(point.outside_temp_c));
+  });
+  target.forEach(function(point) {
+    if (point.target_temp != null) values.push(Number(point.target_temp));
+  });
+  return values.filter(Number.isFinite);
+}
+
+function timelineLineData(points, field) {
+  return points.map(function(point) {
+    var value = point[field];
+    if (value == null || !Number.isFinite(Number(value))) {
+      return null;
+    }
+    return [new Date(point.t).getTime(), Number(value), point.confidence == null ? null : Number(point.confidence), point.model || "", point.kind || ""];
+  }).filter(function(point) { return point && Number.isFinite(point[0]); });
+}
+
+function timelineTargetData(points) {
+  return points.map(function(point) {
+    if (point.target_temp == null) {
+      return null;
+    }
+    return [new Date(point.t).getTime(), Number(point.target_temp)];
+  }).filter(function(point) { return point && Number.isFinite(point[0]) && Number.isFinite(point[1]); });
+}
+
+function timelineLanes(spans) {
+  var lanes = ["power", "filter", "heater"];
+  ["jets", "bubbles", "sanitizer"].forEach(function(cap) {
+    if (spans.some(function(span) { return !!span[cap]; })) lanes.push(cap);
+  });
+  if (spans.some(function(span) { return span.connected === false; })) lanes.push("connected");
+  return lanes;
+}
+
+function timelineLaneLabel(lane) {
+  return title(lane === "connected" ? "offline" : lane);
+}
+
+function timelineFeatureData(spans, lanes) {
+  var colors = timelineFeatureColors();
+  var data = [];
+  lanes.forEach(function(lane, index) {
+    spans.forEach(function(span) {
+      var active = lane === "connected" ? span.connected === false : !!span[lane];
+      if (!active) return;
+      var start = new Date(span.from).getTime();
+      var end = new Date(span.to).getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+      var label = timelineLaneLabel(lane);
+      data.push({
+        name: label + " · " + formatDateTime(span.from) + " to " + formatDateTime(span.to),
+        value: [start, end, index],
+        itemStyle: {color: colors[lane], opacity: .82}
+      });
+    });
+  });
+  return data;
+}
+
+function timelineFeatureColors() {
+  return {power:"#7a8790", filter:"#00a6b2", heater:"#d97904", jets:"#235ea8", bubbles:"#7c4dff", sanitizer:"#1d7f45", connected:"#b42318"};
+}
+
+function timelineAnnotationData(annotations, y) {
+  return annotations.map(function(annotation) {
+    var t = new Date(annotation.t).getTime();
+    if (!Number.isFinite(t)) return null;
+    return {
+      name: annotation.label || "Annotation",
+      value: [t, y, annotation.detail || "", annotation.source || ""]
+    };
+  }).filter(Boolean);
+}
+
+function renderTimelineFeature(params, api) {
+  var start = api.coord([api.value(0), api.value(2)]);
+  var end = api.coord([api.value(1), api.value(2)]);
+  var laneSize = api.size([0, 1]);
+  var height = Math.max(8, laneSize[1] * .58);
+  var shape = echarts.graphic.clipRectByRect({
+    x: start[0],
+    y: start[1] - height / 2,
+    width: Math.max(1, end[0] - start[0]),
+    height: height
+  }, {
+    x: params.coordSys.x,
+    y: params.coordSys.y,
+    width: params.coordSys.width,
+    height: params.coordSys.height
+  });
+  if (!shape) return;
+  return {type: "rect", shape: shape, style: api.style()};
+}
+
+function timelineTooltip(params) {
+  if (!Array.isArray(params)) return timelineItemTooltip(params);
+  var time = null;
+  var rows = [];
+  params.forEach(function(param) {
+    if (!param || !param.value) return;
+    if (param.seriesType === "custom") {
+      rows.push(param.marker + escapeHTML(param.name || "Feature"));
+      return;
+    }
+    var value = param.value;
+    if (time == null && value[0] != null) time = value[0];
+    if (param.seriesName === "Annotations") {
+      rows.push(param.marker + escapeHTML(param.name || "Annotation") + (value[2] ? " · " + escapeHTML(value[2]) : ""));
+      return;
+    }
+    if (value[1] == null || !Number.isFinite(Number(value[1]))) return;
+    var suffix = param.seriesName === "Outside" || param.seriesName.indexOf("Pool") === 0 || param.seriesName === "Target" || param.seriesName === "Measured anchors" || param.seriesName === "Corrections" ? "°" : "";
+    var detail = "";
+    if (value[2] != null && Number.isFinite(Number(value[2]))) detail = " · confidence " + Math.round(Number(value[2]) * 100) + "%";
+    if (value[3]) detail += " · " + escapeHTML(value[3]);
+    rows.push(param.marker + escapeHTML(param.seriesName) + ": " + Number(value[1]).toFixed(1) + suffix + detail);
+  });
+  if (time == null) return rows.join("<br>");
+  return "<strong>" + formatDateTime(time) + "</strong><br>" + rows.join("<br>");
+}
+
+function timelineItemTooltip(param) {
+  if (!param) return "";
+  if (param.seriesType === "custom") return escapeHTML(param.name || "Feature");
+  var value = param.value || [];
+  if (param.seriesName === "Annotations") {
+    return "<strong>" + formatDateTime(value[0]) + "</strong><br>" + escapeHTML(param.name || "Annotation") + (value[2] ? "<br>" + escapeHTML(value[2]) : "");
+  }
+  if (value[1] == null) return escapeHTML(param.name || "");
+  return "<strong>" + formatDateTime(value[0]) + "</strong><br>" + escapeHTML(param.seriesName || "") + ": " + Number(value[1]).toFixed(1) + "°";
 }
 
 function renderActivity() {
@@ -1182,7 +1899,7 @@ function runAction(action, message) {
   setBusy(true);
   action().then(function() {
     toast(message, "ok");
-    return Promise.all([loadStatus(), loadWeather(), loadPlans(), loadActivities()]);
+    return Promise.all([loadStatus(), loadWeather(), loadTimeline(), loadPlans(), loadActivities()]);
   }).catch(function(err) {
     toast(err.message, "bad");
   }).finally(function() {
@@ -1318,10 +2035,40 @@ function formatTempValue(value, unit) {
 
 function describePlan(plan) {
   if (isReservedManualPlan(plan)) return manualSummary(plan.desired_state || {}) + " until " + formatDateTime(plan.expires_at);
-  if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + formatDateTime(plan.at);
+  if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + readyScheduleLabel(plan);
   if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
   if (plan.type === "manual_override") return "Until " + formatDateTime(plan.expires_at);
   return title(plan.type);
+}
+
+function readyScheduleLabel(plan) {
+  if (plan.cron) return describeCron(plan.cron);
+  return formatDateTime(plan.at);
+}
+
+function describeCron(cron) {
+  var fields = String(cron || "").trim().split(/\s+/);
+  if (fields.length !== 5) return cron || "--";
+  if (!isSimpleCronNumber(fields[0]) || !isSimpleCronNumber(fields[1])) return cron;
+  var label = pad2(Number(fields[1])) + ":" + pad2(Number(fields[0]));
+  if (fields[2] !== "*" || fields[3] !== "*") return label + " cron " + cron;
+  return label + " " + describeCronDays(fields[4]);
+}
+
+function isSimpleCronNumber(value) {
+  return /^\d+$/.test(value);
+}
+
+function describeCronDays(field) {
+  if (!field || field === "*") return "daily";
+  var labels = {0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat", 7: "sun"};
+  var parts = field.split(",");
+  if (parts.length === 7) return "daily";
+  return parts.map(function(part) { return labels[part] || part; }).join(", ");
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
 }
 
 function weatherLocationLabel(location) {
@@ -1489,13 +2236,35 @@ qsa("[data-activity]").forEach(function(button) {
     renderActivity();
   };
 });
+qsa("[data-timeline-range]").forEach(function(button) {
+  button.onclick = function() {
+    state.timelineRange = button.dataset.timelineRange;
+    setBusy(true);
+    loadTimeline().finally(function() {
+      setBusy(false);
+      renderTimeline();
+    });
+  };
+});
+qsa("[data-timeline-mode]").forEach(function(button) {
+  button.onclick = function() {
+    state.timelineMode = button.dataset.timelineMode;
+    renderTimeline();
+  };
+});
+window.addEventListener("resize", function() {
+  if (timelineChartInstance) timelineChartInstance.resize();
+});
 
 updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (state.token && !state.pending) Promise.all([loadStatus(), loadWeather(), loadActivities()]).then(renderLivePanels);
+  if (!isHistoryPage && state.token && !state.pending) Promise.all([loadStatus(), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
+setInterval(function() {
+  if (state.token && !state.pending) loadTimeline().then(renderTimeline);
+}, 60000);
 setInterval(renderManual, 1000);
 </script>
 </body>

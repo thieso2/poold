@@ -115,7 +115,7 @@ func (s *Scheduler) NextWake(now time.Time, status pool.Status, plans []pool.Pla
 				add(*plan.ExpiresAt)
 			}
 		case pool.PlanReadyBy:
-			if startAt, readyAt, ok := s.readyByTimes(status, plan); ok {
+			if startAt, readyAt, ok := s.readyByTimes(now, status, plan); ok {
 				add(startAt)
 				add(readyAt)
 			}
@@ -127,7 +127,11 @@ func (s *Scheduler) NextWake(now time.Time, status pool.Status, plans []pool.Pla
 }
 
 func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool.DesiredState, plan pool.Plan) (pool.DesiredState, bool, string) {
-	if plan.TargetTemp == nil || plan.At == nil {
+	if plan.TargetTemp == nil {
+		return base, false, ""
+	}
+	startAt, _, ok := s.readyByTimes(now, status, plan)
+	if !ok {
 		return base, false, ""
 	}
 	current := 0
@@ -137,26 +141,32 @@ func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool
 		current = *plan.TargetTemp
 	}
 	desired := pool.DesiredState{TargetTemp: plan.TargetTemp}.Overlay(base)
+	if now.Before(startAt) {
+		if strings.TrimSpace(plan.Cron) == "" && current >= *plan.TargetTemp {
+			desired.Heater = pool.BoolPtr(false)
+			return desired, true, "target temperature reached"
+		}
+		return base, false, ""
+	}
 	if current >= *plan.TargetTemp {
 		desired.Heater = pool.BoolPtr(false)
 		return desired, true, "target temperature reached"
 	}
 
-	startAt, _, _ := s.readyByTimes(status, plan)
-	if now.Before(startAt) {
-		return base, false, ""
-	}
 	desired.Power = pool.BoolPtr(true)
 	desired.Filter = pool.BoolPtr(true)
 	desired.Heater = pool.BoolPtr(true)
 	return desired, true, fmt.Sprintf("ready-by heating window started at %s", startAt.Format(time.RFC3339))
 }
 
-func (s *Scheduler) readyByTimes(status pool.Status, plan pool.Plan) (time.Time, time.Time, bool) {
-	if plan.TargetTemp == nil || plan.At == nil {
+func (s *Scheduler) readyByTimes(now time.Time, status pool.Status, plan pool.Plan) (time.Time, time.Time, bool) {
+	if plan.TargetTemp == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	at := plan.At.In(s.config.Location)
+	at, ok := s.readyByAt(now, plan)
+	if !ok {
+		return time.Time{}, time.Time{}, false
+	}
 	current := *plan.TargetTemp
 	if status.CurrentTemp != nil {
 		current = *status.CurrentTemp
@@ -167,6 +177,20 @@ func (s *Scheduler) readyByTimes(status pool.Status, plan pool.Plan) (time.Time,
 	}
 	required := time.Duration((float64(delta) / s.config.HeatingRateCPerHour) * float64(time.Hour))
 	return at.Add(-required).Add(-s.config.ReadinessBuffer), at, true
+}
+
+func (s *Scheduler) readyByAt(now time.Time, plan pool.Plan) (time.Time, bool) {
+	if cron := strings.TrimSpace(plan.Cron); cron != "" {
+		at, ok, err := pool.NextCronTime(cron, now, s.config.Location)
+		if err != nil || !ok {
+			return time.Time{}, false
+		}
+		return at, true
+	}
+	if plan.At == nil {
+		return time.Time{}, false
+	}
+	return plan.At.In(s.config.Location), true
 }
 
 func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, plans []pool.Plan) (pool.DesiredState, bool, string) {

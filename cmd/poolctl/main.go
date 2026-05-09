@@ -151,15 +151,27 @@ func runReadyBy(c client, args []string) error {
 	fs := flag.NewFlagSet("ready-by", flag.ContinueOnError)
 	temp := fs.Int("temp", 36, "target temperature")
 	at := fs.String("at", "", "ready time, e.g. Sat 08:30")
+	cron := fs.String("cron", "", "recurring ready schedule, e.g. \"30 8 * * 6\"")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *at == "" {
-		return fmt.Errorf("ready-by requires --at")
+	if (*at == "") == (*cron == "") {
+		return fmt.Errorf("ready-by requires exactly one of --at or --cron")
 	}
-	readyAt, err := parseLocalTime(*at)
-	if err != nil {
-		return err
+	var readyAt *time.Time
+	name := "Ready by"
+	if *at != "" {
+		parsedAt, err := parseLocalTime(*at)
+		if err != nil {
+			return err
+		}
+		readyAt = &parsedAt
+		name = fmt.Sprintf("Ready by %s", parsedAt.Format("Mon 15:04"))
+	} else {
+		if _, err := pool.ParseCronSpec(*cron); err != nil {
+			return err
+		}
+		name = fmt.Sprintf("Ready by cron %s", *cron)
 	}
 	plans, err := getPlans(c)
 	if err != nil {
@@ -168,10 +180,11 @@ func runReadyBy(c client, args []string) error {
 	plans = append(plans, pool.Plan{
 		ID:         fmt.Sprintf("ready-by-%d", time.Now().Unix()),
 		Type:       pool.PlanReadyBy,
-		Name:       fmt.Sprintf("Ready by %s", readyAt.Format("Mon 15:04")),
+		Name:       name,
 		Enabled:    true,
 		TargetTemp: pool.IntPtr(*temp),
-		At:         &readyAt,
+		At:         readyAt,
+		Cron:       *cron,
 	})
 	return putPlans(c, plans)
 }
@@ -756,6 +769,7 @@ func usage() {
   poolctl plans list
   poolctl plans apply <file>
   poolctl ready-by --temp 36 --at "Sat 08:30"
+  poolctl ready-by --temp 36 --cron "30 8 * * 6"
   poolctl filter --from "02:00" --to "04:00"`)
 }
 

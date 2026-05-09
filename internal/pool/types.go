@@ -3,6 +3,7 @@ package pool
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -132,6 +133,7 @@ type Plan struct {
 	From         string       `json:"from,omitempty"`
 	To           string       `json:"to,omitempty"`
 	Days         []string     `json:"days,omitempty"`
+	Cron         string       `json:"cron,omitempty"`
 	TargetTemp   *int         `json:"target_temp,omitempty"`
 	At           *time.Time   `json:"at,omitempty"`
 	DesiredState DesiredState `json:"desired_state,omitempty"`
@@ -162,8 +164,18 @@ func (p Plan) Validate() error {
 		if p.TargetTemp == nil {
 			return fmt.Errorf("ready_by plan requires target_temp")
 		}
-		if p.At == nil {
-			return fmt.Errorf("ready_by plan requires at")
+		hasAt := p.At != nil
+		hasCron := strings.TrimSpace(p.Cron) != ""
+		if !hasAt && !hasCron {
+			return fmt.Errorf("ready_by plan requires at or cron")
+		}
+		if hasAt && hasCron {
+			return fmt.Errorf("ready_by plan cannot have both at and cron")
+		}
+		if hasCron {
+			if _, err := ParseCronSpec(p.Cron); err != nil {
+				return fmt.Errorf("invalid ready_by cron: %w", err)
+			}
 		}
 	case PlanManualOverride:
 		if p.ExpiresAt == nil {
@@ -196,6 +208,235 @@ func ParseClock(value string) (Clock, error) {
 
 func (c Clock) Minutes() int {
 	return c.Hour*60 + c.Minute
+}
+
+// CronSpec is a parsed five-field cron schedule.
+type CronSpec struct {
+	minutes cronField
+	hours   cronField
+	dom     cronField
+	months  cronField
+	dow     cronField
+}
+
+type cronField struct {
+	any    bool
+	values map[int]bool
+}
+
+// ParseCronSpec parses a five-field cron expression.
+func ParseCronSpec(expr string) (CronSpec, error) {
+	fields := strings.Fields(expr)
+	if len(fields) != 5 {
+		return CronSpec{}, fmt.Errorf("cron must have 5 fields")
+	}
+
+	minutes, err := parseCronField("minute", fields[0], 0, 59, nil, nil)
+	if err != nil {
+		return CronSpec{}, err
+	}
+	hours, err := parseCronField("hour", fields[1], 0, 23, nil, nil)
+	if err != nil {
+		return CronSpec{}, err
+	}
+	dom, err := parseCronField("day-of-month", fields[2], 1, 31, nil, nil)
+	if err != nil {
+		return CronSpec{}, err
+	}
+	months, err := parseCronField("month", fields[3], 1, 12, monthAliases(), nil)
+	if err != nil {
+		return CronSpec{}, err
+	}
+	dow, err := parseCronField("day-of-week", fields[4], 0, 7, weekdayAliases(), normalizeCronWeekday)
+	if err != nil {
+		return CronSpec{}, err
+	}
+
+	return CronSpec{
+		minutes: minutes,
+		hours:   hours,
+		dom:     dom,
+		months:  months,
+		dow:     dow,
+	}, nil
+}
+
+// NextCronTime returns the next scheduled minute at or after after.
+func NextCronTime(expr string, after time.Time, loc *time.Location) (time.Time, bool, error) {
+	spec, err := ParseCronSpec(expr)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+
+	cursor := after.In(loc).Truncate(time.Minute)
+	deadline := cursor.AddDate(1, 0, 1)
+	for !cursor.After(deadline) {
+		if spec.Matches(cursor) {
+			return cursor, true, nil
+		}
+		cursor = cursor.Add(time.Minute)
+	}
+	return time.Time{}, false, nil
+}
+
+// Matches reports whether the time matches the cron schedule.
+func (s CronSpec) Matches(t time.Time) bool {
+	if !s.minutes.matches(t.Minute()) || !s.hours.matches(t.Hour()) || !s.months.matches(int(t.Month())) {
+		return false
+	}
+
+	dayOfMonth := s.dom.matches(t.Day())
+	dayOfWeek := s.dow.matches(int(t.Weekday()))
+	if !s.dom.any && !s.dow.any {
+		return dayOfMonth || dayOfWeek
+	}
+	return dayOfMonth && dayOfWeek
+}
+
+func parseCronField(name, spec string, min, max int, aliases map[string]int, normalize func(int) (int, error)) (cronField, error) {
+	spec = strings.ToLower(strings.TrimSpace(spec))
+	if spec == "" {
+		return cronField{}, fmt.Errorf("%s field is empty", name)
+	}
+
+	field := cronField{any: spec == "*", values: map[int]bool{}}
+	parts := strings.Split(spec, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return cronField{}, fmt.Errorf("%s field has an empty list item", name)
+		}
+		step := 1
+		rangeSpec := part
+		if strings.Contains(part, "/") {
+			pieces := strings.Split(part, "/")
+			if len(pieces) != 2 {
+				return cronField{}, fmt.Errorf("%s field has invalid step %q", name, part)
+			}
+			rangeSpec = pieces[0]
+			parsedStep, err := strconv.Atoi(pieces[1])
+			if err != nil || parsedStep <= 0 {
+				return cronField{}, fmt.Errorf("%s field has invalid step %q", name, pieces[1])
+			}
+			step = parsedStep
+		}
+
+		start, end, err := parseCronRange(name, rangeSpec, min, max, aliases)
+		if err != nil {
+			return cronField{}, err
+		}
+		for value := start; value <= end; value += step {
+			normalized := value
+			if normalize != nil {
+				var err error
+				normalized, err = normalize(value)
+				if err != nil {
+					return cronField{}, fmt.Errorf("%s field has invalid value %d: %w", name, value, err)
+				}
+			}
+			field.values[normalized] = true
+		}
+	}
+	return field, nil
+}
+
+func parseCronRange(name, spec string, min, max int, aliases map[string]int) (int, int, error) {
+	if spec == "*" {
+		return min, max, nil
+	}
+	if strings.Contains(spec, "-") {
+		pieces := strings.Split(spec, "-")
+		if len(pieces) != 2 {
+			return 0, 0, fmt.Errorf("%s field has invalid range %q", name, spec)
+		}
+		start, err := parseCronValue(name, pieces[0], min, max, aliases)
+		if err != nil {
+			return 0, 0, err
+		}
+		end, err := parseCronValue(name, pieces[1], min, max, aliases)
+		if err != nil {
+			return 0, 0, err
+		}
+		if start > end {
+			return 0, 0, fmt.Errorf("%s field range %q runs backwards", name, spec)
+		}
+		return start, end, nil
+	}
+	value, err := parseCronValue(name, spec, min, max, aliases)
+	if err != nil {
+		return 0, 0, err
+	}
+	return value, value, nil
+}
+
+func parseCronValue(name, value string, min, max int, aliases map[string]int) (int, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if aliases != nil {
+		if aliased, ok := aliases[value]; ok {
+			return aliased, nil
+		}
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s field has invalid value %q", name, value)
+	}
+	if parsed < min || parsed > max {
+		return 0, fmt.Errorf("%s field value %d is outside %d-%d", name, parsed, min, max)
+	}
+	return parsed, nil
+}
+
+func (f cronField) matches(value int) bool {
+	return f.any || f.values[value]
+}
+
+func normalizeCronWeekday(value int) (int, error) {
+	if value == 7 {
+		return 0, nil
+	}
+	return value, nil
+}
+
+func monthAliases() map[string]int {
+	return map[string]int{
+		"jan": 1,
+		"feb": 2,
+		"mar": 3,
+		"apr": 4,
+		"may": 5,
+		"jun": 6,
+		"jul": 7,
+		"aug": 8,
+		"sep": 9,
+		"oct": 10,
+		"nov": 11,
+		"dec": 12,
+	}
+}
+
+func weekdayAliases() map[string]int {
+	return map[string]int{
+		"sun":       0,
+		"sunday":    0,
+		"mon":       1,
+		"monday":    1,
+		"tue":       2,
+		"tues":      2,
+		"tuesday":   2,
+		"wed":       3,
+		"wednesday": 3,
+		"thu":       4,
+		"thur":      4,
+		"thurs":     4,
+		"thursday":  4,
+		"fri":       5,
+		"friday":    5,
+		"sat":       6,
+		"saturday":  6,
+	}
 }
 
 type CommandRequest struct {
@@ -268,6 +509,94 @@ type Observation struct {
 	ObservationCount int              `json:"observation_count"`
 	Status           Status           `json:"status"`
 	Weather          *WeatherSnapshot `json:"weather,omitempty"`
+}
+
+// TimelineResponse is the chart-ready dashboard history payload.
+type TimelineResponse struct {
+	From             time.Time             `json:"from"`
+	To               time.Time             `json:"to"`
+	Range            string                `json:"range"`
+	GeneratedAt      time.Time             `json:"generated_at"`
+	BucketSeconds    int64                 `json:"bucket_seconds"`
+	Unit             string                `json:"unit"`
+	RawUnit          string                `json:"raw_unit,omitempty"`
+	WeatherAvailable bool                  `json:"weather_available"`
+	Measured         []TimelinePoint       `json:"measured"`
+	Predicted        []TimelinePoint       `json:"predicted"`
+	Target           []TimelineTargetPoint `json:"target"`
+	FeatureSpans     []TimelineFeatureSpan `json:"feature_spans"`
+	Annotations      []TimelineAnnotation  `json:"annotations"`
+	Model            TimelineModel         `json:"model"`
+	Warnings         []TimelineWarning     `json:"warnings,omitempty"`
+}
+
+// TimelinePoint is a measured or predicted temperature point.
+type TimelinePoint struct {
+	T                    time.Time `json:"t"`
+	PoolTemp             *float64  `json:"pool_temp,omitempty"`
+	OutsideTempC         *float64  `json:"outside_temp_c,omitempty"`
+	WeatherAgeSeconds    *int64    `json:"weather_age_seconds,omitempty"`
+	Confidence           float64   `json:"confidence"`
+	Kind                 string    `json:"kind,omitempty"`
+	Model                string    `json:"model,omitempty"`
+	SourceObservationIDs []int64   `json:"source_observation_ids,omitempty"`
+}
+
+// TimelineTargetPoint is a target-temperature step point.
+type TimelineTargetPoint struct {
+	T                    time.Time `json:"t"`
+	TargetTemp           *float64  `json:"target_temp,omitempty"`
+	SourceObservationIDs []int64   `json:"source_observation_ids,omitempty"`
+}
+
+// TimelineFeatureSpan is a merged span of binary feature state.
+type TimelineFeatureSpan struct {
+	From                 time.Time `json:"from"`
+	To                   time.Time `json:"to"`
+	Power                bool      `json:"power"`
+	Filter               bool      `json:"filter"`
+	Heater               bool      `json:"heater"`
+	Jets                 bool      `json:"jets"`
+	Bubbles              bool      `json:"bubbles"`
+	Sanitizer            bool      `json:"sanitizer"`
+	Connected            bool      `json:"connected"`
+	SourceObservationIDs []int64   `json:"source_observation_ids,omitempty"`
+}
+
+// TimelineAnnotation is a compact command or plan marker for chart tooltips.
+type TimelineAnnotation struct {
+	T        time.Time `json:"t"`
+	Type     string    `json:"type"`
+	Label    string    `json:"label"`
+	Detail   string    `json:"detail,omitempty"`
+	SourceID int64     `json:"source_id"`
+}
+
+// TimelineModel describes the rates used for prediction.
+type TimelineModel struct {
+	HeatingRateCPerHour    float64                 `json:"heating_rate_c_per_hour"`
+	HeatingModel           string                  `json:"heating_model"`
+	HeatingSamples         int                     `json:"heating_samples"`
+	HeatingDurationSeconds int64                   `json:"heating_duration_seconds"`
+	CoolingRateCPerHour    float64                 `json:"cooling_rate_c_per_hour"`
+	CoolingModel           string                  `json:"cooling_model"`
+	CoolingSamples         int                     `json:"cooling_samples"`
+	CoolingDurationSeconds int64                   `json:"cooling_duration_seconds"`
+	CoolingBuckets         map[string]TimelineRate `json:"cooling_buckets,omitempty"`
+}
+
+// TimelineRate reports evidence for a learned or fallback rate.
+type TimelineRate struct {
+	RateCPerHour    float64 `json:"rate_c_per_hour"`
+	Model           string  `json:"model"`
+	Samples         int     `json:"samples"`
+	DurationSeconds int64   `json:"duration_seconds"`
+}
+
+// TimelineWarning reports non-fatal prediction or data-quality issues.
+type TimelineWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 type Health struct {

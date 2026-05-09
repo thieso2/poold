@@ -134,6 +134,53 @@ func TestReadyByHeatingStartCalculation(t *testing.T) {
 	}
 }
 
+func TestRecurringReadyByCronHeatingStartCalculation(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	current := 30
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		Cron:       "30 8 * * 6",
+	}
+	status := pool.Status{CurrentTemp: &current, TargetTemp: 30}
+
+	before := s.Evaluate(at(loc, 2026, 5, 9, 1, 59), status, pool.DesiredState{}, []pool.Plan{plan})
+	if before.Source != "default" {
+		t.Fatalf("before start source = %q, want default", before.Source)
+	}
+
+	active := s.Evaluate(at(loc, 2026, 5, 9, 2, 0), status, pool.DesiredState{}, []pool.Plan{plan})
+	if active.Desired.Heater == nil || !*active.Desired.Heater || active.Desired.Filter == nil || !*active.Desired.Filter {
+		t.Fatalf("heater/filter should be on at calculated start: %+v", active)
+	}
+
+	after := s.Evaluate(at(loc, 2026, 5, 9, 8, 31), status, pool.DesiredState{}, []pool.Plan{plan})
+	if after.Source != "default" {
+		t.Fatalf("after ready minute source = %q, want default", after.Source)
+	}
+}
+
+func TestRecurringReadyByCronDoesNotBlockBeforeStartWhenAlreadyWarm(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	current := 37
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		Cron:       "30 8 * * *",
+	}
+
+	eval := s.Evaluate(at(loc, 2026, 5, 8, 10, 0), pool.Status{CurrentTemp: &current}, pool.DesiredState{}, []pool.Plan{plan})
+	if eval.Source != "default" {
+		t.Fatalf("warm recurring plan before start source = %q, want default", eval.Source)
+	}
+}
+
 func TestManualOverridePrecedence(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
@@ -261,6 +308,24 @@ func TestNextWakeReadyBy(t *testing.T) {
 	wake, ok := s.NextWake(at(loc, 2026, 5, 8, 23, 0), pool.Status{CurrentTemp: &current}, []pool.Plan{plan})
 	if !ok || !wake.Equal(at(loc, 2026, 5, 9, 0, 0)) {
 		t.Fatalf("wake = %s ok=%v, want heating start", wake, ok)
+	}
+}
+
+func TestNextWakeRecurringReadyBy(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	current := 30
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		Cron:       "30 8 * * 6",
+	}
+
+	wake, ok := s.NextWake(at(loc, 2026, 5, 8, 23, 0), pool.Status{CurrentTemp: &current}, []pool.Plan{plan})
+	if !ok || !wake.Equal(at(loc, 2026, 5, 9, 2, 0)) {
+		t.Fatalf("wake = %s ok=%v, want recurring heating start", wake, ok)
 	}
 }
 

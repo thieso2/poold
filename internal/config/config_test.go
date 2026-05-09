@@ -53,3 +53,24 @@ func TestLoadObservationFlushInterval(t *testing.T) {
 		t.Fatalf("ObservationFlushInterval = %s, want 2m", cfg.ObservationFlushInterval)
 	}
 }
+
+func TestLoadCoolingRate(t *testing.T) {
+	t.Setenv("POOLD_COOLING_RATE_C_PER_HOUR", "")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CoolingRateCPerHour != 0.10 {
+		t.Fatalf("CoolingRateCPerHour = %v, want 0.10", cfg.CoolingRateCPerHour)
+	}
+
+	t.Setenv("POOLD_COOLING_RATE_C_PER_HOUR", "0.25")
+	cfg, err = Load(nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CoolingRateCPerHour != 0.25 {
+		t.Fatalf("CoolingRateCPerHour = %v, want 0.25", cfg.CoolingRateCPerHour)
+	}
+}

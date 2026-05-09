@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -368,6 +369,89 @@ func (s *Store) LatestObservationsPage(ctx context.Context, limit, offset int) (
 	return scanObservations(rows)
 }
 
+func (s *Store) ObservationsRange(ctx context.Context, from, to time.Time) ([]pool.Observation, error) {
+	var observations []pool.Observation
+
+	priorRows, err := s.db.QueryContext(ctx, `
+		SELECT id,
+			observed_at,
+			COALESCE(last_observed_at, observed_at),
+			COALESCE(observation_count, 1),
+			status_json,
+			weather_observation_id,
+			outside_temp_c,
+			clouds_percent,
+			weather_main,
+			weather_description,
+			wind_speed,
+			weather_age_seconds
+		FROM observations
+		WHERE COALESCE(last_observed_at, observed_at) < ?
+		ORDER BY COALESCE(last_observed_at, observed_at) DESC
+		LIMIT 1
+	`, encodeTime(from))
+	if err != nil {
+		return nil, err
+	}
+	prior, err := scanObservations(priorRows)
+	priorRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	observations = append(observations, prior...)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id,
+			observed_at,
+			COALESCE(last_observed_at, observed_at),
+			COALESCE(observation_count, 1),
+			status_json,
+			weather_observation_id,
+			outside_temp_c,
+			clouds_percent,
+			weather_main,
+			weather_description,
+			wind_speed,
+			weather_age_seconds
+		FROM observations
+		WHERE COALESCE(last_observed_at, observed_at) >= ?
+			AND observed_at <= ?
+		ORDER BY observed_at ASC
+	`, encodeTime(from), encodeTime(to))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	inRange, err := scanObservations(rows)
+	if err != nil {
+		return nil, err
+	}
+	observations = append(observations, inRange...)
+	s.applyPendingObservation(observations)
+	return observations, nil
+}
+
+func (s *Store) applyPendingObservation(observations []pool.Observation) {
+	s.observationMu.Lock()
+	defer s.observationMu.Unlock()
+
+	pending := s.pendingObservation
+	if pending == nil {
+		return
+	}
+	for i := range observations {
+		if observations[i].ID != pending.id {
+			continue
+		}
+		observations[i].LastObservedAt = pending.status.ObservedAt
+		observations[i].Status = pending.status
+		observations[i].Weather = pending.weather
+		observations[i].ObservationCount += pending.countDelta
+		return
+	}
+}
+
 func scanObservations(rows *sql.Rows) ([]pool.Observation, error) {
 	var observations []pool.Observation
 	for rows.Next() {
@@ -571,6 +655,35 @@ func (s *Store) EventsPage(ctx context.Context, query EventQuery) ([]pool.Event,
 	return scanEvents(rows)
 }
 
+func (s *Store) EventsRange(ctx context.Context, from, to time.Time, types []string, limit int) ([]pool.Event, error) {
+	limit = normalizedListLimit(limit)
+	where := "WHERE created_at >= ? AND created_at <= ?"
+	args := []any{encodeTime(from), encodeTime(to)}
+	if len(types) > 0 {
+		placeholders := make([]string, 0, len(types))
+		for _, typ := range types {
+			placeholders = append(placeholders, "?")
+			args = append(args, typ)
+		}
+		where += " AND type IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT id, created_at, type, message, data_json
+		FROM events
+		%s
+		ORDER BY created_at ASC, id ASC
+		LIMIT ?
+	`, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanEvents(rows)
+}
+
 func scanEvents(rows *sql.Rows) ([]pool.Event, error) {
 	var events []pool.Event
 	for rows.Next() {
@@ -612,6 +725,24 @@ func (s *Store) LatestCommands(ctx context.Context, limit, offset int) ([]pool.C
 		LIMIT ?
 		OFFSET ?
 	`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanCommands(rows)
+}
+
+func (s *Store) CommandsRange(ctx context.Context, from, to time.Time, limit int) ([]pool.CommandRecord, error) {
+	limit = normalizedListLimit(limit)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, issued_at, completed_at, capability, state_json, value_json, source, success, error, status_json
+		FROM commands
+		WHERE issued_at >= ?
+			AND issued_at <= ?
+		ORDER BY issued_at ASC
+		LIMIT ?
+	`, encodeTime(from), encodeTime(to), limit)
 	if err != nil {
 		return nil, err
 	}

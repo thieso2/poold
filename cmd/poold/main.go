@@ -46,6 +46,11 @@ func main() {
 		EventHeartbeat:           cfg.EventHeartbeat,
 		ObservationFlushInterval: cfg.ObservationFlushInterval,
 		CommandConfirmDelay:      cfg.CommandConfirmDelay,
+		HeatingRateCPerHour:      cfg.HeatingRateCPerHour,
+		CoolingRateCPerHour:      cfg.CoolingRateCPerHour,
+		PollIdleInterval:         cfg.PollIdleInterval,
+		PollStableInterval:       cfg.PollStableInterval,
+		PollActiveInterval:       cfg.PollActiveInterval,
 		WeatherProvider:          weather.New(),
 	})
 

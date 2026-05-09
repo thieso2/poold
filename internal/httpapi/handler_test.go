@@ -47,8 +47,34 @@ func TestWebUIIsPublic(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Make permanent") {
 		t.Fatal("manual permanent action missing")
 	}
+	if !strings.Contains(rec.Body.String(), eChartsCDN) {
+		t.Fatal("ECharts CDN script missing")
+	}
 	if strings.Contains(rec.Body.String(), "Desired State") || strings.Contains(rec.Body.String(), "Set Temperature") {
 		t.Fatal("legacy desired/direct controls should not be visible")
+	}
+}
+
+func TestHistoryUIIsPublic(t *testing.T) {
+	handler, _ := testAPI(t)
+	req := httptest.NewRequest(http.MethodGet, "/history", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("content type = %q, want html", contentType)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-page="history"`) {
+		t.Fatal("history page mode missing")
+	}
+	if !strings.Contains(body, `href="/"`) || !strings.Contains(body, "Dashboard") {
+		t.Fatal("history dashboard back link missing")
+	}
+	if !strings.Contains(body, eChartsCDN) {
+		t.Fatal("ECharts CDN script missing")
 	}
 }
 
