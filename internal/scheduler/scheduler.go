@@ -146,6 +146,12 @@ func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool
 			desired.Heater = pool.BoolPtr(false)
 			return desired, true, "target temperature reached"
 		}
+		if status.Heater && current < *plan.TargetTemp {
+			desired.Power = pool.BoolPtr(true)
+			desired.Filter = pool.BoolPtr(true)
+			desired.Heater = pool.BoolPtr(true)
+			return desired, true, "ready-by heating already active"
+		}
 		return base, false, ""
 	}
 	if current >= *plan.TargetTemp {

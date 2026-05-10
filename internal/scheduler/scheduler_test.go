@@ -163,6 +163,30 @@ func TestRecurringReadyByCronHeatingStartCalculation(t *testing.T) {
 	}
 }
 
+func TestRecurringReadyByCronKeepsHeatingAfterStartTimeRecalculates(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		Cron:       "30 8 * * 6",
+	}
+
+	current := 30
+	active := s.Evaluate(at(loc, 2026, 5, 9, 2, 0), pool.Status{CurrentTemp: &current}, pool.DesiredState{}, []pool.Plan{plan})
+	if active.Desired.Heater == nil || !*active.Desired.Heater {
+		t.Fatalf("heater should be on at initial calculated start: %+v", active)
+	}
+
+	current = 31
+	sticky := s.Evaluate(at(loc, 2026, 5, 9, 2, 5), pool.Status{CurrentTemp: &current, Heater: true}, pool.DesiredState{}, []pool.Plan{plan})
+	if sticky.Desired.Heater == nil || !*sticky.Desired.Heater || sticky.Source != "ready" {
+		t.Fatalf("ready-by plan should keep heating after recalculated start moves later: %+v", sticky)
+	}
+}
+
 func TestRecurringReadyByCronDoesNotBlockBeforeStartWhenAlreadyWarm(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
