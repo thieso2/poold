@@ -18,6 +18,7 @@ type Config struct {
 	HeatingRateCPerHour      float64
 	CoolingRateCPerHour      float64
 	ReadinessBuffer          time.Duration
+	ReadyByReheatDelta       int
 	PollStartupInterval      time.Duration
 	PollIdleInterval         time.Duration
 	PollStableInterval       time.Duration
@@ -41,6 +42,7 @@ func Load(args []string) (Config, error) {
 		HeatingRateCPerHour:      envFloat("POOLD_HEATING_RATE_C_PER_HOUR", 0.75),
 		CoolingRateCPerHour:      envFloat("POOLD_COOLING_RATE_C_PER_HOUR", 0.10),
 		ReadinessBuffer:          envDuration("POOLD_READINESS_BUFFER", 30*time.Minute),
+		ReadyByReheatDelta:       envInt("POOLD_READY_BY_REHEAT_DELTA", 2),
 		PollStartupInterval:      envDuration("POOLD_POLL_STARTUP_INTERVAL", 10*time.Second),
 		PollIdleInterval:         envDuration("POOLD_POLL_IDLE_INTERVAL", 10*time.Minute),
 		PollStableInterval:       envDuration("POOLD_POLL_STABLE_INTERVAL", envDuration("POOLD_POLL_INTERVAL", 5*time.Minute)),
@@ -70,6 +72,7 @@ func Load(args []string) (Config, error) {
 	fs.Float64Var(&cfg.HeatingRateCPerHour, "heating-rate", cfg.HeatingRateCPerHour, "heating rate in C per hour")
 	fs.Float64Var(&cfg.CoolingRateCPerHour, "cooling-rate", cfg.CoolingRateCPerHour, "fallback cooling rate in C per hour")
 	fs.DurationVar(&cfg.ReadinessBuffer, "readiness-buffer", cfg.ReadinessBuffer, "ready-by safety buffer")
+	fs.IntVar(&cfg.ReadyByReheatDelta, "ready-by-reheat-delta", cfg.ReadyByReheatDelta, "ready-by reheating threshold below target in degrees")
 	fs.DurationVar(&cfg.PollStableInterval, "poll-interval", cfg.PollStableInterval, "stable scheduler/status poll interval")
 	fs.DurationVar(&cfg.PollStartupInterval, "poll-startup-interval", cfg.PollStartupInterval, "startup status poll interval before first success")
 	fs.DurationVar(&cfg.PollIdleInterval, "poll-idle-interval", cfg.PollIdleInterval, "idle or power-off status poll interval")
@@ -109,6 +112,18 @@ func envFloat(key string, fallback float64) float64 {
 		return fallback
 	}
 	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fallback
 	}

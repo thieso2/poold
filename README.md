@@ -104,6 +104,7 @@ Set options with environment variables or daemon flags.
 | `POOLD_HEATING_RATE_C_PER_HOUR` | `0.75` | Heating estimate for ready-by plans |
 | `POOLD_COOLING_RATE_C_PER_HOUR` | `0.10` | Fallback cooling estimate for dashboard predictions |
 | `POOLD_READINESS_BUFFER` | `30m` | Extra lead time before ready-by target |
+| `POOLD_READY_BY_REHEAT_DELTA` | `2` | Degrees below target before a satisfied ready-by occurrence reheats |
 | `POOLD_POLL_STARTUP_INTERVAL` | `10s` | Retry interval before first successful poll |
 | `POOLD_POLL_IDLE_INTERVAL` | `10m` | Poll interval when powered off |
 | `POOLD_POLL_STABLE_INTERVAL` | `5m` | Poll interval when powered on but inactive |
@@ -195,6 +196,8 @@ Plan precedence is:
 Hardware constraints are applied before enforcement. Any equipment-on state implies power-on, heater-on also implies filter-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
 Time-window plans turn a capability on while the window is active. Outside the window, that capability returns to the stored desired state instead of being forced off.
+
+Ready-by plans use persisted per-occurrence hysteresis to avoid command chatter around whole-degree temperature readings. Each occurrence heats until the target has been observed once, then stays satisfied at `target - 1`; it only reheats at `target - POOLD_READY_BY_REHEAT_DELTA` and continues reheating until the target is reached again.
 
 ## API
 

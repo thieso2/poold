@@ -39,6 +39,7 @@ func main() {
 		HeatingRateCPerHour: cfg.HeatingRateCPerHour,
 		ReadinessBuffer:     cfg.ReadinessBuffer,
 		Location:            cfg.Location,
+		ReadyByReheatDelta:  cfg.ReadyByReheatDelta,
 	})
 	service := httpapi.NewService(st, poolClient, sched, httpapi.ServiceConfig{
 		ObservationRetention:     cfg.ObservationRetention,

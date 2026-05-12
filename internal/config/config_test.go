@@ -74,3 +74,24 @@ func TestLoadCoolingRate(t *testing.T) {
 		t.Fatalf("CoolingRateCPerHour = %v, want 0.25", cfg.CoolingRateCPerHour)
 	}
 }
+
+func TestLoadReadyByReheatDelta(t *testing.T) {
+	t.Setenv("POOLD_READY_BY_REHEAT_DELTA", "")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ReadyByReheatDelta != 2 {
+		t.Fatalf("ReadyByReheatDelta = %d, want 2", cfg.ReadyByReheatDelta)
+	}
+
+	t.Setenv("POOLD_READY_BY_REHEAT_DELTA", "3")
+	cfg, err = Load(nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ReadyByReheatDelta != 3 {
+		t.Fatalf("ReadyByReheatDelta = %d, want 3", cfg.ReadyByReheatDelta)
+	}
+}

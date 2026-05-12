@@ -187,6 +187,157 @@ func TestRecurringReadyByCronKeepsHeatingAfterStartTimeRecalculates(t *testing.T
 	}
 }
 
+func TestReadyByControlHysteresisBreaksTargetBoundaryLoop(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute, ReadyByReheatDelta: 2})
+	readyAt := at(loc, 2026, 5, 9, 8, 30)
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		At:         &readyAt,
+	}
+	now := at(loc, 2026, 5, 9, 7, 0)
+	states := map[string]pool.ReadyByControlState{}
+
+	current := 35
+	eval := s.EvaluateWithReadyByControl(now, pool.Status{CurrentTemp: &current, TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, states)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater || eval.ReadyByControl == nil || eval.ReadyByControl.Current.Mode != pool.ReadyBySeekingTarget {
+		t.Fatalf("first below-target observation should seek target: %+v", eval)
+	}
+	states[eval.ReadyByControl.Current.Key] = eval.ReadyByControl.Current
+
+	current = 36
+	eval = s.EvaluateWithReadyByControl(now.Add(20*time.Minute), pool.Status{CurrentTemp: &current, Heater: true, Filter: true, TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, states)
+	if eval.Desired.Heater == nil || *eval.Desired.Heater || eval.ReadyByControl == nil || eval.ReadyByControl.Current.Mode != pool.ReadyBySatisfiedIdle {
+		t.Fatalf("target reached should stop heating and enter satisfied idle: %+v", eval)
+	}
+	states[eval.ReadyByControl.Current.Key] = eval.ReadyByControl.Current
+
+	current = 35
+	eval = s.EvaluateWithReadyByControl(now.Add(21*time.Minute), pool.Status{CurrentTemp: &current, TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, states)
+	if eval.Desired.Heater == nil || *eval.Desired.Heater || eval.ReadyByControl != nil {
+		t.Fatalf("target-1 after satisfaction should remain idle without a state transition: %+v", eval)
+	}
+
+	current = 34
+	eval = s.EvaluateWithReadyByControl(now.Add(22*time.Minute), pool.Status{CurrentTemp: &current, TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, states)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater || eval.ReadyByControl == nil || eval.ReadyByControl.Current.Mode != pool.ReadyByReheating {
+		t.Fatalf("target-2 should enter reheating: %+v", eval)
+	}
+	states[eval.ReadyByControl.Current.Key] = eval.ReadyByControl.Current
+
+	current = 35
+	eval = s.EvaluateWithReadyByControl(now.Add(23*time.Minute), pool.Status{CurrentTemp: &current, Heater: true, Filter: true, TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, states)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater || eval.ReadyByControl != nil {
+		t.Fatalf("reheating should continue through target-1: %+v", eval)
+	}
+
+	current = 36
+	eval = s.EvaluateWithReadyByControl(now.Add(24*time.Minute), pool.Status{CurrentTemp: &current, Heater: true, Filter: true, TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, states)
+	if eval.Desired.Heater == nil || *eval.Desired.Heater || eval.ReadyByControl == nil || eval.ReadyByControl.Current.Mode != pool.ReadyBySatisfiedIdle {
+		t.Fatalf("reheating should stop at target: %+v", eval)
+	}
+}
+
+func TestReadyBySatisfiedIdleStillAllowsTimeWindowDemand(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	readyAt := at(loc, 2026, 5, 9, 8, 30)
+	ready := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		At:         &readyAt,
+	}
+	window := pool.Plan{
+		ID:         "filter-window",
+		Type:       pool.PlanTimeWindow,
+		Enabled:    true,
+		Capability: "filter",
+		From:       "07:00",
+		To:         "08:00",
+	}
+	key := ReadyByOccurrenceKey("ready", readyAt, 36)
+	states := map[string]pool.ReadyByControlState{
+		key: {
+			Key:        key,
+			PlanID:     "ready",
+			ReadyAt:    readyAt,
+			TargetTemp: 36,
+			Mode:       pool.ReadyBySatisfiedIdle,
+		},
+	}
+	current := 35
+	eval := s.EvaluateWithReadyByControl(
+		at(loc, 2026, 5, 9, 7, 30),
+		pool.Status{CurrentTemp: &current, TargetTemp: 36},
+		pool.DesiredState{Filter: pool.BoolPtr(false), Heater: pool.BoolPtr(false)},
+		[]pool.Plan{ready, window},
+		states,
+	)
+	if eval.Source != "time_window" || eval.Desired.Filter == nil || !*eval.Desired.Filter || eval.Desired.Heater == nil || *eval.Desired.Heater || eval.Desired.TargetTemp == nil || *eval.Desired.TargetTemp != 36 {
+		t.Fatalf("satisfied ready-by target should combine with active time window: %+v", eval)
+	}
+}
+
+func TestReadyByNilTemperatureDoesNotCreateSatisfaction(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	readyAt := at(loc, 2026, 5, 9, 8, 30)
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		At:         &readyAt,
+	}
+
+	eval := s.EvaluateWithReadyByControl(at(loc, 2026, 5, 9, 8, 0), pool.Status{TargetTemp: 36}, pool.DesiredState{}, []pool.Plan{plan}, nil)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater || eval.ReadyByControl == nil || eval.ReadyByControl.Current.Mode != pool.ReadyBySeekingTarget {
+		t.Fatalf("nil temperature should seek target, not become satisfied: %+v", eval)
+	}
+}
+
+func TestReadyByControlStateIsPerOccurrence(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		Cron:       "30 8 * * *",
+	}
+	previousReadyAt := at(loc, 2026, 5, 9, 8, 30)
+	previousKey := ReadyByOccurrenceKey("ready", previousReadyAt, 36)
+	states := map[string]pool.ReadyByControlState{
+		previousKey: {
+			Key:        previousKey,
+			PlanID:     "ready",
+			ReadyAt:    previousReadyAt,
+			TargetTemp: 36,
+			Mode:       pool.ReadyBySatisfiedIdle,
+		},
+	}
+	current := 35
+	eval := s.EvaluateWithReadyByControl(
+		at(loc, 2026, 5, 10, 7, 0),
+		pool.Status{CurrentTemp: &current, TargetTemp: 36},
+		pool.DesiredState{},
+		[]pool.Plan{plan},
+		states,
+	)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater || eval.ReadyByControl == nil || eval.ReadyByControl.Current.Mode != pool.ReadyBySeekingTarget {
+		t.Fatalf("previous occurrence state should not satisfy a new occurrence: %+v", eval)
+	}
+	if eval.ReadyByControl.Current.Key == previousKey {
+		t.Fatalf("new occurrence reused previous key %q", previousKey)
+	}
+}
+
 func TestRecurringReadyByCronDoesNotBlockBeforeStartWhenAlreadyWarm(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})

@@ -24,6 +24,7 @@ type Store struct {
 }
 
 const weatherSnapshotMaxAge = 15 * time.Minute
+const readyByControlKeyPrefix = "ready_by_control:"
 
 type pendingObservation struct {
 	id          int64
@@ -1001,6 +1002,61 @@ func (s *Store) SavePlans(ctx context.Context, plans []pool.Plan) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ReadyByControlStates loads persisted ready-by hysteresis states keyed by occurrence.
+func (s *Store) ReadyByControlStates(ctx context.Context) (map[string]pool.ReadyByControlState, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT key, value, updated_at
+		FROM kv
+		WHERE substr(key, 1, ?) = ?
+	`, len(readyByControlKeyPrefix), readyByControlKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	states := map[string]pool.ReadyByControlState{}
+	for rows.Next() {
+		var key string
+		var body []byte
+		var updatedAt string
+		if err := rows.Scan(&key, &body, &updatedAt); err != nil {
+			return nil, err
+		}
+		var state pool.ReadyByControlState
+		if err := json.Unmarshal(body, &state); err != nil {
+			return nil, err
+		}
+		if state.Key == "" {
+			state.Key = strings.TrimPrefix(key, readyByControlKeyPrefix)
+		}
+		if state.UpdatedAt.IsZero() {
+			state.UpdatedAt = decodeTime(updatedAt)
+		}
+		states[state.Key] = state
+	}
+	return states, rows.Err()
+}
+
+// SaveReadyByControlState persists one ready-by hysteresis state.
+func (s *Store) SaveReadyByControlState(ctx context.Context, state pool.ReadyByControlState) error {
+	if state.Key == "" {
+		return fmt.Errorf("ready-by control state key is required")
+	}
+	if state.UpdatedAt.IsZero() {
+		state.UpdatedAt = time.Now().UTC()
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO kv (key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, readyByControlKeyPrefix+state.Key, body, encodeTime(state.UpdatedAt))
+	return err
 }
 
 func (s *Store) InsertCommand(ctx context.Context, record pool.CommandRecord) (int64, error) {

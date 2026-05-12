@@ -375,7 +375,17 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 	if err != nil {
 		return err
 	}
-	evaluation := s.scheduler.Evaluate(time.Now(), status, base, plans)
+	states, err := s.store.ReadyByControlStates(ctx)
+	if err != nil {
+		return err
+	}
+	evaluation := s.scheduler.EvaluateWithReadyByControl(time.Now(), status, base, plans, states)
+	if evaluation.ReadyByControl != nil {
+		if err := s.store.SaveReadyByControlState(ctx, evaluation.ReadyByControl.Current); err != nil {
+			return err
+		}
+		_, _ = s.store.AddEvent(ctx, "scheduler", "ready-by control state changed", evaluation.ReadyByControl)
+	}
 	commands := diffCommands(status, evaluation.Desired)
 	for _, command := range commands {
 		req := pool.CommandRequest{

@@ -142,6 +142,28 @@ type Plan struct {
 	UpdatedAt    time.Time    `json:"updated_at,omitempty"`
 }
 
+// ReadyByControlMode is the persisted control state for one ready-by occurrence.
+type ReadyByControlMode string
+
+const (
+	// ReadyBySeekingTarget heats until the target temperature has been observed.
+	ReadyBySeekingTarget ReadyByControlMode = "seeking_target"
+	// ReadyBySatisfiedIdle keeps heat off after the target has been observed.
+	ReadyBySatisfiedIdle ReadyByControlMode = "satisfied_idle"
+	// ReadyByReheating heats after a satisfied occurrence falls below the reheat threshold.
+	ReadyByReheating ReadyByControlMode = "reheating"
+)
+
+// ReadyByControlState persists hysteresis state for one concrete ready-by occurrence.
+type ReadyByControlState struct {
+	Key        string             `json:"key"`
+	PlanID     string             `json:"plan_id"`
+	ReadyAt    time.Time          `json:"ready_at"`
+	TargetTemp int                `json:"target_temp"`
+	Mode       ReadyByControlMode `json:"mode"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
 func (p Plan) Validate() error {
 	if p.ID == "" {
 		return fmt.Errorf("plan id is required")

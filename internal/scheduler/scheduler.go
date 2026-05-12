@@ -12,12 +12,21 @@ type Config struct {
 	HeatingRateCPerHour float64
 	ReadinessBuffer     time.Duration
 	Location            *time.Location
+	ReadyByReheatDelta  int
 }
 
 type Evaluation struct {
-	Desired pool.DesiredState `json:"desired"`
-	Source  string            `json:"source"`
-	Reason  string            `json:"reason"`
+	Desired        pool.DesiredState     `json:"desired"`
+	Source         string                `json:"source"`
+	Reason         string                `json:"reason"`
+	ReadyByControl *ReadyByControlChange `json:"ready_by_control,omitempty"`
+}
+
+// ReadyByControlChange describes a persisted ready-by state transition.
+type ReadyByControlChange struct {
+	Previous *pool.ReadyByControlState `json:"previous,omitempty"`
+	Current  pool.ReadyByControlState  `json:"current"`
+	Reason   string                    `json:"reason"`
 }
 
 type Scheduler struct {
@@ -34,10 +43,18 @@ func New(config Config) *Scheduler {
 	if config.Location == nil {
 		config.Location = time.Local
 	}
+	if config.ReadyByReheatDelta <= 0 {
+		config.ReadyByReheatDelta = 2
+	}
 	return &Scheduler{config: config}
 }
 
 func (s *Scheduler) Evaluate(now time.Time, status pool.Status, base pool.DesiredState, plans []pool.Plan) Evaluation {
+	return s.EvaluateWithReadyByControl(now, status, base, plans, nil)
+}
+
+// EvaluateWithReadyByControl evaluates plans with persisted ready-by hysteresis state.
+func (s *Scheduler) EvaluateWithReadyByControl(now time.Time, status pool.Status, base pool.DesiredState, plans []pool.Plan, states map[string]pool.ReadyByControlState) Evaluation {
 	now = now.In(s.config.Location)
 	base = base.WithHardwareConstraints()
 
@@ -55,19 +72,45 @@ func (s *Scheduler) Evaluate(now time.Time, status pool.Status, base pool.Desire
 		}
 	}
 
+	var readyByTarget Evaluation
+	readyByTargetActive := false
 	for _, plan := range plans {
 		if !plan.Enabled || plan.Type != pool.PlanReadyBy {
 			continue
 		}
-		desired, active, reason := s.evaluateReadyBy(now, status, base, plan)
-		if active {
-			return Evaluation{Desired: desired.WithHardwareConstraints(), Source: plan.ID, Reason: reason}
+		desired, active, heatDemand, reason, control := s.evaluateReadyBy(now, status, base, plan, states)
+		if !active {
+			continue
 		}
+		evaluation := Evaluation{
+			Desired:        desired.WithHardwareConstraints(),
+			Source:         plan.ID,
+			Reason:         reason,
+			ReadyByControl: control,
+		}
+		if heatDemand {
+			return evaluation
+		}
+		readyByTarget = evaluation
+		readyByTargetActive = true
+		break
 	}
 
-	timeWindowDesired, active, reason := s.evaluateTimeWindows(now, base, plans)
+	windowBase := base
+	if readyByTargetActive {
+		windowBase = readyByTarget.Desired
+	}
+	timeWindowDesired, active, reason := s.evaluateTimeWindows(now, windowBase, plans)
 	if active {
-		return Evaluation{Desired: timeWindowDesired.WithHardwareConstraints(), Source: "time_window", Reason: reason}
+		return Evaluation{
+			Desired:        timeWindowDesired.WithHardwareConstraints(),
+			Source:         "time_window",
+			Reason:         reason,
+			ReadyByControl: readyByTarget.ReadyByControl,
+		}
+	}
+	if readyByTargetActive {
+		return readyByTarget
 	}
 
 	return Evaluation{Desired: base, Source: "default", Reason: "default desired state"}
@@ -126,43 +169,124 @@ func (s *Scheduler) NextWake(now time.Time, status pool.Status, plans []pool.Pla
 	return next, ok
 }
 
-func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool.DesiredState, plan pool.Plan) (pool.DesiredState, bool, string) {
+func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool.DesiredState, plan pool.Plan, states map[string]pool.ReadyByControlState) (pool.DesiredState, bool, bool, string, *ReadyByControlChange) {
 	if plan.TargetTemp == nil {
-		return base, false, ""
+		return base, false, false, "", nil
 	}
-	startAt, _, ok := s.readyByTimes(now, status, plan)
+	startAt, readyAt, ok := s.readyByTimes(now, status, plan)
 	if !ok {
-		return base, false, ""
+		return base, false, false, "", nil
 	}
-	current := 0
-	if status.CurrentTemp != nil {
-		current = *status.CurrentTemp
-	} else {
-		current = *plan.TargetTemp
+	target := *plan.TargetTemp
+	key := ReadyByOccurrenceKey(plan.ID, readyAt, target)
+	state, hasState := states[key]
+	if !readyByStateValid(state, key, plan.ID, readyAt, target) {
+		hasState = false
 	}
+	beforeStart := now.Before(startAt)
+	if beforeStart && !hasState {
+		hasTemp := status.CurrentTemp != nil
+		oneShotReached := strings.TrimSpace(plan.Cron) == "" && hasTemp && *status.CurrentTemp >= target
+		heaterAlreadyActive := status.Heater && hasTemp
+		if !oneShotReached && !heaterAlreadyActive {
+			return base, false, false, "", nil
+		}
+	}
+
+	mode := pool.ReadyBySeekingTarget
+	var previous *pool.ReadyByControlState
+	if hasState {
+		mode = state.Mode
+		previousState := state
+		previous = &previousState
+	} else if status.CurrentTemp != nil && *status.CurrentTemp >= target {
+		mode = pool.ReadyBySatisfiedIdle
+	}
+	mode, transitionReason := transitionReadyByMode(mode, status.CurrentTemp, target, s.config.ReadyByReheatDelta)
+	control := pool.ReadyByControlState{
+		Key:        key,
+		PlanID:     plan.ID,
+		ReadyAt:    readyAt,
+		TargetTemp: target,
+		Mode:       mode,
+		UpdatedAt:  now.UTC(),
+	}
+	var change *ReadyByControlChange
+	if !hasState || state.Mode != mode {
+		reason := transitionReason
+		if reason == "" {
+			reason = readyByModeReason(mode)
+		}
+		change = &ReadyByControlChange{Previous: previous, Current: control, Reason: reason}
+	}
+
 	desired := pool.DesiredState{TargetTemp: plan.TargetTemp}.Overlay(base)
-	if now.Before(startAt) {
-		if strings.TrimSpace(plan.Cron) == "" && current >= *plan.TargetTemp {
-			desired.Heater = pool.BoolPtr(false)
-			return desired, true, "target temperature reached"
-		}
-		if status.Heater && current < *plan.TargetTemp {
-			desired.Power = pool.BoolPtr(true)
-			desired.Filter = pool.BoolPtr(true)
-			desired.Heater = pool.BoolPtr(true)
-			return desired, true, "ready-by heating already active"
-		}
-		return base, false, ""
-	}
-	if current >= *plan.TargetTemp {
+	if mode == pool.ReadyBySatisfiedIdle {
 		desired.Heater = pool.BoolPtr(false)
-		return desired, true, "target temperature reached"
+		return desired, true, false, "ready-by target satisfied", change
 	}
 
 	desired.Power = pool.BoolPtr(true)
 	desired.Filter = pool.BoolPtr(true)
 	desired.Heater = pool.BoolPtr(true)
-	return desired, true, fmt.Sprintf("ready-by heating window started at %s", startAt.Format(time.RFC3339))
+	reason := fmt.Sprintf("ready-by heating window started at %s", startAt.Format(time.RFC3339))
+	if beforeStart {
+		reason = "ready-by heating already active"
+	} else if mode == pool.ReadyByReheating {
+		reason = fmt.Sprintf("ready-by reheating at or below %d", target-s.config.ReadyByReheatDelta)
+	}
+	return desired, true, true, reason, change
+}
+
+// ReadyByOccurrenceKey identifies one plan, ready-at instant, and target temperature.
+func ReadyByOccurrenceKey(planID string, readyAt time.Time, target int) string {
+	return fmt.Sprintf("%s|%s|%d", planID, readyAt.UTC().Format(time.RFC3339Nano), target)
+}
+
+func readyByStateValid(state pool.ReadyByControlState, key, planID string, readyAt time.Time, target int) bool {
+	if state.Key != key || state.PlanID != planID || state.TargetTemp != target || !state.ReadyAt.Equal(readyAt) {
+		return false
+	}
+	switch state.Mode {
+	case pool.ReadyBySeekingTarget, pool.ReadyBySatisfiedIdle, pool.ReadyByReheating:
+		return true
+	default:
+		return false
+	}
+}
+
+func transitionReadyByMode(mode pool.ReadyByControlMode, current *int, target, reheatDelta int) (pool.ReadyByControlMode, string) {
+	if current == nil {
+		return mode, ""
+	}
+	switch mode {
+	case pool.ReadyBySeekingTarget:
+		if *current >= target {
+			return pool.ReadyBySatisfiedIdle, "target temperature reached"
+		}
+	case pool.ReadyBySatisfiedIdle:
+		if *current <= target-reheatDelta {
+			return pool.ReadyByReheating, "temperature dropped to reheat threshold"
+		}
+	case pool.ReadyByReheating:
+		if *current >= target {
+			return pool.ReadyBySatisfiedIdle, "target temperature reached"
+		}
+	default:
+		return transitionReadyByMode(pool.ReadyBySeekingTarget, current, target, reheatDelta)
+	}
+	return mode, ""
+}
+
+func readyByModeReason(mode pool.ReadyByControlMode) string {
+	switch mode {
+	case pool.ReadyBySatisfiedIdle:
+		return "target temperature reached"
+	case pool.ReadyByReheating:
+		return "temperature dropped to reheat threshold"
+	default:
+		return "ready-by seeking target"
+	}
 }
 
 func (s *Scheduler) readyByTimes(now time.Time, status pool.Status, plan pool.Plan) (time.Time, time.Time, bool) {

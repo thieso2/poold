@@ -336,6 +336,34 @@ func TestStoreCommandAndRetention(t *testing.T) {
 	}
 }
 
+func TestStoreReadyByControlState(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+	readyAt := time.Date(2026, 5, 9, 6, 30, 0, 0, time.UTC)
+	state := pool.ReadyByControlState{
+		Key:        "ready|2026-05-09T06:30:00Z|36",
+		PlanID:     "ready",
+		ReadyAt:    readyAt,
+		TargetTemp: 36,
+		Mode:       pool.ReadyBySatisfiedIdle,
+		UpdatedAt:  readyAt.Add(time.Minute),
+	}
+	if err := st.SaveReadyByControlState(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	states, err := st.ReadyByControlStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, ok := states[state.Key]
+	if !ok {
+		t.Fatalf("state %q not found in %+v", state.Key, states)
+	}
+	if saved.PlanID != "ready" || !saved.ReadyAt.Equal(readyAt) || saved.TargetTemp != 36 || saved.Mode != pool.ReadyBySatisfiedIdle || !saved.UpdatedAt.Equal(state.UpdatedAt) {
+		t.Fatalf("saved state = %+v", saved)
+	}
+}
+
 func TestStoreHeatingSessions(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t)
