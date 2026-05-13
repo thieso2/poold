@@ -54,6 +54,18 @@ func TestLoadObservationFlushInterval(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesWildcardListenAddr(t *testing.T) {
+	t.Setenv("POOLD_LISTEN_ADDR", "*:8090")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ListenAddr != "0.0.0.0:8090" {
+		t.Fatalf("ListenAddr = %q, want 0.0.0.0:8090", cfg.ListenAddr)
+	}
+}
+
 func TestLoadCoolingRate(t *testing.T) {
 	t.Setenv("POOLD_COOLING_RATE_C_PER_HOUR", "")
 

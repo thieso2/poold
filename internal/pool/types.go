@@ -200,9 +200,6 @@ func (p Plan) Validate() error {
 			}
 		}
 	case PlanManualOverride:
-		if p.ExpiresAt == nil {
-			return fmt.Errorf("manual_override plan requires expires_at")
-		}
 		if p.DesiredState.Empty() {
 			return fmt.Errorf("manual_override plan requires desired_state")
 		}

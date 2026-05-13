@@ -193,6 +193,8 @@ Plan precedence is:
 3. Time-window plans.
 4. Stored desired state.
 
+Manual overrides can be timed with `expires_at` or permanent by omitting `expires_at`. Permanent manual overrides are still evaluated at the highest priority; clearing the manual override removes that priority block.
+
 Hardware constraints are applied before enforcement. Any equipment-on state implies power-on, heater-on also implies filter-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
 Time-window plans turn a capability on while the window is active. Outside the window, that capability returns to the stored desired state instead of being forced off.
@@ -326,6 +328,20 @@ Manual override:
 }
 ```
 
+Permanent manual override:
+
+```json
+{
+  "id": "webui-manual",
+  "type": "manual_override",
+  "name": "Pool stopped",
+  "enabled": true,
+  "desired_state": {
+    "power": false
+  }
+}
+```
+
 ## Event and Poll Behavior
 
 `poold` saves every successful status refresh as an observation. Events are intentionally deduplicated:
@@ -406,7 +422,7 @@ ssh root@<router> 'logread -e poold'
 ssh root@<router> 'logread -f -e poold'
 ```
 
-The provided init script uses `/data/poold.db`, creates its parent directory, flushes unchanged poll spans every `15m`, uses `procd` respawn, and waits for the configured Tailscale listen address to appear before starting. When migrating from an older install, stop `poold`, move `/var/lib/poold/poold.db` to `/data/poold.db`, then restart.
+The provided init script uses `/data/poold.db`, creates its parent directory, flushes unchanged poll spans every `15m`, uses `procd` respawn with unlimited crash retries, and waits for the configured Tailscale listen address to appear before starting. When migrating from an older install, stop `poold`, move `/var/lib/poold/poold.db` to `/data/poold.db`, then restart.
 
 ## Development
 

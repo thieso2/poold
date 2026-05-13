@@ -232,6 +232,25 @@ func TestPlansEndpoint(t *testing.T) {
 	}
 }
 
+func TestPlansEndpointAcceptsPermanentManualOverride(t *testing.T) {
+	handler, _ := testAPI(t)
+	body := []byte(`{"plans":[{"id":"webui-manual","type":"manual_override","enabled":true,"desired_state":{"heater":false,"filter":false}}]}`)
+	rec := authed(handler, http.MethodPut, "/plans", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Plans []pool.Plan `json:"plans"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Plans) != 1 || response.Plans[0].ExpiresAt != nil {
+		t.Fatalf("plans = %+v", response.Plans)
+	}
+}
+
 func TestEventsEndpoint(t *testing.T) {
 	handler, _ := testAPI(t)
 	rec := authed(handler, http.MethodPut, "/desired-state", []byte(`{"filter":true}`))

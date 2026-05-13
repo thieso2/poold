@@ -62,7 +62,7 @@ func (s *Scheduler) EvaluateWithReadyByControl(now time.Time, status pool.Status
 		if !plan.Enabled || plan.Type != pool.PlanManualOverride {
 			continue
 		}
-		if plan.ExpiresAt == nil || !plan.ExpiresAt.After(now) {
+		if plan.ExpiresAt != nil && !plan.ExpiresAt.After(now) {
 			continue
 		}
 		return Evaluation{
@@ -184,7 +184,7 @@ func (s *Scheduler) evaluateReadyBy(now time.Time, status pool.Status, base pool
 		hasState = false
 	}
 	beforeStart := now.Before(startAt)
-	if beforeStart && !hasState {
+	if beforeStart {
 		hasTemp := status.CurrentTemp != nil
 		oneShotReached := strings.TrimSpace(plan.Cron) == "" && hasTemp && *status.CurrentTemp >= target
 		heaterAlreadyActive := status.Heater && hasTemp

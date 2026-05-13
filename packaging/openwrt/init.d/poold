@@ -17,7 +17,7 @@ wait_for_listen_addr() {
 	local i
 
 	case "$host" in
-		""|"0.0.0.0"|"127.0.0.1"|"localhost")
+		""|"*"|"0.0.0.0"|"127.0.0.1"|"localhost")
 			return 0
 			;;
 	esac
@@ -52,7 +52,7 @@ start_service() {
 		POOLD_READINESS_BUFFER="${POOLD_READINESS_BUFFER:-30m}" \
 		POOLD_READY_BY_REHEAT_DELTA="${POOLD_READY_BY_REHEAT_DELTA:-2}" \
 		POOLD_OBSERVATION_FLUSH_INTERVAL="${POOLD_OBSERVATION_FLUSH_INTERVAL:-15m}"
-	procd_set_param respawn 3600 5 5
+	procd_set_param respawn 3600 5 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_close_instance

@@ -356,6 +356,44 @@ func TestRecurringReadyByCronDoesNotBlockBeforeStartWhenAlreadyWarm(t *testing.T
 	}
 }
 
+func TestFutureRecurringReadyByStateDoesNotStartBeforeHeatingWindow(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
+	plan := pool.Plan{
+		ID:         "ready",
+		Type:       pool.PlanReadyBy,
+		Enabled:    true,
+		TargetTemp: pool.IntPtr(36),
+		Cron:       "30 8 * * *",
+	}
+	now := at(loc, 2026, 5, 13, 21, 7)
+	readyAt := at(loc, 2026, 5, 14, 8, 30)
+	key := ReadyByOccurrenceKey(plan.ID, readyAt, 36)
+	current := 34
+	eval := s.EvaluateWithReadyByControl(
+		now,
+		pool.Status{CurrentTemp: &current, TargetTemp: 36, Power: true},
+		pool.DesiredState{Power: pool.BoolPtr(false), Filter: pool.BoolPtr(false), Heater: pool.BoolPtr(false)},
+		[]pool.Plan{plan},
+		map[string]pool.ReadyByControlState{
+			key: {
+				Key:        key,
+				PlanID:     plan.ID,
+				ReadyAt:    readyAt,
+				TargetTemp: 36,
+				Mode:       pool.ReadyByReheating,
+				UpdatedAt:  now.Add(-3 * time.Hour),
+			},
+		},
+	)
+	if eval.Source != "default" {
+		t.Fatalf("source = %q, want default before future heating window", eval.Source)
+	}
+	if eval.Desired.Heater == nil || *eval.Desired.Heater {
+		t.Fatalf("future ready-by state should not start heater before window: %+v", eval)
+	}
+}
+
 func TestManualOverridePrecedence(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
@@ -385,6 +423,37 @@ func TestManualOverridePrecedence(t *testing.T) {
 	}
 	if eval.Desired.Heater == nil || *eval.Desired.Heater {
 		t.Fatalf("manual override should keep heater off: %+v", eval)
+	}
+}
+
+func TestPermanentManualOverridePreemptsReadyBy(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	now := at(loc, 2026, 5, 4, 2, 30)
+	target := 36
+	readyAt := now.Add(time.Hour)
+	plans := []pool.Plan{
+		{
+			ID:         "ready",
+			Type:       pool.PlanReadyBy,
+			Enabled:    true,
+			TargetTemp: &target,
+			At:         &readyAt,
+		},
+		{
+			ID:           "webui-manual",
+			Type:         pool.PlanManualOverride,
+			Enabled:      true,
+			DesiredState: pool.DesiredState{Heater: pool.BoolPtr(false), Filter: pool.BoolPtr(false)},
+		},
+	}
+	current := 30
+	eval := s.Evaluate(now, pool.Status{CurrentTemp: &current}, pool.DesiredState{}, plans)
+	if eval.Source != "webui-manual" {
+		t.Fatalf("source = %q, want permanent manual override", eval.Source)
+	}
+	if eval.Desired.Heater == nil || *eval.Desired.Heater {
+		t.Fatalf("permanent manual override should keep heater off: %+v", eval)
 	}
 }
 
@@ -518,6 +587,22 @@ func TestNextWakeManualOverrideExpiry(t *testing.T) {
 	wake, ok := s.NextWake(at(loc, 2026, 5, 3, 12, 0), pool.Status{}, []pool.Plan{plan})
 	if !ok || !wake.Equal(expiresAt) {
 		t.Fatalf("wake = %s ok=%v, want override expiry", wake, ok)
+	}
+}
+
+func TestNextWakePermanentManualOverrideHasNoExpiryWake(t *testing.T) {
+	loc := fixedZone()
+	s := New(Config{Location: loc})
+	plan := pool.Plan{
+		ID:           "override",
+		Type:         pool.PlanManualOverride,
+		Enabled:      true,
+		DesiredState: pool.DesiredState{Heater: pool.BoolPtr(false)},
+	}
+
+	wake, ok := s.NextWake(at(loc, 2026, 5, 3, 12, 0), pool.Status{}, []pool.Plan{plan})
+	if ok {
+		t.Fatalf("wake = %s ok=%v, want no expiry wake", wake, ok)
 	}
 }
 

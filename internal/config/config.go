@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,7 @@ func Load(args []string) (Config, error) {
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
+	cfg.ListenAddr = normalizeListenAddr(cfg.ListenAddr)
 	return cfg, nil
 }
 
@@ -104,6 +106,14 @@ func envString(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func normalizeListenAddr(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "*:") {
+		return "0.0.0.0:" + strings.TrimPrefix(value, "*:")
+	}
+	return value
 }
 
 func envFloat(key string, fallback float64) float64 {

@@ -372,6 +372,9 @@ h3 {
 .manual-strip.active .manual-actions {
   display: grid;
 }
+.manual-actions.permanent {
+  grid-template-columns: 1fr;
+}
 .control {
   display: flex;
   align-items: center;
@@ -800,7 +803,7 @@ body[data-page="history"] .timeline-canvas {
           <strong id="manualTitle">Manual control</strong>
           <span id="manualDetail">No override active</span>
         </div>
-        <div class="manual-actions">
+        <div class="manual-actions" id="manualActions">
           <button id="manualMinus">-30m</button>
           <button id="manualPlus">+30m</button>
           <button class="primary" id="manualPermanent">Make permanent</button>
@@ -1164,10 +1167,19 @@ function renderSettings() {
 function renderManual() {
   var plan = activeManualPlan();
   var strip = $("manualStrip");
+  var actions = $("manualActions");
   strip.classList.toggle("active", !!plan);
+  var timed = !!(plan && plan.expires_at);
+  actions.classList.toggle("permanent", !!plan && !timed);
+  $("manualMinus").classList.toggle("hidden", !!plan && !timed);
+  $("manualPlus").classList.toggle("hidden", !!plan && !timed);
+  $("manualPermanent").classList.toggle("hidden", !!plan && !timed);
+  $("manualMinus").disabled = state.pending;
+  $("manualPlus").disabled = state.pending;
+  $("manualPermanent").disabled = state.pending || (!!plan && !timed);
   if (plan) {
     $("manualTitle").textContent = manualTitle(plan.desired_state || {});
-    $("manualDetail").textContent = manualSummary(plan.desired_state || {}) + " · " + remainingTime(plan.expires_at) + " left";
+    $("manualDetail").textContent = manualSummary(plan.desired_state || {}) + " · " + manualDurationLabel(plan);
   } else {
     $("manualTitle").textContent = "Manual control";
     $("manualDetail").textContent = "No override active";
@@ -1820,6 +1832,7 @@ function setManualTargetTemp(value) {
 function adjustManual(minutes) {
   var plan = activeManualPlan();
   if (!plan) return;
+  if (!plan.expires_at) return;
   var expiresAt = new Date(plan.expires_at).getTime() + minutes * 60 * 1000;
   if (expiresAt <= Date.now()) return clearManual();
   updateManualPlan(Object.assign({}, plan.desired_state || {}), new Date(expiresAt), "Manual time updated");
@@ -1835,17 +1848,19 @@ function makeManualPermanent() {
   if (!plan) return;
   var manualDesired = Object.assign({}, plan.desired_state || {});
   if (!Object.keys(manualDesired).length) return;
+  var permanentPlan = {
+    id: manualPlanID,
+    type: "manual_override",
+    name: manualTitle(manualDesired),
+    enabled: true,
+    desired_state: manualDesired
+  };
   runAction(function() {
-    return api("/desired-state").then(function(base) {
-      var desired = permanentDesired(base || {}, manualDesired);
-      return api("/desired-state", {method: "PUT", body: JSON.stringify(desired)}).then(function() {
-        return api("/plans", {method: "PUT", body: JSON.stringify({
-          plans: state.plans.filter(function(existing) { return !isReservedManualPlan(existing); })
-        })}).then(function(data) {
-          state.plans = data.plans || [];
-          state.manualDraft = null;
-        });
-      });
+    return api("/plans", {method: "PUT", body: JSON.stringify({
+      plans: state.plans.filter(function(existing) { return !isReservedManualPlan(existing); }).concat([permanentPlan])
+    })}).then(function(data) {
+      state.plans = data.plans || [];
+      state.manualDraft = null;
     });
   }, "Manual control made permanent");
 }
@@ -1863,35 +1878,6 @@ function updateManualPlan(desired, expiresAt, message) {
   updatePlans(state.plans.filter(function(existing) {
     return !isReservedManualPlan(existing);
   }).concat([plan]), message || "Manual control saved");
-}
-
-function permanentDesired(base, manual) {
-  var desired = Object.assign({}, base || {}, manual || {});
-  if (manual.power === false) {
-    desired.filter = false;
-    desired.heater = false;
-    desired.jets = false;
-    desired.bubbles = false;
-    desired.sanitizer = false;
-  }
-  if (manual.filter === false) {
-    desired.heater = false;
-  }
-  if (desired.heater === true) {
-    desired.power = true;
-    desired.filter = true;
-  }
-  caps.forEach(function(cap) {
-    if (cap !== "power" && desired[cap] === true) desired.power = true;
-  });
-  if (desired.power === false) {
-    desired.filter = false;
-    desired.heater = false;
-    desired.jets = false;
-    desired.bubbles = false;
-    desired.sanitizer = false;
-  }
-  return desired;
 }
 
 function runAction(action, message) {
@@ -2034,10 +2020,10 @@ function formatTempValue(value, unit) {
 }
 
 function describePlan(plan) {
-  if (isReservedManualPlan(plan)) return manualSummary(plan.desired_state || {}) + " until " + formatDateTime(plan.expires_at);
+  if (isReservedManualPlan(plan)) return manualSummary(plan.desired_state || {}) + " · " + manualDurationLabel(plan);
   if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + readyScheduleLabel(plan);
   if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
-  if (plan.type === "manual_override") return "Until " + formatDateTime(plan.expires_at);
+  if (plan.type === "manual_override") return plan.expires_at ? "Until " + formatDateTime(plan.expires_at) : "Permanent";
   return title(plan.type);
 }
 
@@ -2134,8 +2120,7 @@ function activeManualPlan() {
   return state.plans.find(function(plan) {
     return isReservedManualPlan(plan) &&
       plan.enabled &&
-      plan.expires_at &&
-      new Date(plan.expires_at).getTime() > now;
+      (!plan.expires_at || new Date(plan.expires_at).getTime() > now);
   });
 }
 
@@ -2180,6 +2165,10 @@ function remainingTime(value) {
   var hours = Math.floor(minutes / 60);
   var rest = minutes % 60;
   return rest ? hours + "h " + rest + "m" : hours + "h";
+}
+
+function manualDurationLabel(plan) {
+  return plan && plan.expires_at ? remainingTime(plan.expires_at) + " left" : "Permanent";
 }
 
 function escapeHTML(value) {

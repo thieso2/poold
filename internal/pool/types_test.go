@@ -75,6 +75,18 @@ func TestReadyByPlanValidationRequiresOneSchedule(t *testing.T) {
 	}
 }
 
+func TestManualOverridePlanValidationAllowsPermanent(t *testing.T) {
+	plan := Plan{
+		ID:           "webui-manual",
+		Type:         PlanManualOverride,
+		Enabled:      true,
+		DesiredState: DesiredState{Heater: BoolPtr(false)},
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestNextCronTime(t *testing.T) {
 	loc := time.FixedZone("TEST", 2*60*60)
 	next, ok, err := NextCronTime("30 8 * * sat", time.Date(2026, 5, 8, 23, 0, 0, 0, loc), loc)
