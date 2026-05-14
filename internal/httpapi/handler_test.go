@@ -151,6 +151,34 @@ func TestDesiredStateEndpoint(t *testing.T) {
 	}
 }
 
+func TestControlModeEndpoint(t *testing.T) {
+	handler, fake := testAPI(t)
+	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, TargetTemp: 36}
+
+	rec := authed(handler, http.MethodPut, "/control-mode", []byte(`{"manual_control":true}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var mode pool.ControlMode
+	if err := json.Unmarshal(rec.Body.Bytes(), &mode); err != nil {
+		t.Fatal(err)
+	}
+	if !mode.ManualControl {
+		t.Fatalf("mode = %+v, want manual control", mode)
+	}
+
+	rec = authed(handler, http.MethodGet, "/control-mode", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &mode); err != nil {
+		t.Fatal(err)
+	}
+	if !mode.ManualControl {
+		t.Fatalf("mode = %+v, want persisted manual control", mode)
+	}
+}
+
 func TestCommandsEndpoint(t *testing.T) {
 	handler, fake := testAPI(t)
 	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}

@@ -343,7 +343,8 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
-.manual-strip {
+.manual-strip,
+.mode-strip {
   display: grid;
   gap: 10px;
   margin-bottom: 12px;
@@ -352,15 +353,26 @@ h3 {
   border-radius: 8px;
   background: #f8fbfc;
 }
-.manual-strip.active {
+.mode-strip {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+.manual-strip.active,
+.mode-strip.manual {
   border-color: #f1c27d;
   background: #fff6e8;
 }
+.mode-strip.automatic {
+  border-color: #b9dfca;
+  background: #f0faf4;
+}
 .manual-strip strong,
+.mode-strip strong,
 .manual-strip span {
   display: block;
 }
-.manual-strip span {
+.manual-strip span,
+.mode-strip span {
   color: var(--muted);
   font-size: 13px;
 }
@@ -798,6 +810,13 @@ body[data-page="history"] .timeline-canvas {
         <h2>Controls</h2>
         <span class="badge" id="busy">Ready</span>
       </div>
+      <div class="mode-strip automatic" id="modeStrip">
+        <div>
+          <strong id="modeTitle">Automatic control</strong>
+          <span id="modeDetail">Schedules and reconciliation active</span>
+        </div>
+        <button id="controlModeToggle">Manual</button>
+      </div>
       <div class="manual-strip" id="manualStrip">
         <div>
           <strong id="manualTitle">Manual control</strong>
@@ -892,6 +911,7 @@ var tempDebounceTimer = null;
 var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
+  controlMode: {manual_control: false},
   weather: null,
   timeline: null,
   timelineRange: "24h",
@@ -982,6 +1002,7 @@ function loadAll() {
   setBusy(true);
   Promise.all([
     loadStatus(),
+    loadControlMode(),
     loadWeather(),
     loadTimeline(),
     loadPlans(),
@@ -1002,6 +1023,14 @@ function loadStatus() {
       updateTokenUI();
     }
     toast("Status: " + err.message, "bad");
+  });
+}
+
+function loadControlMode() {
+  return api("/control-mode").then(function(mode) {
+    state.controlMode = mode || {manual_control: false};
+  }).catch(function(err) {
+    toast("Control mode: " + err.message, "bad");
   });
 }
 
@@ -1083,6 +1112,7 @@ function renderAll() {
   renderStatus();
   renderWeather();
   renderSettings();
+  renderControlMode();
   renderManual();
   renderControls();
   renderPlans();
@@ -1098,6 +1128,7 @@ function renderLivePanels() {
   renderStatus();
   renderWeather();
   renderSettings();
+  renderControlMode();
   renderManual();
   renderControls();
   renderTimeline();
@@ -1118,9 +1149,14 @@ function renderStatus() {
   $("subline").textContent = status.connected ? "Connected " + formatAge(status.observed_at) : "Pool daemon";
   $("connected").textContent = status.connected ? "Connected" : state.token ? "Disconnected" : "Token";
   $("connected").className = status.connected ? "badge ok" : state.token ? "badge bad" : "badge warn";
+  if (manualControlActive()) {
+    $("stateBadge").textContent = "Manual";
+    $("stateBadge").className = "badge warn";
+    return;
+  }
   var manual = activeManualPlan();
   if (manual) {
-    $("stateBadge").textContent = "Manual";
+    $("stateBadge").textContent = "Override";
     $("stateBadge").className = "badge warn";
     return;
   }
@@ -1164,6 +1200,16 @@ function renderSettings() {
   $("weatherSettingsDetail").textContent = detail.join(" · ");
 }
 
+function renderControlMode() {
+  var manual = manualControlActive();
+  var strip = $("modeStrip");
+  strip.className = "mode-strip " + (manual ? "manual" : "automatic");
+  $("modeTitle").textContent = manual ? "Manual pool control" : "Automatic control";
+  $("modeDetail").textContent = manual ? "Schedules and reconciliation paused" : "Schedules and reconciliation active";
+  $("controlModeToggle").textContent = manual ? "Automatic" : "Manual";
+  $("controlModeToggle").disabled = state.pending;
+}
+
 function renderManual() {
   var plan = activeManualPlan();
   var strip = $("manualStrip");
@@ -1191,12 +1237,12 @@ function renderControls() {
   var status = state.status || {};
   wrap.innerHTML = "";
   caps.forEach(function(cap) {
-    var manualValue = manualDesiredValue(cap);
+    var manualValue = manualControlActive() ? undefined : manualDesiredValue(cap);
     var displayValue = manualValue === undefined ? !!status[cap] : manualValue;
     var button = document.createElement("button");
     button.className = "control" + (displayValue ? " on" : "") + (manualValue !== undefined ? " manual" : "");
     button.innerHTML = "<span><strong>" + capLabels[cap] + "</strong></span><i class=\"dot\"></i>";
-    button.onclick = function() { setManualBool(cap, !displayValue); };
+    button.onclick = function() { toggleControl(cap, !displayValue); };
     wrap.appendChild(button);
   });
 }
@@ -1796,6 +1842,49 @@ function saveWeatherSettings() {
   }, "Weather settings saved");
 }
 
+function setControlMode(manual) {
+  runAction(function() {
+    return api("/control-mode", {method: "PUT", body: JSON.stringify({manual_control: manual})}).then(function(mode) {
+      state.controlMode = mode || {manual_control: false};
+      state.manualDraft = null;
+    });
+  }, manual ? "Manual pool control enabled" : "Automatic control enabled");
+}
+
+function toggleControl(cap, value) {
+  if (manualControlActive()) return setDirectBool(cap, value);
+  setManualBool(cap, value);
+}
+
+function setDirectBool(cap, value) {
+  var status = state.status || {};
+  var commands = [];
+  function add(commandCap, commandValue) {
+    commands.push({capability: commandCap, state: commandValue, source: "webui:manual_control"});
+  }
+  if (cap === "power" && value === false) {
+    add("power", false);
+  } else {
+    if (cap !== "power" && value === true && !status.power) add("power", true);
+    if (cap === "heater" && value === true && !status.filter) add("filter", true);
+    if (cap === "filter" && value === false && status.heater) add("heater", false);
+    add(cap, value);
+  }
+  runAction(function() {
+    return postCommandSequence(commands);
+  }, capLabels[cap] + " " + boolText(value));
+}
+
+function postCommandSequence(commands) {
+  var chain = Promise.resolve();
+  commands.forEach(function(command) {
+    chain = chain.then(function() {
+      return api("/commands", {method: "POST", body: JSON.stringify(command)});
+    });
+  });
+  return chain;
+}
+
 function setManualBool(cap, value) {
   var desired = currentManualDesired();
   if (cap === "power" && value === false) {
@@ -1808,11 +1897,28 @@ function setManualBool(cap, value) {
   updateManualPlan(desired, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), capLabels[cap] + " " + boolText(value));
 }
 
-function scheduleManualTemp(value) {
+function scheduleControlTemp(value) {
   clearTimeout(tempDebounceTimer);
   tempDebounceTimer = setTimeout(function() {
-    setManualTargetTemp(value);
+    if (manualControlActive()) {
+      setDirectTargetTemp(value);
+    } else {
+      setManualTargetTemp(value);
+    }
   }, 650);
+}
+
+function setDirectTargetTemp(value) {
+  if (String(value).trim() === "") return;
+  var target = Number(value);
+  if (!Number.isFinite(target) || target < 10 || target > 40) return;
+  runAction(function() {
+    return api("/commands", {method: "POST", body: JSON.stringify({
+      capability: "target_temp",
+      value: target,
+      source: "webui:manual_control"
+    })});
+  }, "Target " + target + "°");
 }
 
 function setManualTargetTemp(value) {
@@ -1885,7 +1991,7 @@ function runAction(action, message) {
   setBusy(true);
   action().then(function() {
     toast(message, "ok");
-    return Promise.all([loadStatus(), loadWeather(), loadTimeline(), loadPlans(), loadActivities()]);
+    return Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadTimeline(), loadPlans(), loadActivities()]);
   }).catch(function(err) {
     toast(err.message, "bad");
   }).finally(function() {
@@ -1918,6 +2024,7 @@ function eventLine(event, previousObservation) {
   if (event.type === "status_error" && event.data && event.data.error) return event.data.error;
   if (event.type === "command" && event.data) return commandLine(event.data);
   if (event.type === "command_error" && event.data) return title(event.data.capability) + " failed · " + (event.data.error || event.message || "");
+  if (event.type === "control_mode" && event.data) return event.data.manual_control ? "Manual pool control on" : "Automatic control on";
   if (event.type === "scheduler" && event.data) return planExecutionLine(event);
   return event.message || "";
 }
@@ -2115,7 +2222,12 @@ function localDateTime(date) {
   return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
 }
 
+function manualControlActive() {
+  return !!(state.controlMode && state.controlMode.manual_control);
+}
+
 function activeManualPlan() {
+  if (manualControlActive()) return null;
   var now = Date.now();
   return state.plans.find(function(plan) {
     return isReservedManualPlan(plan) &&
@@ -2204,14 +2316,15 @@ $("manualMinus").onclick = function() { adjustManual(-30); };
 $("manualPlus").onclick = function() { adjustManual(30); };
 $("manualPermanent").onclick = makeManualPermanent;
 $("manualClear").onclick = clearManual;
-$("tempInput").oninput = function() { scheduleManualTemp($("tempInput").value); };
+$("controlModeToggle").onclick = function() { setControlMode(!manualControlActive()); };
+$("tempInput").oninput = function() { scheduleControlTemp($("tempInput").value); };
 $("tempDown").onclick = function() {
   $("tempInput").value = Number($("tempInput").value || 0) - 1;
-  scheduleManualTemp($("tempInput").value);
+  scheduleControlTemp($("tempInput").value);
 };
 $("tempUp").onclick = function() {
   $("tempInput").value = Number($("tempInput").value || 0) + 1;
-  scheduleManualTemp($("tempInput").value);
+  scheduleControlTemp($("tempInput").value);
 };
 qsa("[data-view]").forEach(function(button) {
   button.onclick = function() {
@@ -2249,7 +2362,7 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (!isHistoryPage && state.token && !state.pending) Promise.all([loadStatus(), loadWeather(), loadActivities()]).then(renderLivePanels);
+  if (!isHistoryPage && state.token && !state.pending) Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
 setInterval(function() {
   if (state.token && !state.pending) loadTimeline().then(renderTimeline);

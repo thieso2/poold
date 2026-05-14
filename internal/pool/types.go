@@ -34,6 +34,11 @@ type DesiredState struct {
 	TargetTemp *int  `json:"target_temp,omitempty"`
 }
 
+// ControlMode configures whether poold reconciles desired state and schedules.
+type ControlMode struct {
+	ManualControl bool `json:"manual_control"`
+}
+
 func (d DesiredState) Empty() bool {
 	return d.Power == nil &&
 		d.Filter == nil &&

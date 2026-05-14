@@ -69,6 +69,8 @@ func run(c client, args []string) error {
 		return runWatch(c, args[1:])
 	case "set":
 		return runSet(c, args[1:])
+	case "manual":
+		return runManual(c, args[1:])
 	case "plans":
 		return runPlans(c, args[1:])
 	case "ready-by":
@@ -119,6 +121,30 @@ func runSet(c client, args []string) error {
 		State:      pool.BoolPtr(state),
 		Source:     "poolctl",
 	})
+}
+
+func runManual(c client, args []string) error {
+	if len(args) == 0 || (len(args) == 1 && args[0] == "status") {
+		var mode pool.ControlMode
+		if err := c.doJSON(http.MethodGet, "/control-mode", nil, &mode); err != nil {
+			return err
+		}
+		printJSON(mode)
+		return nil
+	}
+	if len(args) != 1 {
+		return fmt.Errorf("usage: poolctl manual status|on|off")
+	}
+	enabled, err := parseOnOff(args[0])
+	if err != nil {
+		return err
+	}
+	var response pool.ControlMode
+	if err := c.doJSON(http.MethodPut, "/control-mode", pool.ControlMode{ManualControl: enabled}, &response); err != nil {
+		return err
+	}
+	printJSON(response)
+	return nil
 }
 
 func runPlans(c client, args []string) error {
@@ -579,6 +605,15 @@ func formatWatchEvent(raw string, location *time.Location) string {
 		}
 	case "desired_state":
 		return fmt.Sprintf("%s  DESIRED %s", prefix, event.Message)
+	case "control_mode":
+		var mode pool.ControlMode
+		if err := json.Unmarshal(event.Data, &mode); err == nil {
+			if mode.ManualControl {
+				return fmt.Sprintf("%s  CONTROL manual pool control on", prefix)
+			}
+			return fmt.Sprintf("%s  CONTROL automatic control on", prefix)
+		}
+		return fmt.Sprintf("%s  CONTROL %s", prefix, event.Message)
 	case "plans":
 		return fmt.Sprintf("%s  PLANS   %s", prefix, event.Message)
 	case "scheduler":
@@ -766,6 +801,7 @@ func usage() {
   poolctl set temp 36
   poolctl set heater on|off
   poolctl set filter on|off
+  poolctl manual status|on|off
   poolctl plans list
   poolctl plans apply <file>
   poolctl ready-by --temp 36 --at "Sat 08:30"

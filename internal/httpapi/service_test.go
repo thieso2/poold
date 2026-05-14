@@ -68,6 +68,63 @@ func TestRefreshStatusDedupesObservationEvents(t *testing.T) {
 	}
 }
 
+func TestManualControlModeSkipsEnforcementAndScheduleWake(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/poold.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	fake := &fakePoolClient{
+		status: pool.Status{
+			ObservedAt: time.Now().UTC(),
+			Connected:  true,
+			Power:      true,
+			Filter:     true,
+			Heater:     false,
+			TargetTemp: 36,
+		},
+	}
+	service := NewService(st, fake, scheduler.New(scheduler.Config{}), ServiceConfig{})
+	if err := st.SaveDesiredState(ctx, pool.DesiredState{Heater: pool.BoolPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SavePlans(ctx, []pool.Plan{{
+		ID:         "daily-filter",
+		Type:       pool.PlanTimeWindow,
+		Enabled:    true,
+		Capability: "filter",
+		From:       "02:00",
+		To:         "04:00",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SaveControlMode(ctx, pool.ControlMode{ManualControl: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Enforce(ctx, fake.status); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.callCount(); got != 0 {
+		t.Fatalf("set calls = %d, want none while manual control is on", got)
+	}
+	if wake, ok, err := service.NextScheduleWake(ctx, time.Now(), fake.status); err != nil || ok {
+		t.Fatalf("wake = %v ok=%v err=%v, want no schedule wake while manual control is on", wake, ok, err)
+	}
+
+	if err := service.SaveControlMode(ctx, pool.ControlMode{ManualControl: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Enforce(ctx, fake.status); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("set calls = %d, want enforcement after automatic control resumes", got)
+	}
+}
+
 func eventCount(t *testing.T, st *store.Store) int {
 	t.Helper()
 	events, err := st.Events(context.Background(), 0, 100)

@@ -35,6 +35,8 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
+	mux.HandleFunc("GET /control-mode", api.handleGetControlMode)
+	mux.HandleFunc("PUT /control-mode", api.handlePutControlMode)
 	mux.HandleFunc("GET /weather", api.handleGetWeather)
 	mux.HandleFunc("PUT /weather/settings", api.handlePutWeatherSettings)
 	mux.HandleFunc("POST /weather/refresh", api.handleRefreshWeather)
@@ -258,6 +260,31 @@ func (a *API) handlePutDesiredState(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.service.EnforceLatest(r.Context())
 	writeJSON(w, http.StatusOK, desired)
+}
+
+func (a *API) handleGetControlMode(w http.ResponseWriter, r *http.Request) {
+	mode, err := a.service.ControlMode(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, mode)
+}
+
+func (a *API) handlePutControlMode(w http.ResponseWriter, r *http.Request) {
+	var mode pool.ControlMode
+	if err := json.NewDecoder(r.Body).Decode(&mode); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.service.SaveControlMode(r.Context(), mode); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !mode.ManualControl {
+		_ = a.service.EnforceLatest(r.Context())
+	}
+	writeJSON(w, http.StatusOK, mode)
 }
 
 func (a *API) handleGetWeather(w http.ResponseWriter, r *http.Request) {

@@ -239,6 +239,19 @@ func (s *Service) SaveDesiredState(ctx context.Context, desired pool.DesiredStat
 	return nil
 }
 
+func (s *Service) ControlMode(ctx context.Context) (pool.ControlMode, error) {
+	return s.store.ControlMode(ctx)
+}
+
+func (s *Service) SaveControlMode(ctx context.Context, mode pool.ControlMode) error {
+	if err := s.store.SaveControlMode(ctx, mode); err != nil {
+		return err
+	}
+	_, _ = s.store.AddEvent(ctx, "control_mode", "control mode updated", mode)
+	s.requestRefreshAfter(0)
+	return nil
+}
+
 func (s *Service) WeatherSettings(ctx context.Context) (pool.WeatherSettings, error) {
 	return s.store.WeatherSettings(ctx)
 }
@@ -367,6 +380,14 @@ func (s *Service) EnforceLatest(ctx context.Context) error {
 }
 
 func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
+	mode, err := s.store.ControlMode(ctx)
+	if err != nil {
+		return err
+	}
+	if mode.ManualControl {
+		return nil
+	}
+
 	base, err := s.store.DesiredState(ctx)
 	if err != nil {
 		return err
@@ -405,6 +426,14 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 }
 
 func (s *Service) NextScheduleWake(ctx context.Context, now time.Time, status pool.Status) (time.Time, bool, error) {
+	mode, err := s.store.ControlMode(ctx)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if mode.ManualControl {
+		return time.Time{}, false, nil
+	}
+
 	plans, err := s.store.Plans(ctx)
 	if err != nil {
 		return time.Time{}, false, err

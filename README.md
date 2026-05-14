@@ -28,11 +28,11 @@ flowchart LR
 
 - Mobile-friendly web control panel on the same port as the API.
 - Bearer-token authenticated API.
-- Current status, health, desired state, command, plan, event, and observation endpoints.
-- CLI commands for status, direct commands, plans, ready-by schedules, filter windows, and live watching.
+- Current status, health, control mode, desired state, command, plan, event, and observation endpoints.
+- CLI commands for status, manual control mode, direct commands, plans, ready-by schedules, filter windows, and live watching.
 - Adaptive polling: startup, idle, active, stable, and error-backoff intervals.
 - Local scheduler for ready-by, time-window, and manual-override plans.
-- SQLite persistence for observations, events, commands, desired state, and plans.
+- SQLite persistence for observations, events, commands, control mode, desired state, and plans.
 - OpenWrt `procd` init script.
 
 ## Project Layout
@@ -146,7 +146,9 @@ It supports:
 
 The web shell itself is public, but all data and actions still require the bearer token.
 
-The control tiles create a temporary manual-override plan named `webui-manual` with a default 30-minute duration. Tapping power off is the stop-pool control; it stores `power:false` and enforcement turns dependent equipment off.
+Automatic control enforces desired state and schedules. Manual pool control pauses all schedule and desired-state reconciliation so hardware controls at the pool are not overwritten; web control tiles then send direct commands to the spa.
+
+In automatic control, the control tiles create a temporary manual-override plan named `webui-manual` with a default 30-minute duration. Tapping power off is the stop-pool control; it stores `power:false` and enforcement turns dependent equipment off.
 
 Weather settings are stored locally in SQLite. When configured, `poold` resolves the pool location through OpenWeatherMap geocoding, polls current weather every 5 minutes, and stores the complete JSON response for future heating/cooling analysis.
 
@@ -160,6 +162,7 @@ poolctl watch [--json] [--all-polls] [--from-start] [--after <id>]
 poolctl set temp 36
 poolctl set heater on|off
 poolctl set filter on|off
+poolctl manual status|on|off
 poolctl plans list
 poolctl plans apply <file>
 poolctl ready-by --temp 36 --at "Sat 08:30"
@@ -173,7 +176,9 @@ poolctl filter --from "02:00" --to "04:00"
 
 ```mermaid
 flowchart TD
-  Base[Stored desired state] --> Manual{Active manual override?}
+  Mode{Manual pool control?} -->|yes| Skip[Skip schedules and reconciliation]
+  Mode -->|no| Base[Stored desired state]
+  Base --> Manual{Active manual override?}
   Manual -->|yes| Override[Apply override desired state]
   Manual -->|no| Ready{Ready-by plan active?}
   Ready -->|yes| Heat[Power + filter + heater until target]
@@ -186,7 +191,9 @@ flowchart TD
   BaseOnly --> Hardware
 ```
 
-Plan precedence is:
+When manual pool control is on, polling continues but `poold` does not run schedules, desired-state reconciliation, or ready-by control transitions. Direct commands from the API, CLI, or web UI still execute.
+
+In automatic control, plan precedence is:
 
 1. Active manual override.
 2. Active ready-by plan.
@@ -224,6 +231,8 @@ Authorization: Bearer <token>
 | `GET` | `/observations?after=<id>&limit=<n>` | Stored poll observations |
 | `GET` | `/observations?latest=1&limit=<n>&offset=<n>` | Latest observations in descending order |
 | `GET` | `/observations/stream` | Server-sent observation stream |
+| `GET` | `/control-mode` | Current automatic/manual control mode |
+| `PUT` | `/control-mode` | Toggle manual pool control |
 | `GET` | `/desired-state` | Stored base desired state |
 | `PUT` | `/desired-state` | Replace base desired state |
 | `GET` | `/weather` | Redacted settings view and latest stored weather observation |
@@ -252,6 +261,16 @@ Set target temperature:
   "capability": "target_temp",
   "value": 36,
   "source": "webui"
+}
+```
+
+### Control Mode Example
+
+Pause schedule and desired-state reconciliation:
+
+```json
+{
+  "manual_control": true
 }
 ```
 

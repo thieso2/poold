@@ -832,6 +832,26 @@ func (s *Store) SaveDesiredState(ctx context.Context, desired pool.DesiredState)
 	return s.setKV(ctx, "desired_state", body)
 }
 
+func (s *Store) ControlMode(ctx context.Context) (pool.ControlMode, error) {
+	body, ok, err := s.getKV(ctx, "control_mode")
+	if err != nil || !ok {
+		return pool.ControlMode{}, err
+	}
+	var mode pool.ControlMode
+	if err := json.Unmarshal(body, &mode); err != nil {
+		return pool.ControlMode{}, err
+	}
+	return mode, nil
+}
+
+func (s *Store) SaveControlMode(ctx context.Context, mode pool.ControlMode) error {
+	body, err := json.Marshal(mode)
+	if err != nil {
+		return err
+	}
+	return s.setKV(ctx, "control_mode", body)
+}
+
 func (s *Store) WeatherSettings(ctx context.Context) (pool.WeatherSettings, error) {
 	body, ok, err := s.getKV(ctx, "weather_settings")
 	if err != nil || !ok {

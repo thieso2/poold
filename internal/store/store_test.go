@@ -73,6 +73,23 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if savedDesired.Heater == nil || !*savedDesired.Heater || savedDesired.Filter != nil || savedDesired.Power != nil {
 		t.Fatalf("desired any values were not preserved: %+v", savedDesired)
 	}
+	defaultMode, err := st.ControlMode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultMode.ManualControl {
+		t.Fatalf("default control mode = %+v, want automatic", defaultMode)
+	}
+	if err := st.SaveControlMode(ctx, pool.ControlMode{ManualControl: true}); err != nil {
+		t.Fatal(err)
+	}
+	savedMode, err := st.ControlMode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !savedMode.ManualControl {
+		t.Fatalf("control mode = %+v, want manual", savedMode)
+	}
 
 	event, err := st.AddEvent(ctx, "test", "hello", map[string]string{"ok": "true"})
 	if err != nil {

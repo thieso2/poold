@@ -43,6 +43,16 @@ func TestFormatWatchEventStatusError(t *testing.T) {
 	}
 }
 
+func TestFormatWatchEventControlMode(t *testing.T) {
+	raw := `{"id":86,"created_at":"2000-01-02T03:04:05Z","type":"control_mode","message":"control mode updated","data":{"manual_control":true}}`
+
+	got := formatWatchEvent(raw, time.UTC)
+	want := "2000-01-02 03:04:05  #86  CONTROL manual pool control on"
+	if got != want {
+		t.Fatalf("formatWatchEvent() = %q, want %q", got, want)
+	}
+}
+
 func TestReplayWatchHistoryDefaultsToLastHour(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		after := r.URL.Query().Get("after")
