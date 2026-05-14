@@ -935,7 +935,8 @@ var state = {
   settingsOpen: false,
   planView: "plans",
   activityView: "events",
-  pending: false
+  pending: false,
+  pendingCount: 0
 };
 
 function $(id) { return document.getElementById(id); }
@@ -943,13 +944,12 @@ function qsa(selector) { return Array.prototype.slice.call(document.querySelecto
 function boolText(value) { return value ? "On" : "Off"; }
 function title(value) { return (value || "").replace(/_/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); }); }
 
-function setBusy(value) {
-  state.pending = value;
-  $("busy").textContent = value ? "Working" : "Ready";
-  $("busy").className = value ? "badge warn" : "badge ok";
-  qsa("button").forEach(function(button) {
-    if (button.id !== "saveToken") button.disabled = value;
-  });
+function setBusy(value, message) {
+  state.pendingCount = Math.max(0, state.pendingCount + (value ? 1 : -1));
+  state.pending = state.pendingCount > 0;
+  $("busy").textContent = state.pending ? "Working" : "Ready";
+  $("busy").className = state.pending ? "badge warn" : "badge ok";
+  if (value && message) toast(message, "busy");
 }
 
 function toast(message, kind) {
@@ -958,7 +958,9 @@ function toast(message, kind) {
   box.style.background = kind === "bad" ? "#b42318" : kind === "ok" ? "#1d7f45" : "#172126";
   box.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(function() { box.classList.remove("show"); }, 2800);
+  if (kind !== "busy") {
+    toast.timer = setTimeout(function() { box.classList.remove("show"); }, 2800);
+  }
 }
 
 function updateTokenUI() {
@@ -1207,7 +1209,6 @@ function renderControlMode() {
   $("modeTitle").textContent = manual ? "Manual pool control" : "Automatic control";
   $("modeDetail").textContent = manual ? "Schedules and reconciliation paused" : "Schedules and reconciliation active";
   $("controlModeToggle").textContent = manual ? "Automatic" : "Manual";
-  $("controlModeToggle").disabled = state.pending;
 }
 
 function renderManual() {
@@ -1220,9 +1221,7 @@ function renderManual() {
   $("manualMinus").classList.toggle("hidden", !!plan && !timed);
   $("manualPlus").classList.toggle("hidden", !!plan && !timed);
   $("manualPermanent").classList.toggle("hidden", !!plan && !timed);
-  $("manualMinus").disabled = state.pending;
-  $("manualPlus").disabled = state.pending;
-  $("manualPermanent").disabled = state.pending || (!!plan && !timed);
+  $("manualPermanent").disabled = !!plan && !timed;
   if (plan) {
     $("manualTitle").textContent = manualTitle(plan.desired_state || {});
     $("manualDetail").textContent = manualSummary(plan.desired_state || {}) + " · " + manualDurationLabel(plan);
@@ -1805,8 +1804,8 @@ function renderActivityPager() {
   pager.innerHTML = "<button data-page=\"newer\">Newer</button><span>Page " + (page + 1) + "</span><button data-page=\"older\">Older</button>";
   var newer = pager.querySelector("[data-page=\"newer\"]");
   var older = pager.querySelector("[data-page=\"older\"]");
-  newer.disabled = page <= 0 || state.pending;
-  older.disabled = !hasOlder || state.pending;
+  newer.disabled = page <= 0;
+  older.disabled = !hasOlder;
   newer.onclick = function() { changeActivityPage(-1); };
   older.onclick = function() { changeActivityPage(1); };
 }
@@ -1988,7 +1987,7 @@ function updateManualPlan(desired, expiresAt, message) {
 
 function runAction(action, message) {
   if (!state.token) return toast("Token required", "bad");
-  setBusy(true);
+  setBusy(true, "Working...");
   action().then(function() {
     toast(message, "ok");
     return Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadTimeline(), loadPlans(), loadActivities()]);
@@ -2362,10 +2361,10 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (!isHistoryPage && state.token && !state.pending) Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
+  if (!isHistoryPage && state.token) Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
 setInterval(function() {
-  if (state.token && !state.pending) loadTimeline().then(renderTimeline);
+  if (state.token) loadTimeline().then(renderTimeline);
 }, 60000);
 setInterval(renderManual, 1000);
 </script>
