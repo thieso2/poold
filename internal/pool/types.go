@@ -36,7 +36,19 @@ type DesiredState struct {
 
 // ControlMode configures whether poold reconciles desired state and schedules.
 type ControlMode struct {
-	ManualControl bool `json:"manual_control"`
+	ManualControl bool       `json:"manual_control"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+}
+
+// Active reports whether manual pool control is active at now.
+func (m ControlMode) Active(now time.Time) bool {
+	if !m.ManualControl {
+		return false
+	}
+	if m.ExpiresAt == nil {
+		return true
+	}
+	return m.ExpiresAt.After(now)
 }
 
 func (d DesiredState) Empty() bool {

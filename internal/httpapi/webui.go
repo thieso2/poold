@@ -934,6 +934,7 @@ var state = {
   manualDraft: null,
   settingsOpen: false,
   planView: "plans",
+  editPlanId: null,
   activityView: "events",
   pending: false,
   pendingCount: 0
@@ -1207,7 +1208,7 @@ function renderControlMode() {
   var strip = $("modeStrip");
   strip.className = "mode-strip " + (manual ? "manual" : "automatic");
   $("modeTitle").textContent = manual ? "Manual pool control" : "Automatic control";
-  $("modeDetail").textContent = manual ? "Schedules and reconciliation paused" : "Schedules and reconciliation active";
+  $("modeDetail").textContent = manual && state.controlMode.expires_at ? "Schedules paused until " + formatDateTime(state.controlMode.expires_at) : (manual ? "Schedules and reconciliation paused" : "Schedules and reconciliation active");
   $("controlModeToggle").textContent = manual ? "Automatic" : "Manual";
 }
 
@@ -1252,6 +1253,11 @@ function renderPlans() {
   });
   var view = $("plansView");
   view.innerHTML = "";
+  if (state.planView === "edit") {
+    var plan = state.plans.find(function(p) { return p.id === state.editPlanId; });
+    if (plan) return renderEditForm(view, plan);
+    state.planView = "plans";
+  }
   if (state.planView === "plans") return renderPlanList(view);
   if (state.planView === "ready") return renderReadyForm(view);
   renderWindowForm(view);
@@ -1268,7 +1274,7 @@ function renderPlanList(view) {
   visiblePlans.forEach(function(plan) {
     var item = document.createElement("div");
     item.className = "plan";
-    item.innerHTML = "<div class=\"plan-main\"><div><h3>" + escapeHTML(plan.name || plan.id) + "</h3><p class=\"muted\">" + escapeHTML(describePlan(plan)) + "</p></div><span class=\"badge " + (plan.enabled ? "ok" : "") + "\">" + (plan.enabled ? "Active" : "Paused") + "</span></div><div class=\"plan-actions\"><label>Active <select data-active=\"" + escapeHTML(plan.id) + "\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label><button class=\"danger\" data-delete=\"" + escapeHTML(plan.id) + "\">Delete</button></div>";
+    item.innerHTML = "<div class=\"plan-main\"><div><h3>" + escapeHTML(plan.name || plan.id) + "</h3><p class=\"muted\">" + escapeHTML(describePlan(plan)) + "</p></div><span class=\"badge " + (plan.enabled ? "ok" : "") + "\">" + (plan.enabled ? "Active" : "Paused") + "</span></div><div class=\"plan-actions\"><label>Active <select data-active=\"" + escapeHTML(plan.id) + "\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label><button data-edit=\"" + escapeHTML(plan.id) + "\">Edit</button></div>";
     list.appendChild(item);
   });
   view.appendChild(list);
@@ -1281,9 +1287,11 @@ function renderPlanList(view) {
       }));
     };
   });
-  qsa("[data-delete]").forEach(function(button) {
+  qsa("[data-edit]").forEach(function(button) {
     button.onclick = function() {
-      updatePlans(state.plans.filter(function(plan) { return plan.id !== button.dataset.delete; }));
+      state.editPlanId = button.dataset.edit;
+      state.planView = "edit";
+      renderPlans();
     };
   });
 }
@@ -1369,6 +1377,133 @@ function renderWindowForm(view) {
       days: qsa("#windowDays .day.active").map(function(button) { return button.dataset.day; })
     };
     updatePlans(state.plans.concat([plan]));
+  };
+}
+
+function renderEditForm(view, plan) {
+  if (plan.type === "ready_by") return renderEditReadyForm(view, plan);
+  if (plan.type === "time_window") return renderEditWindowForm(view, plan);
+  view.innerHTML = "<p class=\"muted\">This plan type cannot be edited here.</p><button id=\"editBack\">Back</button>";
+  $("editBack").onclick = function() { state.planView = "plans"; renderPlans(); };
+}
+
+function renderEditReadyForm(view, plan) {
+  var isRepeating = !!plan.cron;
+  var atValue = "";
+  var timeValue = "08:30";
+  var allDaysSelected = true;
+  var selectedDayNames = [];
+  if (!isRepeating && plan.at) {
+    atValue = localDateTime(new Date(plan.at));
+  }
+  if (isRepeating && plan.cron) {
+    var cronFields = plan.cron.trim().split(/\s+/);
+    if (cronFields.length >= 2) {
+      timeValue = pad2(Number(cronFields[1])) + ":" + pad2(Number(cronFields[0]));
+    }
+    if (cronFields.length === 5 && cronFields[4] !== "*") {
+      allDaysSelected = false;
+      var numToDay = {0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat"};
+      selectedDayNames = cronFields[4].split(",").map(function(n) { return numToDay[Number(n)]; }).filter(Boolean);
+    }
+  }
+  view.innerHTML =
+    "<button id=\"editBack\" style=\"margin-bottom:10px\">← Back</button>" +
+    "<div class=\"row three\"><label>Name <input id=\"editName\" value=\"" + escapeHTML(plan.name || "") + "\"></label>" +
+    "<label>Target <input id=\"editTemp\" type=\"number\" min=\"10\" max=\"40\" step=\"1\" value=\"" + (plan.target_temp || 36) + "\"></label>" +
+    "<label>Active <select id=\"editEnabled\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label></div>" +
+    "<div class=\"row two\"><label>Mode <select id=\"editMode\"><option value=\"once\"" + (!isRepeating ? " selected" : "") + ">Once</option><option value=\"cron\"" + (isRepeating ? " selected" : "") + ">Repeating</option></select></label>" +
+    "<label id=\"editAtWrap\"" + (isRepeating ? " class=\"hidden\"" : "") + ">At <input id=\"editAt\" type=\"datetime-local\" value=\"" + escapeHTML(atValue) + "\"></label>" +
+    "<label id=\"editTimeWrap\"" + (!isRepeating ? " class=\"hidden\"" : "") + ">At <input id=\"editTime\" type=\"time\" value=\"" + escapeHTML(timeValue) + "\"></label></div>" +
+    "<div class=\"days" + (!isRepeating ? " hidden" : "") + "\" id=\"editDays\"></div>" +
+    "<div class=\"row two\" style=\"margin-top:12px\"><button class=\"primary\" id=\"editSave\">Save</button><button class=\"danger\" id=\"editDelete\">Delete</button></div>";
+  var dayWrap = $("editDays");
+  days.forEach(function(day) {
+    var btn = document.createElement("button");
+    btn.className = "day" + (allDaysSelected || selectedDayNames.indexOf(day) >= 0 ? " active" : "");
+    btn.textContent = day.slice(0, 1).toUpperCase();
+    btn.dataset.day = day;
+    btn.onclick = function() { btn.classList.toggle("active"); };
+    dayWrap.appendChild(btn);
+  });
+  $("editMode").onchange = function() {
+    var repeating = $("editMode").value === "cron";
+    $("editAtWrap").classList.toggle("hidden", repeating);
+    $("editTimeWrap").classList.toggle("hidden", !repeating);
+    $("editDays").classList.toggle("hidden", !repeating);
+  };
+  $("editBack").onclick = function() { state.planView = "plans"; renderPlans(); };
+  $("editDelete").onclick = function() {
+    var planId = plan.id;
+    state.planView = "plans";
+    updatePlans(state.plans.filter(function(p) { return p.id !== planId; }));
+  };
+  $("editSave").onclick = function() {
+    var updated = {id: plan.id, type: plan.type, created_at: plan.created_at,
+      name: $("editName").value || plan.name,
+      enabled: $("editEnabled").value === "true",
+      target_temp: Number($("editTemp").value || 36)
+    };
+    if ($("editMode").value === "cron") {
+      var t = $("editTime").value;
+      if (!t || t.indexOf(":") < 0) return toast("Ready time is required", "bad");
+      var parts = t.split(":");
+      var selDays = qsa("#editDays .day.active").map(function(b) { return b.dataset.day; });
+      var dayField = "*";
+      if (selDays.length > 0 && selDays.length < days.length) dayField = selDays.map(cronDay).join(",");
+      updated.cron = Number(parts[1]) + " " + Number(parts[0]) + " * * " + dayField;
+    } else {
+      var at = $("editAt").value;
+      if (!at) return toast("Ready time is required", "bad");
+      updated.at = new Date(at).toISOString();
+    }
+    state.planView = "plans";
+    updatePlans(state.plans.map(function(p) { return p.id === plan.id ? updated : p; }));
+  };
+}
+
+function renderEditWindowForm(view, plan) {
+  var windowCaps = ["filter", "heater", "jets", "bubbles", "sanitizer"];
+  view.innerHTML =
+    "<button id=\"editBack\" style=\"margin-bottom:10px\">← Back</button>" +
+    "<div class=\"row three\">" +
+    "<label>Name <input id=\"editName\" value=\"" + escapeHTML(plan.name || "") + "\"></label>" +
+    "<label>Capability <select id=\"editCap\">" +
+    windowCaps.map(function(c) { return "<option value=\"" + c + "\"" + (plan.capability === c ? " selected" : "") + ">" + title(c) + "</option>"; }).join("") +
+    "</select></label>" +
+    "<label>Active <select id=\"editEnabled\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label>" +
+    "</div>" +
+    "<div class=\"row two\"><label>From <input id=\"editFrom\" type=\"time\" value=\"" + escapeHTML(plan.from || "02:00") + "\"></label>" +
+    "<label>To <input id=\"editTo\" type=\"time\" value=\"" + escapeHTML(plan.to || "04:00") + "\"></label></div>" +
+    "<div class=\"days\" id=\"editDays\"></div>" +
+    "<div class=\"row two\" style=\"margin-top:12px\"><button class=\"primary\" id=\"editSave\">Save</button><button class=\"danger\" id=\"editDelete\">Delete</button></div>";
+  var planDays = plan.days || [];
+  var dayWrap = $("editDays");
+  days.forEach(function(day) {
+    var btn = document.createElement("button");
+    btn.className = "day" + (planDays.indexOf(day) >= 0 ? " active" : "");
+    btn.textContent = day.slice(0, 1).toUpperCase();
+    btn.dataset.day = day;
+    btn.onclick = function() { btn.classList.toggle("active"); };
+    dayWrap.appendChild(btn);
+  });
+  $("editBack").onclick = function() { state.planView = "plans"; renderPlans(); };
+  $("editDelete").onclick = function() {
+    var planId = plan.id;
+    state.planView = "plans";
+    updatePlans(state.plans.filter(function(p) { return p.id !== planId; }));
+  };
+  $("editSave").onclick = function() {
+    var updated = {id: plan.id, type: plan.type, created_at: plan.created_at,
+      name: $("editName").value || plan.name,
+      enabled: $("editEnabled").value === "true",
+      capability: $("editCap").value,
+      from: $("editFrom").value,
+      to: $("editTo").value,
+      days: qsa("#editDays .day.active").map(function(b) { return b.dataset.day; })
+    };
+    state.planView = "plans";
+    updatePlans(state.plans.map(function(p) { return p.id === plan.id ? updated : p; }));
   };
 }
 
@@ -2023,7 +2158,7 @@ function eventLine(event, previousObservation) {
   if (event.type === "status_error" && event.data && event.data.error) return event.data.error;
   if (event.type === "command" && event.data) return commandLine(event.data);
   if (event.type === "command_error" && event.data) return title(event.data.capability) + " failed · " + (event.data.error || event.message || "");
-  if (event.type === "control_mode" && event.data) return event.data.manual_control ? "Manual pool control on" : "Automatic control on";
+  if (event.type === "control_mode" && event.data) return event.data.manual_control && event.data.expires_at ? "Manual pool control on until " + formatDateTime(event.data.expires_at) : (event.data.manual_control ? "Manual pool control on" : "Automatic control on");
   if (event.type === "scheduler" && event.data) return planExecutionLine(event);
   return event.message || "";
 }

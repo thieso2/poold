@@ -112,6 +112,7 @@ Set options with environment variables or daemon flags.
 | `POOLD_POLL_ERROR_MIN_INTERVAL` | `30s` | First error backoff interval |
 | `POOLD_POLL_ERROR_MAX_INTERVAL` | `5m` | Maximum error backoff interval |
 | `POOLD_COMMAND_CONFIRM_DELAY` | `10s` | Delayed refresh after commands |
+| `POOLD_MANUAL_CONTROL_DURATION` | `2h` | Default duration before manual pool control returns to automatic |
 | `POOLD_EVENT_HEARTBEAT` | `30m` | Max interval between unchanged event records |
 | `POOLD_OBSERVATION_FLUSH_INTERVAL` | `15m` | Max interval between unchanged poll span writes; set `0` for every poll |
 | `POOLD_OBSERVATION_RETENTION` | `14d` | Observation retention |
@@ -146,7 +147,7 @@ It supports:
 
 The web shell itself is public, but all data and actions still require the bearer token.
 
-Automatic control enforces desired state and schedules. Manual pool control pauses all schedule and desired-state reconciliation so hardware controls at the pool are not overwritten; web control tiles then send direct commands to the spa.
+Automatic control enforces desired state and schedules. Manual pool control pauses all schedule and desired-state reconciliation so hardware controls at the pool are not overwritten; web control tiles then send direct commands to the spa. Manual pool control expires by default after `POOLD_MANUAL_CONTROL_DURATION`.
 
 In automatic control, the control tiles create a temporary manual-override plan named `webui-manual` with a default 30-minute duration. Tapping power off is the stop-pool control; it stores `power:false` and enforcement turns dependent equipment off.
 
@@ -178,11 +179,11 @@ poolctl filter --from "02:00" --to "04:00"
 flowchart TD
   Mode{Manual pool control?} -->|yes| Skip[Skip schedules and reconciliation]
   Mode -->|no| Base[Stored desired state]
-  Base --> Manual{Active manual override?}
-  Manual -->|yes| Override[Apply override desired state]
-  Manual -->|no| Ready{Ready-by plan active?}
+  Base --> Ready{Ready-by plan active?}
   Ready -->|yes| Heat[Power + filter + heater until target]
-  Ready -->|no| Window{Time window active?}
+  Ready -->|no| Manual{Active manual override?}
+  Manual -->|yes| Override[Apply override desired state]
+  Manual -->|no| Window{Time window active?}
   Window -->|yes| WindowDesired[Apply capability windows]
   Window -->|no| BaseOnly[Use base desired state]
   Override --> Hardware[Apply hardware constraints]
@@ -191,16 +192,16 @@ flowchart TD
   BaseOnly --> Hardware
 ```
 
-When manual pool control is on, polling continues but `poold` does not run schedules, desired-state reconciliation, or ready-by control transitions. Direct commands from the API, CLI, or web UI still execute.
+When manual pool control is on, polling continues but `poold` does not run schedules, desired-state reconciliation, or ready-by control transitions. Direct commands from the API, CLI, or web UI still execute. Unless the API request supplies an explicit `expires_at`, manual pool control returns to automatic control after `POOLD_MANUAL_CONTROL_DURATION`.
 
 In automatic control, plan precedence is:
 
-1. Active manual override.
-2. Active ready-by plan.
+1. Active ready-by plan.
+2. Active manual override.
 3. Time-window plans.
 4. Stored desired state.
 
-Manual overrides can be timed with `expires_at` or permanent by omitting `expires_at`. Permanent manual overrides are still evaluated at the highest priority; clearing the manual override removes that priority block.
+Manual overrides can be timed with `expires_at` or permanent by omitting `expires_at`. Ready-by plans are evaluated before manual-override plans, so a due ready-by occurrence still controls heating. Clearing the manual override removes that priority block for non-ready-by periods.
 
 Hardware constraints are applied before enforcement. Any equipment-on state implies power-on, heater-on also implies filter-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 

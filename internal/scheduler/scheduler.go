@@ -59,6 +59,22 @@ func (s *Scheduler) EvaluateWithReadyByControl(now time.Time, status pool.Status
 	base = base.WithHardwareConstraints()
 
 	for _, plan := range plans {
+		if !plan.Enabled || plan.Type != pool.PlanReadyBy {
+			continue
+		}
+		desired, active, _, reason, control := s.evaluateReadyBy(now, status, base, plan, states)
+		if !active {
+			continue
+		}
+		return Evaluation{
+			Desired:        desired.WithHardwareConstraints(),
+			Source:         plan.ID,
+			Reason:         reason,
+			ReadyByControl: control,
+		}
+	}
+
+	for _, plan := range plans {
 		if !plan.Enabled || plan.Type != pool.PlanManualOverride {
 			continue
 		}
@@ -72,45 +88,13 @@ func (s *Scheduler) EvaluateWithReadyByControl(now time.Time, status pool.Status
 		}
 	}
 
-	var readyByTarget Evaluation
-	readyByTargetActive := false
-	for _, plan := range plans {
-		if !plan.Enabled || plan.Type != pool.PlanReadyBy {
-			continue
-		}
-		desired, active, heatDemand, reason, control := s.evaluateReadyBy(now, status, base, plan, states)
-		if !active {
-			continue
-		}
-		evaluation := Evaluation{
-			Desired:        desired.WithHardwareConstraints(),
-			Source:         plan.ID,
-			Reason:         reason,
-			ReadyByControl: control,
-		}
-		if heatDemand {
-			return evaluation
-		}
-		readyByTarget = evaluation
-		readyByTargetActive = true
-		break
-	}
-
-	windowBase := base
-	if readyByTargetActive {
-		windowBase = readyByTarget.Desired
-	}
-	timeWindowDesired, active, reason := s.evaluateTimeWindows(now, windowBase, plans)
+	timeWindowDesired, active, source, reason := s.evaluateTimeWindows(now, base, plans)
 	if active {
 		return Evaluation{
-			Desired:        timeWindowDesired.WithHardwareConstraints(),
-			Source:         "time_window",
-			Reason:         reason,
-			ReadyByControl: readyByTarget.ReadyByControl,
+			Desired: timeWindowDesired.WithHardwareConstraints(),
+			Source:  source,
+			Reason:  reason,
 		}
-	}
-	if readyByTargetActive {
-		return readyByTarget
 	}
 
 	return Evaluation{Desired: base, Source: "default", Reason: "default desired state"}
@@ -323,27 +307,62 @@ func (s *Scheduler) readyByAt(now time.Time, plan pool.Plan) (time.Time, bool) {
 	return plan.At.In(s.config.Location), true
 }
 
-func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, plans []pool.Plan) (pool.DesiredState, bool, string) {
-	desired := base
-	activeCaps := map[string]bool{}
+func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, plans []pool.Plan) (pool.DesiredState, bool, string, string) {
+	type activePlan struct {
+		id         string
+		capability string
+		features   int
+	}
 
+	var active []activePlan
 	for _, plan := range plans {
 		if !plan.Enabled || plan.Type != pool.PlanTimeWindow || plan.Capability == "" {
 			continue
 		}
 		capability := normalizeCapability(plan.Capability)
 		if timeWindowActive(now, plan, s.config.Location) {
-			activeCaps[capability] = true
+			active = append(active, activePlan{
+				id:         plan.ID,
+				capability: capability,
+				features:   capabilityFeatureCount(capability),
+			})
 		}
 	}
 
-	if len(activeCaps) == 0 {
-		return base, false, ""
+	if len(active) == 0 {
+		return base, false, "", ""
 	}
-	for capability := range activeCaps {
-		setCapability(&desired, capability, true)
+
+	// The plan with the most features wins — if heater is active it subsumes filter.
+	winner := active[0]
+	for _, ap := range active[1:] {
+		if ap.features > winner.features {
+			winner = ap
+		}
 	}
-	return desired, true, "time window plan active"
+
+	desired := base
+	for _, ap := range active {
+		if !capabilitySubsumedBy(ap.capability, winner.capability) {
+			setCapability(&desired, ap.capability, true)
+		}
+	}
+	setCapability(&desired, winner.capability, true)
+
+	return desired, true, winner.id, "time window plan active"
+}
+
+func capabilityFeatureCount(capability string) int {
+	if capability == "heater" {
+		return 2 // heater forces filter on via hardware constraints
+	}
+	return 1
+}
+
+// capabilitySubsumedBy reports whether cap's effect is already covered by winner.
+// Heater subsumes filter because heater forces filter on.
+func capabilitySubsumedBy(cap, winner string) bool {
+	return winner == "heater" && cap == "filter"
 }
 
 func timeWindowActive(now time.Time, plan pool.Plan, loc *time.Location) bool {

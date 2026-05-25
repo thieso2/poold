@@ -53,7 +53,7 @@ func TestEveningFilterWindowOverridesOffBaseDesiredState(t *testing.T) {
 	}
 
 	eval := s.Evaluate(at(loc, 2026, 5, 4, 18, 10), pool.Status{}, base, []pool.Plan{plan})
-	if eval.Source != "time_window" || eval.Desired.Power == nil || !*eval.Desired.Power || eval.Desired.Filter == nil || !*eval.Desired.Filter {
+	if eval.Source != "evening" || eval.Desired.Power == nil || !*eval.Desired.Power || eval.Desired.Filter == nil || !*eval.Desired.Filter {
 		t.Fatalf("evening filter window should turn power/filter on: %+v", eval)
 	}
 }
@@ -241,7 +241,7 @@ func TestReadyByControlHysteresisBreaksTargetBoundaryLoop(t *testing.T) {
 	}
 }
 
-func TestReadyBySatisfiedIdleStillAllowsTimeWindowDemand(t *testing.T) {
+func TestReadyBySatisfiedIdleOverridesTimeWindowDemand(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc, HeatingRateCPerHour: 1, ReadinessBuffer: 30 * time.Minute})
 	readyAt := at(loc, 2026, 5, 9, 8, 30)
@@ -278,8 +278,8 @@ func TestReadyBySatisfiedIdleStillAllowsTimeWindowDemand(t *testing.T) {
 		[]pool.Plan{ready, window},
 		states,
 	)
-	if eval.Source != "time_window" || eval.Desired.Filter == nil || !*eval.Desired.Filter || eval.Desired.Heater == nil || *eval.Desired.Heater || eval.Desired.TargetTemp == nil || *eval.Desired.TargetTemp != 36 {
-		t.Fatalf("satisfied ready-by target should combine with active time window: %+v", eval)
+	if eval.Source != "ready" || eval.Desired.Filter == nil || *eval.Desired.Filter || eval.Desired.Heater == nil || *eval.Desired.Heater || eval.Desired.TargetTemp == nil || *eval.Desired.TargetTemp != 36 {
+		t.Fatalf("satisfied ready-by target should override active time window: %+v", eval)
 	}
 }
 
@@ -394,7 +394,7 @@ func TestFutureRecurringReadyByStateDoesNotStartBeforeHeatingWindow(t *testing.T
 	}
 }
 
-func TestManualOverridePrecedence(t *testing.T) {
+func TestReadyByPreemptsManualOverride(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	now := at(loc, 2026, 5, 4, 2, 30)
@@ -418,15 +418,15 @@ func TestManualOverridePrecedence(t *testing.T) {
 	}
 	current := 30
 	eval := s.Evaluate(now, pool.Status{CurrentTemp: &current}, pool.DesiredState{}, plans)
-	if eval.Source != "override" {
-		t.Fatalf("source = %q, want override", eval.Source)
+	if eval.Source != "ready" {
+		t.Fatalf("source = %q, want ready", eval.Source)
 	}
-	if eval.Desired.Heater == nil || *eval.Desired.Heater {
-		t.Fatalf("manual override should keep heater off: %+v", eval)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater {
+		t.Fatalf("ready-by should turn heater on despite manual override: %+v", eval)
 	}
 }
 
-func TestPermanentManualOverridePreemptsReadyBy(t *testing.T) {
+func TestReadyByPreemptsPermanentManualOverride(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	now := at(loc, 2026, 5, 4, 2, 30)
@@ -449,11 +449,11 @@ func TestPermanentManualOverridePreemptsReadyBy(t *testing.T) {
 	}
 	current := 30
 	eval := s.Evaluate(now, pool.Status{CurrentTemp: &current}, pool.DesiredState{}, plans)
-	if eval.Source != "webui-manual" {
-		t.Fatalf("source = %q, want permanent manual override", eval.Source)
+	if eval.Source != "ready" {
+		t.Fatalf("source = %q, want ready", eval.Source)
 	}
-	if eval.Desired.Heater == nil || *eval.Desired.Heater {
-		t.Fatalf("permanent manual override should keep heater off: %+v", eval)
+	if eval.Desired.Heater == nil || !*eval.Desired.Heater {
+		t.Fatalf("ready-by should turn heater on despite permanent manual override: %+v", eval)
 	}
 }
 

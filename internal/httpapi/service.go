@@ -26,6 +26,7 @@ type Service struct {
 	eventHeartbeat           time.Duration
 	observationFlushInterval time.Duration
 	commandConfirmDelay      time.Duration
+	manualControlDuration    time.Duration
 	heatingRateCPerHour      float64
 	coolingRateCPerHour      float64
 	pollIdleInterval         time.Duration
@@ -59,6 +60,7 @@ type ServiceConfig struct {
 	EventHeartbeat           time.Duration
 	ObservationFlushInterval time.Duration
 	CommandConfirmDelay      time.Duration
+	ManualControlDuration    time.Duration
 	HeatingRateCPerHour      float64
 	CoolingRateCPerHour      float64
 	PollIdleInterval         time.Duration
@@ -87,6 +89,9 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 	if cfg.CommandConfirmDelay <= 0 {
 		cfg.CommandConfirmDelay = 10 * time.Second
 	}
+	if cfg.ManualControlDuration <= 0 {
+		cfg.ManualControlDuration = 2 * time.Hour
+	}
 	if cfg.HeatingRateCPerHour <= 0 {
 		cfg.HeatingRateCPerHour = 0.75
 	}
@@ -113,6 +118,7 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		eventHeartbeat:           cfg.EventHeartbeat,
 		observationFlushInterval: cfg.ObservationFlushInterval,
 		commandConfirmDelay:      cfg.CommandConfirmDelay,
+		manualControlDuration:    cfg.ManualControlDuration,
 		heatingRateCPerHour:      cfg.HeatingRateCPerHour,
 		coolingRateCPerHour:      cfg.CoolingRateCPerHour,
 		pollIdleInterval:         cfg.PollIdleInterval,
@@ -240,16 +246,60 @@ func (s *Service) SaveDesiredState(ctx context.Context, desired pool.DesiredStat
 }
 
 func (s *Service) ControlMode(ctx context.Context) (pool.ControlMode, error) {
-	return s.store.ControlMode(ctx)
+	return s.controlMode(ctx, time.Now())
 }
 
 func (s *Service) SaveControlMode(ctx context.Context, mode pool.ControlMode) error {
+	now := time.Now().UTC()
+	if mode.ManualControl {
+		if mode.ExpiresAt == nil {
+			expiresAt := s.defaultManualControlExpiresAt(ctx, now)
+			mode.ExpiresAt = &expiresAt
+		} else if !mode.ExpiresAt.After(now) {
+			mode.ManualControl = false
+			mode.ExpiresAt = nil
+		}
+	} else {
+		mode.ExpiresAt = nil
+	}
 	if err := s.store.SaveControlMode(ctx, mode); err != nil {
 		return err
 	}
 	_, _ = s.store.AddEvent(ctx, "control_mode", "control mode updated", mode)
 	s.requestRefreshAfter(0)
 	return nil
+}
+
+func (s *Service) defaultManualControlExpiresAt(ctx context.Context, now time.Time) time.Time {
+	expiresAt := now.Add(s.manualControlDuration)
+	status, ok, err := s.store.LatestStatus(ctx)
+	if err != nil || !ok {
+		return expiresAt
+	}
+	plans, err := s.store.Plans(ctx)
+	if err != nil {
+		return expiresAt
+	}
+	if wake, ok := s.scheduler.NextWake(now, status, plans); ok && wake.After(now) && wake.Before(expiresAt) {
+		return wake.UTC()
+	}
+	return expiresAt
+}
+
+func (s *Service) controlMode(ctx context.Context, now time.Time) (pool.ControlMode, error) {
+	mode, err := s.store.ControlMode(ctx)
+	if err != nil {
+		return pool.ControlMode{}, err
+	}
+	if mode.ManualControl && mode.ExpiresAt != nil && !mode.ExpiresAt.After(now) {
+		cleared := pool.ControlMode{ManualControl: false}
+		if err := s.store.SaveControlMode(ctx, cleared); err != nil {
+			return pool.ControlMode{}, err
+		}
+		_, _ = s.store.AddEvent(ctx, "control_mode", "manual control expired", cleared)
+		return cleared, nil
+	}
+	return mode, nil
 }
 
 func (s *Service) WeatherSettings(ctx context.Context) (pool.WeatherSettings, error) {
@@ -380,11 +430,12 @@ func (s *Service) EnforceLatest(ctx context.Context) error {
 }
 
 func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
-	mode, err := s.store.ControlMode(ctx)
+	now := time.Now()
+	mode, err := s.controlMode(ctx, now)
 	if err != nil {
 		return err
 	}
-	if mode.ManualControl {
+	if mode.Active(now) {
 		return nil
 	}
 
@@ -400,7 +451,7 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 	if err != nil {
 		return err
 	}
-	evaluation := s.scheduler.EvaluateWithReadyByControl(time.Now(), status, base, plans, states)
+	evaluation := s.scheduler.EvaluateWithReadyByControl(now, status, base, plans, states)
 	if evaluation.ReadyByControl != nil {
 		if err := s.store.SaveReadyByControlState(ctx, evaluation.ReadyByControl.Current); err != nil {
 			return err
@@ -426,11 +477,14 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 }
 
 func (s *Service) NextScheduleWake(ctx context.Context, now time.Time, status pool.Status) (time.Time, bool, error) {
-	mode, err := s.store.ControlMode(ctx)
+	mode, err := s.controlMode(ctx, now)
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	if mode.ManualControl {
+	if mode.Active(now) {
+		if mode.ExpiresAt != nil {
+			return *mode.ExpiresAt, true, nil
+		}
 		return time.Time{}, false, nil
 	}
 

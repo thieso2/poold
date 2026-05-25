@@ -609,6 +609,9 @@ func formatWatchEvent(raw string, location *time.Location) string {
 		var mode pool.ControlMode
 		if err := json.Unmarshal(event.Data, &mode); err == nil {
 			if mode.ManualControl {
+				if mode.ExpiresAt != nil {
+					return fmt.Sprintf("%s  CONTROL manual pool control on until %s", prefix, formatEventTime(*mode.ExpiresAt, location))
+				}
 				return fmt.Sprintf("%s  CONTROL manual pool control on", prefix)
 			}
 			return fmt.Sprintf("%s  CONTROL automatic control on", prefix)
