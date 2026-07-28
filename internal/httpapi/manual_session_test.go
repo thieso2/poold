@@ -246,6 +246,129 @@ func TestManualSessionRecoveryUsesSameSQLiteDatabaseBeforeSchedulesRun(t *testin
 	}
 }
 
+func TestManualSessionRecoversCrashAfterCommitBeforeFirstCommand(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/poold.db"
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{})
+	handler := New(service, "secret")
+	dispatchReached := make(chan struct{}, 1)
+	releaseDispatch := make(chan struct{})
+	service.manualCommandDispatchHook = func() {
+		dispatchReached <- struct{}{}
+		<-releaseDispatch
+	}
+	intended := controllableState(base)
+	intended.TargetTemp = 38
+	create := putManualSession(t, handler, "crash-after-commit", controlRevision(t, handler), observationID, "until_off", intended)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	select {
+	case <-dispatchReached:
+	case <-time.After(3 * time.Second):
+		t.Fatal("worker did not reach first command dispatch")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseDispatch)
+
+	restarted, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	recoveredService := NewService(restarted, spa, scheduler.New(scheduler.Config{}), ServiceConfig{})
+	if err := recoveredService.EstablishControl(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered := controlRepresentation(t, New(recoveredService, "secret"))
+	if recovered.Control != pool.ManualControl || recovered.Session == nil ||
+		recovered.Session.State != "active" || recovered.Session.Intended != intended {
+		t.Fatalf("recovered = %+v, want active durable intent", recovered)
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"target_temp"}) {
+		t.Fatalf("commands = %v, want recovered command exactly once", got)
+	}
+}
+
+func TestManualSessionRecoversCrashMidwayWithoutRetogglingSatisfiedField(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/poold.db"
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{})
+	handler := New(service, "secret")
+	secondDispatch := make(chan struct{}, 1)
+	releaseDispatch := make(chan struct{})
+	var dispatchMu sync.Mutex
+	dispatches := 0
+	service.manualCommandDispatchHook = func() {
+		dispatchMu.Lock()
+		dispatches++
+		current := dispatches
+		dispatchMu.Unlock()
+		if current == 2 {
+			secondDispatch <- struct{}{}
+			<-releaseDispatch
+		}
+	}
+	intended := controllableState(base)
+	intended.Power = true
+	intended.Filter = true
+	create := putManualSession(t, handler, "crash-midway", controlRevision(t, handler), observationID, "until_off", intended)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	select {
+	case <-secondDispatch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("worker did not reach second command dispatch")
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"power"}) {
+		t.Fatalf("commands before crash = %v, want power", got)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseDispatch)
+
+	restarted, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	recoveredService := NewService(restarted, spa, scheduler.New(scheduler.Config{}), ServiceConfig{})
+	if err := recoveredService.EstablishControl(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered := controlRepresentation(t, New(recoveredService, "secret"))
+	if recovered.Session == nil || recovered.Session.State != "active" {
+		t.Fatalf("recovered = %+v, want active", recovered)
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"power", "filter"}) {
+		t.Fatalf("commands = %v, want satisfied power skipped during recovery", got)
+	}
+}
+
 func TestStartupExpiresElapsedManualSessionBeforeIssuingAutomaticCommand(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 28, 14, 20, 3, 0, time.UTC)
@@ -345,6 +468,169 @@ func TestManualReconciliationDoesNotCommandAfterTimedOwnershipExpires(t *testing
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("Manual session did not expire")
+}
+
+func TestClearFencesLateManualCommandResult(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	spa.blockCommands = make(chan struct{})
+	spa.commandStarted = make(chan struct{}, 1)
+	handler, st, observationID := manualSessionTestAPI(t, spa, base)
+
+	intended := controllableState(base)
+	intended.TargetTemp = 38
+	create := putManualSession(t, handler, "late-clear-create", controlRevision(t, handler), observationID, "until_off", intended)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	var applying pool.PoolControlRepresentation
+	decodeJSON(t, create, &applying)
+	select {
+	case <-spa.commandStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Manual command did not start")
+	}
+
+	clearDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		clearDone <- deleteManualSession(t, handler, "late-clear", applying.ControlRevision)
+	}()
+	var cleared *httptest.ResponseRecorder
+	select {
+	case cleared = <-clearDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("DELETE waited for an in-flight physical command")
+	}
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, body=%s", cleared.Code, cleared.Body.String())
+	}
+	close(spa.blockCommands)
+	waitForCommands(t, spa, []string{"target_temp"})
+
+	automatic := controlRepresentation(t, handler)
+	if automatic.Control != pool.AutomaticControl || automatic.Session != nil {
+		t.Fatalf("representation = %+v, want Automatic", automatic)
+	}
+	if automatic.Observed == nil || automatic.Observed.State.TargetTemp != 36 {
+		t.Fatalf("late result changed current observation: %+v", automatic.Observed)
+	}
+	commands, err := st.Commands(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) == 0 || !commands[len(commands)-1].Success {
+		t.Fatalf("commands = %+v, want late result retained in command history", commands)
+	}
+}
+
+func TestClearFencesOldWorkerAtCommandDispatch(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	handler, _, service, observationID := manualSessionTestServiceAPI(t, spa, base)
+	dispatchReached := make(chan struct{}, 1)
+	releaseDispatch := make(chan struct{})
+	service.manualCommandDispatchHook = func() {
+		dispatchReached <- struct{}{}
+		<-releaseDispatch
+	}
+
+	intended := controllableState(base)
+	intended.TargetTemp = 38
+	create := putManualSession(t, handler, "dispatch-clear-create", controlRevision(t, handler), observationID, "until_off", intended)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	var applying pool.PoolControlRepresentation
+	decodeJSON(t, create, &applying)
+	select {
+	case <-dispatchReached:
+	case <-time.After(3 * time.Second):
+		t.Fatal("worker did not reach command dispatch")
+	}
+
+	cleared := deleteManualSession(t, handler, "dispatch-clear", applying.ControlRevision)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, body=%s", cleared.Code, cleared.Body.String())
+	}
+	close(releaseDispatch)
+	time.Sleep(50 * time.Millisecond)
+	if got := spa.commandCapabilities(); len(got) != 0 {
+		t.Fatalf("stale worker issued commands %v after clear", got)
+	}
+}
+
+func TestReplacementFencesOldWorkerBeforeItsNextCommand(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	spa.blockCommands = make(chan struct{})
+	spa.commandStarted = make(chan struct{}, 1)
+	handler, _, observationID := manualSessionTestAPI(t, spa, base)
+
+	oldIntent := controllableState(base)
+	oldIntent.TargetTemp = 38
+	oldIntent.Heater = true
+	create := putManualSession(t, handler, "replace-race-create", controlRevision(t, handler), observationID, "until_off", oldIntent)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	var old pool.PoolControlRepresentation
+	decodeJSON(t, create, &old)
+	select {
+	case <-spa.commandStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("old Manual command did not start")
+	}
+
+	newIntent := controllableState(base)
+	newIntent.TargetTemp = 34
+	replaceDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		replaceDone <- putManualSessionEdit(t, handler, "replace-race-new", old.ControlRevision, "until_off", newIntent)
+	}()
+	var replaced *httptest.ResponseRecorder
+	select {
+	case replaced = <-replaceDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("replacement waited for an old physical command")
+	}
+	if replaced.Code != http.StatusAccepted {
+		t.Fatalf("replace status = %d, body=%s", replaced.Code, replaced.Body.String())
+	}
+	var current pool.PoolControlRepresentation
+	decodeJSON(t, replaced, &current)
+	if current.ControlRevision == old.ControlRevision {
+		t.Fatal("replacement did not advance the revision")
+	}
+
+	close(spa.blockCommands)
+	active := waitForManualSessionState(t, handler, "active")
+	if active.ControlRevision != current.ControlRevision || active.Session.Intended != newIntent {
+		t.Fatalf("active session = %+v, want replacement %+v", active, current)
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"target_temp", "target_temp"}) {
+		t.Fatalf("commands = %v, want old in-flight command and replacement correction only", got)
+	}
+	if active.Observed == nil || active.Observed.State.TargetTemp != 34 {
+		t.Fatalf("observed = %+v, want replacement result", active.Observed)
+	}
 }
 
 func TestPutManualSessionDisablesDependentsBeforeFilterAndPower(t *testing.T) {
@@ -534,6 +820,66 @@ func TestPollingAttemptsManualSessionDriftOnceThenWaitsForRetry(t *testing.T) {
 	_ = waitForManualSessionState(t, handler, "active")
 	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"target_temp", "target_temp"}) {
 		t.Fatalf("commands after retry = %v", got)
+	}
+}
+
+func TestRetryRacingObservationConvergesWithoutDuplicateToggle(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	spa.setErr = errors.New("device rejected command")
+	handler, _, service, observationID := manualSessionTestServiceAPI(t, spa, base)
+	intended := controllableState(base)
+	intended.TargetTemp = 38
+	create := putManualSession(t, handler, "retry-observation-create", controlRevision(t, handler), observationID, "until_off", intended)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	degraded := waitForManualSessionState(t, handler, "degraded")
+
+	observationReached := make(chan struct{}, 1)
+	releaseObservation := make(chan struct{})
+	spa.mu.Lock()
+	spa.status.TargetTemp = intended.TargetTemp
+	spa.setErr = nil
+	nextStatusCall := spa.statusCalls + 1
+	spa.statusHook = func(call int) {
+		if call == nextStatusCall {
+			observationReached <- struct{}{}
+			<-releaseObservation
+		}
+	}
+	spa.mu.Unlock()
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := service.RefreshStatus(context.Background())
+		refreshDone <- err
+	}()
+	select {
+	case <-observationReached:
+	case <-time.After(3 * time.Second):
+		t.Fatal("poll did not reach observation update")
+	}
+
+	retry := retryManualSession(t, handler, "retry-observation", degraded.ControlRevision)
+	if retry.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body=%s", retry.Code, retry.Body.String())
+	}
+	close(releaseObservation)
+	if err := <-refreshDone; err != nil {
+		t.Fatal(err)
+	}
+	active := waitForManualSessionState(t, handler, "active")
+	if outcome := active.Session.Outcomes["target_temp"]; outcome.State != "confirmed" {
+		t.Fatalf("target_temp outcome = %+v, want confirmed", outcome)
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"target_temp"}) {
+		t.Fatalf("commands = %v, want no duplicate toggle after observed satisfaction", got)
 	}
 }
 
@@ -953,14 +1299,15 @@ func TestDeleteManualSessionPersistenceFailureLeavesOwnershipIntact(t *testing.T
 }
 
 type controllableSpa struct {
-	mu            sync.Mutex
-	status        pool.Status
-	statusErr     error
-	setErr        error
-	statusCalls   int
-	commands      []string
-	blockCommands chan struct{}
-	statusHook    func(int)
+	mu             sync.Mutex
+	status         pool.Status
+	statusErr      error
+	setErr         error
+	statusCalls    int
+	commands       []string
+	blockCommands  chan struct{}
+	commandStarted chan struct{}
+	statusHook     func(int)
 }
 
 func newControllableSpa(status pool.Status) *controllableSpa {
@@ -983,6 +1330,12 @@ func (s *controllableSpa) Status(context.Context) (pool.Status, error) {
 }
 
 func (s *controllableSpa) Set(_ context.Context, capability string, value any) (pool.Status, error) {
+	if s.commandStarted != nil {
+		select {
+		case s.commandStarted <- struct{}{}:
+		default:
+		}
+	}
 	if s.blockCommands != nil {
 		<-s.blockCommands
 	}
