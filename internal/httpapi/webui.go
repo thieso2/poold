@@ -276,22 +276,6 @@ h3 {
   gap: 10px;
   margin-bottom: 12px;
 }
-.status-hero {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: end;
-}
-.temp {
-  font-size: 52px;
-  line-height: 1;
-  letter-spacing: 0;
-  font-weight: 800;
-}
-.target {
-  color: var(--muted);
-  font-weight: 700;
-}
 .badge {
   display: inline-flex;
   align-items: center;
@@ -307,46 +291,6 @@ h3 {
 .badge.ok { background: rgba(79, 211, 154, .14); color: var(--ok); }
 .badge.bad { background: rgba(255, 95, 77, .16); color: var(--bad); }
 .badge.warn { background: rgba(255, 154, 60, .16); color: var(--warn); }
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
-}
-.metric {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-.metric span {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.metric strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 15px;
-}
-.weather-widget {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 10px;
-  align-items: center;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-.weather-widget strong {
-  grid-row: span 2;
-  font-size: 28px;
-  line-height: 1;
-}
-.weather-widget span {
-  color: var(--muted);
-  font-size: 13px;
-}
 /* ---- pool control: the unit ---- */
 .pc {
   --case: #131a1e; --case-hi: #1d262b; --key: #1e262b; --key-edge: #2c383e;
@@ -375,6 +319,24 @@ h3 {
 .pc-window::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: repeating-linear-gradient(180deg, rgba(255,255,255,.028) 0 1px, transparent 1px 3px);
+}
+.pc-rail { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.pc-flag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .14em; color: var(--etch);
+}
+.pc-flag i { width: 5px; height: 5px; border-radius: 50%; background: #24333a; }
+.pc-flag.ok i { background: var(--led); box-shadow: 0 0 6px var(--led); }
+.pc-flag.bad { color: var(--fault); }
+.pc-flag.bad i { background: var(--fault); box-shadow: 0 0 6px var(--fault); }
+.pc-outside {
+  display: flex; align-items: baseline; gap: 9px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid #1a2429;
+}
+.pc-outside b { font-family: var(--mono); font-size: 17px; font-weight: 700; color: var(--etch-hi); font-variant-numeric: tabular-nums; }
+.pc-outside span:not(.etch) {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; color: var(--etch);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pc-digits { position: relative; display: flex; align-items: flex-start; justify-content: center; }
 .pc-seg { font-family: var(--mono); font-size: 84px; font-weight: 700; line-height: .84; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
@@ -914,30 +876,7 @@ body[data-page="history"] .timeline-canvas {
   <div class="grid">
     <section class="panel dashboard-only">
       <div class="panel-head">
-        <h2>Status</h2>
-        <span class="badge" id="connected">Unknown</span>
-      </div>
-      <div class="status-hero">
-        <div>
-          <div class="temp" id="currentTemp">--°</div>
-          <div class="target" id="targetTemp">Target --°</div>
-        </div>
-        <span class="badge" id="stateBadge">Idle</span>
-      </div>
-      <div class="metrics">
-        <div class="metric"><span>Observed</span><strong id="observedAt">--</strong></div>
-        <div class="metric"><span>Error</span><strong id="errorCode">None</strong></div>
-      </div>
-      <div class="weather-widget" id="weatherWidget">
-        <strong id="weatherTemp">--°</strong>
-        <div id="weatherCondition">Weather not configured</div>
-        <span id="weatherObserved">Add OpenWeatherMap settings</span>
-      </div>
-    </section>
-
-    <section class="panel dashboard-only">
-      <div class="panel-head">
-        <h2>Controls</h2>
+        <h2>Pool</h2>
         <span class="badge" id="busy">Ready</span>
       </div>
       <div class="pc" id="poolControl"></div>
@@ -1582,45 +1521,14 @@ function renderLivePanels() {
 
 function renderStatus() {
   var status = state.status || {};
-  var unit = status.unit || "°C";
-  var current = status.current_temp == null ? "--" : status.current_temp + unit;
-  $("currentTemp").textContent = current;
-  $("targetTemp").textContent = "Target " + (status.preset_temp || "--") + unit;
-  $("observedAt").textContent = status.observed_at ? formatTime(status.observed_at) : "--";
-  $("errorCode").textContent = status.error_code || "None";
   $("subline").textContent = status.connected ? "Connected " + formatAge(status.observed_at) : "Pool daemon";
-  $("connected").textContent = status.connected ? "Connected" : state.token ? "Disconnected" : "Token";
-  $("connected").className = status.connected ? "badge ok" : state.token ? "badge bad" : "badge warn";
-  if (state.poolControlRepresentation && state.poolControlRepresentation.control === "manual") {
-    $("stateBadge").textContent = "Manual";
-    $("stateBadge").className = "badge warn";
-    return;
-  }
-  var active = activeCaps(status);
-  $("stateBadge").textContent = active.length ? active.map(title).join(", ") : "Idle";
-  $("stateBadge").className = active.length ? "badge ok" : "badge";
 }
 
+
 function renderWeather() {
-  var weather = state.weather || {};
-  var latest = weather.latest || {};
-  var data = latest.data || {};
-  var main = data.main || {};
-  var condition = data.weather && data.weather.length ? data.weather[0] : {};
-  var temp = typeof main.temp === "number" ? Math.round(main.temp) + "°C" : "--°";
-  $("weatherTemp").textContent = temp;
-  if (latest.id) {
-    $("weatherCondition").textContent = title(condition.description || condition.main || "Weather");
-    var cloudText = data.clouds && typeof data.clouds.all === "number" ? " · " + data.clouds.all + "% clouds" : "";
-    $("weatherObserved").textContent = weatherLocationLabel(latest.location) + " · " + formatAge(latest.observed_at) + cloudText;
-  } else if (weather.settings && weather.settings.api_key_set) {
-    $("weatherCondition").textContent = "Waiting for weather";
-    $("weatherObserved").textContent = weatherLocationLabel(weather.settings.location);
-  } else {
-    $("weatherCondition").textContent = "Weather not configured";
-    $("weatherObserved").textContent = "Add OpenWeatherMap settings";
-  }
+  renderPoolControl();
 }
+
 
 function renderSettings() {
   $("settingsPanel").classList.toggle("show", state.settingsOpen);
@@ -1713,11 +1621,44 @@ function readoutMarkup() {
     return '<span class="pc-led' + (on ? " on" : "") + (cap === "heater" ? " warm" : "") +
       (sending ? " blink" : "") + '"><i></i><span class="etch">' + capLabels[cap] + "</span></span>";
   }).join("");
-  return '<div class="pc-window"><div class="pc-digits">' +
+  var status = state.status || {};
+  var linked = !!status.connected;
+  var fault = status.error_code && status.error_code !== "None" ? status.error_code : null;
+
+  var rail = '<div class="pc-rail">' +
+    '<span class="pc-flag' + (linked ? " ok" : " bad") + '"><i></i>' +
+    (linked ? "LINK " + (status.observed_at ? formatTime(status.observed_at) : "--") : "NO LINK") + "</span>" +
+    '<span class="pc-flag' + (fault ? " bad" : "") + '"><i></i>ERR ' +
+    (fault ? escapeHTML(fault) : "NONE") + "</span></div>";
+
+  return '<div class="pc-window">' + rail + '<div class="pc-digits">' +
     '<span class="pc-seg ghost" aria-hidden="true">' + value.replace(/./g, "8") + "</span>" +
     '<span class="pc-seg live">' + value + '</span><span class="pc-deg">°C</span></div>' +
     '<div class="pc-window-foot"><div class="pc-leds">' + leds + "</div>" +
-    '<span class="pc-setpoint">SET ' + shown.target_temp + "°</span></div></div>";
+    '<span class="pc-setpoint">SET ' + shown.target_temp + "°</span></div>" +
+    outsideMarkup() + "</div>";
+}
+
+// The weather reading belongs on the instrument: it is the other temperature
+// that explains what the heater is up against.
+function outsideMarkup() {
+  var weather = state.weather || {};
+  var latest = weather.latest || {};
+  var data = latest.data || {};
+  var main = data.main || {};
+  var condition = data.weather && data.weather.length ? data.weather[0] : {};
+  var line;
+  if (latest.id) {
+    var clouds = data.clouds && typeof data.clouds.all === "number" ? " · " + data.clouds.all + "% CLOUD" : "";
+    line = '<b>' + (typeof main.temp === "number" ? Math.round(main.temp) : "--") + "°</b>" +
+      "<span>" + escapeHTML((title(condition.description || condition.main || "Outside")).toUpperCase()) +
+      " · " + escapeHTML(weatherLocationLabel(latest.location).toUpperCase()) + clouds + "</span>";
+  } else if (weather.settings && weather.settings.api_key_set) {
+    line = "<b>--°</b><span>WAITING FOR WEATHER</span>";
+  } else {
+    line = "<b>--°</b><span>OUTSIDE NOT CONFIGURED</span>";
+  }
+  return '<div class="pc-outside"><span class="etch">Out</span>' + line + "</div>";
 }
 
 function equipmentMarkup() {
