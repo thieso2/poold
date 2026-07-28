@@ -464,11 +464,20 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 }
 
 func (s *Service) retryManualSession(ctx context.Context, request retryManualSessionRequest) (store.RetryManualSessionResult, error) {
+	current, err := s.PoolControl(ctx)
+	if err != nil {
+		return store.RetryManualSessionResult{}, err
+	}
+	if current.ControlRevision != request.ExpectedRevision || current.Session == nil {
+		return store.RetryManualSessionResult{}, &manualSessionFailure{
+			Code: "control_changed", Message: "Control changed after this draft was opened.", Current: &current,
+		}
+	}
 	result, err := s.store.RetryManualSession(ctx, store.RetryManualSessionParams{
 		ExpectedRevision: request.ExpectedRevision,
 		IdempotencyKey:   request.IdempotencyKey,
 		Fingerprint:      request.Fingerprint,
-		RetriedAt:        time.Now().UTC(),
+		RetriedAt:        s.now().UTC(),
 	})
 	var changed *store.ControlChangedError
 	if errors.As(err, &changed) {

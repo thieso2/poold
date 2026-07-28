@@ -451,6 +451,46 @@ func TestRetryManualSessionResetsEveryFailureWithoutChangingIntentOrTiming(t *te
 	_ = waitForManualSessionState(t, handler, "active")
 }
 
+func TestRetryManualSessionExpiresElapsedSessionFirst(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 28, 14, 20, 3, 0, time.UTC)
+	base := pool.Status{
+		ObservedAt: now,
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	spa.setErr = errors.New("device rejected command")
+	st, err := store.Open(ctx, t.TempDir()+"/poold.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	handler := New(service, "secret")
+	intended := controllableState(base)
+	intended.Heater = true
+	response := putManualSession(t, handler, "create-expiring-failure", controlRevision(t, handler), observationID, "30m", intended)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	degraded := waitForManualSessionState(t, handler, "degraded")
+
+	now = now.Add(31 * time.Minute)
+	retry := retryManualSession(t, handler, "retry-expired", degraded.ControlRevision)
+	assertManualSessionError(t, retry, http.StatusConflict, "control_changed")
+	automatic := controlRepresentation(t, handler)
+	if automatic.Control != pool.AutomaticControl || automatic.Session != nil {
+		t.Fatalf("representation = %+v, want expired Automatic ownership", automatic)
+	}
+}
+
 func TestPollingAttemptsManualSessionDriftOnceThenWaitsForRetry(t *testing.T) {
 	base := pool.Status{
 		ObservedAt: time.Now().UTC(),
