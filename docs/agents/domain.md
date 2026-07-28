@@ -20,7 +20,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 ├── docs/adr/
 │   ├── 0001-sqlite-for-state.md
 │   └── 0002-desired-state-enforcement.md
-├── cmd/          ← poold, poolctl
+├── cmd/          ← poold
 └── internal/     ← config, httpapi, pool, protocol/intex, scheduler, store
 ```
 

@@ -2,11 +2,77 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"pooly/services/poold/internal/pool"
 )
+
+func TestLegacyControlFixtureMigration(t *testing.T) {
+	ctx := context.Background()
+	fixture, err := os.ReadFile("testdata/legacy-control.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, string(fixture)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	var legacyControlRows int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM kv WHERE key = 'control_mode'`).Scan(&legacyControlRows); err != nil {
+		t.Fatal(err)
+	}
+	if legacyControlRows != 0 {
+		t.Fatalf("legacy control rows = %d, want 0", legacyControlRows)
+	}
+	control, err := st.PoolControlRepresentation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control.Control != pool.AutomaticControl || control.Session != nil || control.ControlRevision == "" {
+		t.Fatalf("control = %+v, want durable Automatic ownership", control)
+	}
+	plans, err := st.Plans(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || plans[0].ID != "daily-filter" {
+		t.Fatalf("plans = %+v, want only ordinary schedule", plans)
+	}
+	observations, err := st.Observations(ctx, 0, 10)
+	if err != nil || len(observations) != 1 {
+		t.Fatalf("observations = %+v, err = %v", observations, err)
+	}
+	commands, err := st.Commands(ctx, 0, 10)
+	if err != nil || len(commands) != 1 {
+		t.Fatalf("commands = %+v, err = %v", commands, err)
+	}
+	events, err := st.Events(ctx, 0, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+	desired, err := st.DesiredState(ctx)
+	if err != nil || desired.TargetTemp == nil || *desired.TargetTemp != 36 {
+		t.Fatalf("desired = %+v, err = %v", desired, err)
+	}
+}
 
 func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	ctx := context.Background()
@@ -73,24 +139,6 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	if savedDesired.Heater == nil || !*savedDesired.Heater || savedDesired.Filter != nil || savedDesired.Power != nil {
 		t.Fatalf("desired any values were not preserved: %+v", savedDesired)
 	}
-	defaultMode, err := st.ControlMode(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if defaultMode.ManualControl {
-		t.Fatalf("default control mode = %+v, want automatic", defaultMode)
-	}
-	if err := st.SaveControlMode(ctx, pool.ControlMode{ManualControl: true}); err != nil {
-		t.Fatal(err)
-	}
-	savedMode, err := st.ControlMode(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !savedMode.ManualControl {
-		t.Fatalf("control mode = %+v, want manual", savedMode)
-	}
-
 	event, err := st.AddEvent(ctx, "test", "hello", map[string]string{"ok": "true"})
 	if err != nil {
 		t.Fatal(err)

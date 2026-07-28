@@ -42,15 +42,12 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("DELETE /manual-session", api.handleDeleteManualSession)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
-	mux.HandleFunc("GET /control-mode", api.handleGetControlMode)
-	mux.HandleFunc("PUT /control-mode", api.handlePutControlMode)
 	mux.HandleFunc("GET /weather", api.handleGetWeather)
 	mux.HandleFunc("PUT /weather/settings", api.handlePutWeatherSettings)
 	mux.HandleFunc("POST /weather/refresh", api.handleRefreshWeather)
 	mux.HandleFunc("GET /plans", api.handleGetPlans)
 	mux.HandleFunc("PUT /plans", api.handlePutPlans)
 	mux.HandleFunc("GET /commands", api.handleGetCommands)
-	mux.HandleFunc("POST /commands", api.handleCommands)
 	mux.HandleFunc("GET /heating-sessions", api.handleHeatingSessions)
 	return api.auth(mux)
 }
@@ -590,31 +587,6 @@ func (a *API) handlePutDesiredState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, desired)
 }
 
-func (a *API) handleGetControlMode(w http.ResponseWriter, r *http.Request) {
-	mode, err := a.service.ControlMode(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, mode)
-}
-
-func (a *API) handlePutControlMode(w http.ResponseWriter, r *http.Request) {
-	var mode pool.ControlMode
-	if err := json.NewDecoder(r.Body).Decode(&mode); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := a.service.SaveControlMode(r.Context(), mode); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !mode.ManualControl {
-		_ = a.service.EnforceLatest(r.Context())
-	}
-	writeJSON(w, http.StatusOK, mode)
-}
-
 func (a *API) handleGetWeather(w http.ResponseWriter, r *http.Request) {
 	settings, err := a.service.WeatherSettings(r.Context())
 	if err != nil {
@@ -719,20 +691,6 @@ func (a *API) handleGetCommands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"commands": commands})
-}
-
-func (a *API) handleCommands(w http.ResponseWriter, r *http.Request) {
-	var command pool.CommandRequest
-	if err := json.NewDecoder(r.Body).Decode(&command); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	record, err := a.service.ExecuteCommand(r.Context(), command)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, record)
-		return
-	}
-	writeJSON(w, http.StatusOK, record)
 }
 
 func (a *API) handleHeatingSessions(w http.ResponseWriter, r *http.Request) {

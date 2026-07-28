@@ -1713,26 +1713,6 @@ func (s *Store) SaveDesiredState(ctx context.Context, desired pool.DesiredState)
 	return s.setKV(ctx, "desired_state", body)
 }
 
-func (s *Store) ControlMode(ctx context.Context) (pool.ControlMode, error) {
-	body, ok, err := s.getKV(ctx, "control_mode")
-	if err != nil || !ok {
-		return pool.ControlMode{}, err
-	}
-	var mode pool.ControlMode
-	if err := json.Unmarshal(body, &mode); err != nil {
-		return pool.ControlMode{}, err
-	}
-	return mode, nil
-}
-
-func (s *Store) SaveControlMode(ctx context.Context, mode pool.ControlMode) error {
-	body, err := json.Marshal(mode)
-	if err != nil {
-		return err
-	}
-	return s.setKV(ctx, "control_mode", body)
-}
-
 func (s *Store) WeatherSettings(ctx context.Context) (pool.WeatherSettings, error) {
 	body, ok, err := s.getKV(ctx, "weather_settings")
 	if err != nil || !ok {
@@ -2234,6 +2214,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS weather_observations_observed_at_idx ON weather_observations(observed_at);
 	`)
 	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM kv WHERE key = 'control_mode';
+		DELETE FROM plans
+		WHERE id IN ('webui-manual', 'webui-pause')
+		   OR json_extract(plan_json, '$.type') = 'manual_override'
+		   OR json_extract(plan_json, '$.kind') = 'manual_override'
+		   OR json_extract(plan_json, '$.source') IN ('manual_override', 'webui-manual', 'webui-pause');
+	`); err != nil {
 		return err
 	}
 	if err := s.migrateObservationSpans(ctx); err != nil {

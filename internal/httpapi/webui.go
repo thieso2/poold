@@ -924,14 +924,11 @@ var isHistoryPage = pageMode === "history";
 var caps = ["power", "filter", "heater", "jets", "bubbles", "sanitizer"];
 var capLabels = {power:"Power", filter:"Filter", heater:"Heater", jets:"Jets", bubbles:"Bubbles", sanitizer:"Sanitizer"};
 var days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-var manualPlanID = "webui-manual";
-var legacyPausePlanID = "webui-pause";
 var activityPageSize = 12;
 var activityKeys = ["events", "polls", "commands", "plan_executions", "heating_sessions"];
 var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
-  controlMode: {manual_control: false},
   poolControlRepresentation: null,
   manualSessionDraft: readManualSessionDraft(),
   weather: null,
@@ -1005,7 +1002,7 @@ function startManualSessionDraft() {
   if (session) state.manualSessionDraft.duration = session.duration;
   if (!session) state.manualSessionDraft.base_observation_id = observed.observation_id;
   saveManualSessionDraft();
-  renderControlMode();
+  renderPoolControl();
   renderControls();
 }
 
@@ -1014,7 +1011,7 @@ function discardManualSessionDraft() {
       !confirm("Discard the unsubmitted Manual session draft?")) return;
   state.manualSessionDraft = null;
   saveManualSessionDraft();
-  renderControlMode();
+  renderPoolControl();
   renderControls();
 }
 
@@ -1195,7 +1192,6 @@ function loadAll() {
   setBusy(true);
   Promise.all([
     loadStatus().then(loadPoolControl),
-    loadControlMode(),
     loadWeather(),
     loadTimeline(),
     loadPlans(),
@@ -1254,7 +1250,7 @@ function scheduleManualSessionRefresh() {
   clearTimeout(manualSessionRefreshTimer);
   manualSessionRefreshTimer = setTimeout(function() {
     loadPoolControl().then(function() {
-      renderControlMode();
+      renderPoolControl();
       renderControls();
     });
   }, 800);
@@ -1264,7 +1260,7 @@ function scheduleManualSessionClock() {
   clearTimeout(manualSessionClockTimer);
   manualSessionClockTimer = setTimeout(function() {
     loadPoolControl().then(function() {
-      renderControlMode();
+      renderPoolControl();
       renderControls();
     });
   }, 30000);
@@ -1340,7 +1336,7 @@ function applyManualSessionDraft() {
     }
   }).finally(function() {
     setBusy(false);
-    renderControlMode();
+    renderPoolControl();
     renderControls();
   });
 }
@@ -1362,7 +1358,7 @@ function endManualSession() {
     state.poolControlRepresentation = representation;
     state.manualSessionDraft = null;
     saveManualSessionDraft();
-    renderControlMode();
+    renderPoolControl();
     renderControls();
     toast("Automatic control resumed.", "ok");
     scheduleManualSessionRefresh();
@@ -1370,7 +1366,7 @@ function endManualSession() {
     toast("Manual session: " + err.message, "bad");
   }).finally(function() {
     setBusy(false);
-    renderControlMode();
+    renderPoolControl();
     renderControls();
   });
 }
@@ -1393,7 +1389,7 @@ function retryManualSession() {
     toast("Manual session retry: " + err.message, "bad");
   }).finally(function() {
     setBusy(false);
-    renderControlMode();
+    renderPoolControl();
     renderControls();
   });
 }
@@ -1406,13 +1402,6 @@ function selectAutomaticControl() {
   discardManualSessionDraft();
 }
 
-function loadControlMode() {
-  return api("/control-mode").then(function(mode) {
-    state.controlMode = mode || {manual_control: false};
-  }).catch(function(err) {
-    toast("Control mode: " + err.message, "bad");
-  });
-}
 
 function loadPlans() {
   return api("/plans").then(function(data) {
@@ -1491,7 +1480,7 @@ function renderAll() {
   renderStatus();
   renderWeather();
   renderSettings();
-  renderControlMode();
+  renderPoolControl();
   renderControls();
   renderPlans();
   renderTimeline();
@@ -1506,7 +1495,7 @@ function renderLivePanels() {
   renderStatus();
   renderWeather();
   renderSettings();
-  renderControlMode();
+  renderPoolControl();
   renderControls();
   renderTimeline();
   renderActivity();
@@ -1523,14 +1512,8 @@ function renderStatus() {
   $("subline").textContent = status.connected ? "Connected " + formatAge(status.observed_at) : "Pool daemon";
   $("connected").textContent = status.connected ? "Connected" : state.token ? "Disconnected" : "Token";
   $("connected").className = status.connected ? "badge ok" : state.token ? "badge bad" : "badge warn";
-  if (manualControlActive()) {
+  if (state.poolControlRepresentation && state.poolControlRepresentation.control === "manual") {
     $("stateBadge").textContent = "Manual";
-    $("stateBadge").className = "badge warn";
-    return;
-  }
-  var manual = activeManualPlan();
-  if (manual) {
-    $("stateBadge").textContent = "Override";
     $("stateBadge").className = "badge warn";
     return;
   }
@@ -1574,7 +1557,7 @@ function renderSettings() {
   $("weatherSettingsDetail").textContent = detail.join(" · ");
 }
 
-function renderControlMode() {
+function renderPoolControl() {
   var draft = state.manualSessionDraft;
   var observed = manualSessionObserved();
   var representation = state.poolControlRepresentation;
@@ -1677,7 +1660,7 @@ function renderPlans() {
 }
 
 function renderPlanList(view) {
-  var visiblePlans = state.plans.filter(function(plan) { return !isReservedManualPlan(plan); });
+  var visiblePlans = state.plans;
   if (!visiblePlans.length) {
     view.innerHTML = "<p class=\"muted\">No plans</p>";
     return;
@@ -2394,7 +2377,7 @@ function runAction(action, message) {
   setBusy(true, "Working...");
   action().then(function() {
     toast(message, "ok");
-    return Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadTimeline(), loadPlans(), loadActivities()]);
+    return Promise.all([loadStatus(), loadWeather(), loadTimeline(), loadPlans(), loadActivities()]);
   }).catch(function(err) {
     toast(err.message, "bad");
   }).finally(function() {
@@ -2555,10 +2538,8 @@ function formatTempValue(value, unit) {
 }
 
 function describePlan(plan) {
-  if (isReservedManualPlan(plan)) return manualSummary(plan.desired_state || {}) + " · " + manualDurationLabel(plan);
   if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + readyScheduleLabel(plan);
   if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
-  if (plan.type === "manual_override") return plan.expires_at ? "Until " + formatDateTime(plan.expires_at) : "Permanent";
   return title(plan.type);
 }
 
@@ -2648,49 +2629,6 @@ function formatDurationSeconds(seconds) {
 function localDateTime(date) {
   var pad = function(n) { return String(n).padStart(2, "0"); };
   return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
-}
-
-function manualControlActive() {
-  return !!(state.controlMode && state.controlMode.manual_control);
-}
-
-function activeManualPlan() {
-  if (manualControlActive()) return null;
-  var now = Date.now();
-  return state.plans.find(function(plan) {
-    return isReservedManualPlan(plan) &&
-      plan.enabled &&
-      (!plan.expires_at || new Date(plan.expires_at).getTime() > now);
-  });
-}
-
-function isReservedManualPlan(plan) {
-  return plan && (plan.id === manualPlanID || plan.id === legacyPausePlanID);
-}
-
-function manualSummary(desired) {
-  var parts = [];
-  caps.forEach(function(cap) {
-    if (Object.prototype.hasOwnProperty.call(desired, cap)) {
-      parts.push(capLabels[cap] + " " + boolText(!!desired[cap]));
-    }
-  });
-  if (desired.target_temp != null) parts.push("Target " + desired.target_temp + "°");
-  return parts.length ? parts.join(" · ") : "No settings";
-}
-
-function remainingTime(value) {
-  var seconds = Math.max(0, Math.round((new Date(value).getTime() - Date.now()) / 1000));
-  if (seconds < 60) return seconds + "s";
-  var minutes = Math.round(seconds / 60);
-  if (minutes < 90) return minutes + "m";
-  var hours = Math.floor(minutes / 60);
-  var rest = minutes % 60;
-  return rest ? hours + "h " + rest + "m" : hours + "h";
-}
-
-function manualDurationLabel(plan) {
-  return plan && plan.expires_at ? remainingTime(plan.expires_at) + " left" : "Permanent";
 }
 
 function escapeHTML(value) {
@@ -2788,7 +2726,7 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (!isHistoryPage && state.token) Promise.all([loadStatus().then(loadPoolControl), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
+  if (!isHistoryPage && state.token) Promise.all([loadStatus().then(loadPoolControl), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
 setInterval(function() {
   if (state.token) loadTimeline().then(renderTimeline);

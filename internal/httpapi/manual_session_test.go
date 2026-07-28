@@ -1098,9 +1098,6 @@ func TestDeleteManualSessionCommitsAutomaticControlBeforeScheduleConvergence(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SaveControlMode(context.Background(), pool.ControlMode{ManualControl: true}); err != nil {
-		t.Fatal(err)
-	}
 	manual := createActiveManualSession(t, handler, observationID, base)
 	spa.blockCommands = make(chan struct{})
 
@@ -1133,14 +1130,6 @@ func TestDeleteManualSessionCommitsAutomaticControlBeforeScheduleConvergence(t *
 	if !foundCleared {
 		t.Fatalf("events = %+v, want atomic manual_session.cleared lifecycle event", events)
 	}
-	mode, err := st.ControlMode(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode.ManualControl {
-		t.Fatalf("legacy control mode = %+v, want cleared with Manual session ownership", mode)
-	}
-
 	close(spa.blockCommands)
 	waitForCommands(t, spa, []string{"target_temp", "heater"})
 	latest, ok, err := st.LatestStatus(context.Background())

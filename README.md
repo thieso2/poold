@@ -2,17 +2,13 @@
 
 `poold` is a small pool-side daemon for Pooly. It runs next to an Intex spa, talks to the spa over its TCP JSON protocol, stores local state in SQLite, enforces desired state and schedules, and exposes an authenticated HTTP API, mobile web UI, and CLI-friendly event streams.
 
-The repository builds two binaries:
-
-- `poold`: the daemon, intended for OpenWrt or Linux.
-- `poolctl`: a CLI client for status, commands, plans, and event watching.
+The repository builds `poold`, the daemon intended for OpenWrt or Linux.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
   Browser[Mobile Web UI] -->|HTTP + bearer token| API[poold HTTP API]
-  CLI[poolctl] -->|HTTP + SSE| API
   API --> Store[(SQLite)]
   API --> Scheduler[Scheduler]
   Scheduler --> Commands[Command executor]
@@ -28,18 +24,13 @@ flowchart LR
 
 - Mobile-friendly web control panel on the same port as the API.
 - Bearer-token authenticated API.
-- Current status, health, control mode, desired state, command, plan, event, and observation endpoints.
-- CLI commands for status, manual control mode, direct commands, plans, ready-by schedules, filter windows, and live watching.
 - Adaptive polling: startup, idle, active, stable, and error-backoff intervals.
-- Local scheduler for ready-by, time-window, and manual-override plans.
-- SQLite persistence for observations, events, commands, control mode, desired state, and plans.
 - OpenWrt `procd` init script.
 
 ## Project Layout
 
 ```text
 cmd/poold/                  daemon entrypoint and adaptive poll loop
-cmd/poolctl/                CLI client
 internal/config/            flags, environment, timezone data
 internal/httpapi/           HTTP API, service layer, embedded web UI
 internal/pool/              domain types and plan validation
@@ -72,16 +63,6 @@ Token:     dev-token
 Timezone:  Europe/Berlin
 ```
 
-Use the CLI:
-
-```sh
-go run ./cmd/poolctl status
-go run ./cmd/poolctl watch
-go run ./cmd/poolctl watch --all-polls
-go run ./cmd/poolctl set heater on
-go run ./cmd/poolctl set temp 36
-```
-
 Open the web UI:
 
 ```text
@@ -112,21 +93,12 @@ Set options with environment variables or daemon flags.
 | `POOLD_POLL_ERROR_MIN_INTERVAL` | `30s` | First error backoff interval |
 | `POOLD_POLL_ERROR_MAX_INTERVAL` | `5m` | Maximum error backoff interval |
 | `POOLD_COMMAND_CONFIRM_DELAY` | `10s` | Delayed refresh after commands |
-| `POOLD_MANUAL_CONTROL_DURATION` | `2h` | Default duration before manual pool control returns to automatic |
 | `POOLD_EVENT_HEARTBEAT` | `30m` | Max interval between unchanged event records |
 | `POOLD_OBSERVATION_FLUSH_INTERVAL` | `15m` | Max interval between unchanged poll span writes; set `0` for every poll |
 | `POOLD_OBSERVATION_RETENTION` | `14d` | Observation retention |
 | `POOLD_EVENT_RETENTION` | `14d` | Event retention |
 
 `POOLD_POLL_INTERVAL` is accepted as a compatibility alias for `POOLD_POLL_STABLE_INTERVAL`.
-
-CLI defaults:
-
-| Environment variable | Default | Purpose |
-| --- | --- | --- |
-| `POOLCTL_URL` | `http://127.0.0.1:8090` | Base URL for `poold` |
-| `POOLCTL_TOKEN` | `POOLD_TOKEN` or `dev-token` | Bearer token |
-| `POOLCTL_TIMEZONE` | `Europe/Berlin` | Display timezone |
 
 ## Web UI
 
@@ -136,8 +108,7 @@ It supports:
 
 - Current temperature, target temperature, connection state, equipment state, and last observation.
 - Current outdoor weather widget from OpenWeatherMap.
-- Timed manual control for power, filter, heater, jets, bubbles, sanitizer, and target temperature.
-- Active manual override display with remaining time, `+30m`, `-30m`, and clear actions.
+- Transactional Manual sessions for power, filter, heater, jets, bubbles, and target temperature.
 - Settings screen for the OpenWeatherMap API key and pool location.
 - History graph with measured/predicted pool temperature, outside temperature, target temperature, feature lanes, and command/plan annotations.
 - Plan list, active yes/no toggle, and delete.
@@ -146,62 +117,36 @@ It supports:
 - Paginated activity lists for changed events, poll spans, commands, plan executions, and heating sessions.
 
 The web shell itself is public, but all data and actions still require the bearer token.
-
-Automatic control enforces desired state and schedules. Manual pool control pauses all schedule and desired-state reconciliation so hardware controls at the pool are not overwritten; web control tiles then send direct commands to the spa. Manual pool control expires by default after `POOLD_MANUAL_CONTROL_DURATION`.
-
-In automatic control, the control tiles create a temporary manual-override plan named `webui-manual` with a default 30-minute duration. Tapping power off is the stop-pool control; it stores `power:false` and enforcement turns dependent equipment off.
-
+Automatic control enforces desired state and ordinary schedules. A Manual session
+temporarily owns a complete intended state and reconciles the spa toward it.
 Weather settings are stored locally in SQLite. When configured, `poold` resolves the pool location through OpenWeatherMap geocoding, polls current weather every 5 minutes, and stores the complete JSON response for future heating/cooling analysis.
 
 Pool observations are stored as spans. Repeated identical pool states extend the latest row by updating `last_observed_at` and `observation_count`; a new row is inserted only when the meaningful state changes. Each span can also carry a compact weather snapshot linked to the latest fresh weather observation.
-
-## CLI
-
-```sh
-poolctl status
-poolctl watch [--json] [--all-polls] [--from-start] [--after <id>]
-poolctl set temp 36
-poolctl set heater on|off
-poolctl set filter on|off
-poolctl manual status|on|off
-poolctl plans list
-poolctl plans apply <file>
-poolctl ready-by --temp 36 --at "Sat 08:30"
-poolctl ready-by --temp 36 --cron "30 8 * * 6"
-poolctl filter --from "02:00" --to "04:00"
-```
-
-`poolctl watch` shows deduplicated events. `poolctl watch --all-polls` shows every stored successful status observation.
 
 ## Scheduler Model
 
 ```mermaid
 flowchart TD
-  Mode{Manual pool control?} -->|yes| Skip[Skip schedules and reconciliation]
-  Mode -->|no| Base[Stored desired state]
+  Owner{Control owner} -->|Manual session| Intent[Complete Manual intent]
+  Owner -->|Automatic| Base[Stored desired state]
   Base --> Ready{Ready-by plan active?}
   Ready -->|yes| Heat[Power + filter + heater until target]
-  Ready -->|no| Manual{Active manual override?}
-  Manual -->|yes| Override[Apply override desired state]
-  Manual -->|no| Window{Time window active?}
+  Ready -->|no| Window{Time window active?}
   Window -->|yes| WindowDesired[Apply capability windows]
   Window -->|no| BaseOnly[Use base desired state]
-  Override --> Hardware[Apply hardware constraints]
+  Intent --> Hardware[Apply hardware constraints]
   Heat --> Hardware
   WindowDesired --> Hardware
   BaseOnly --> Hardware
 ```
 
-When manual pool control is on, polling continues but `poold` does not run schedules, desired-state reconciliation, or ready-by control transitions. Direct commands from the API, CLI, or web UI still execute. Unless the API request supplies an explicit `expires_at`, manual pool control returns to automatic control after `POOLD_MANUAL_CONTROL_DURATION`.
 
 In automatic control, plan precedence is:
 
 1. Active ready-by plan.
-2. Active manual override.
-3. Time-window plans.
-4. Stored desired state.
+2. Time-window plans.
+3. Stored desired state.
 
-Manual overrides can be timed with `expires_at` or permanent by omitting `expires_at`. Ready-by plans are evaluated before manual-override plans, so a due ready-by occurrence still controls heating. Clearing the manual override removes that priority block for non-ready-by periods.
 
 Hardware constraints are applied before enforcement. Any equipment-on state implies power-on, heater-on also implies filter-on, and power-off implies dependent equipment off. Omitted desired-state fields remain `Any` in storage and API responses; they are only filled in while calculating commands.
 
@@ -232,8 +177,10 @@ Authorization: Bearer <token>
 | `GET` | `/observations?after=<id>&limit=<n>` | Stored poll observations |
 | `GET` | `/observations?latest=1&limit=<n>&offset=<n>` | Latest observations in descending order |
 | `GET` | `/observations/stream` | Server-sent observation stream |
-| `GET` | `/control-mode` | Current automatic/manual control mode |
-| `PUT` | `/control-mode` | Toggle manual pool control |
+| `GET` | `/manual-session` | Current complete control representation |
+| `PUT` | `/manual-session` | Create or replace a Manual session |
+| `POST` | `/manual-session/retry` | Retry failed Manual-session outcomes |
+| `DELETE` | `/manual-session` | Return to Automatic control |
 | `GET` | `/desired-state` | Stored base desired state |
 | `PUT` | `/desired-state` | Replace base desired state |
 | `GET` | `/weather` | Redacted settings view and latest stored weather observation |
@@ -242,38 +189,7 @@ Authorization: Bearer <token>
 | `GET` | `/plans` | List plans |
 | `PUT` | `/plans` | Replace plans |
 | `GET` | `/commands?latest=1&limit=<n>&offset=<n>` | Latest command history |
-| `POST` | `/commands` | Execute one command |
 | `GET` | `/heating-sessions?limit=<n>&offset=<n>` | Derived heating sessions from poll spans |
-
-### Command Example
-
-```json
-{
-  "capability": "heater",
-  "state": true,
-  "source": "poolctl"
-}
-```
-
-Set target temperature:
-
-```json
-{
-  "capability": "target_temp",
-  "value": 36,
-  "source": "webui"
-}
-```
-
-### Control Mode Example
-
-Pause schedule and desired-state reconciliation:
-
-```json
-{
-  "manual_control": true
-}
-```
 
 ### Desired State Example
 
@@ -331,36 +247,7 @@ Time window:
 }
 ```
 
-Manual override:
 
-```json
-{
-  "id": "override-1h",
-  "type": "manual_override",
-  "name": "Heat now",
-  "enabled": true,
-  "desired_state": {
-    "power": true,
-    "filter": true,
-    "heater": true
-  },
-  "expires_at": "2026-05-03T18:00:00+02:00"
-}
-```
-
-Permanent manual override:
-
-```json
-{
-  "id": "webui-manual",
-  "type": "manual_override",
-  "name": "Pool stopped",
-  "enabled": true,
-  "desired_state": {
-    "power": false
-  }
-}
-```
 
 ## Event and Poll Behavior
 
@@ -371,7 +258,6 @@ Permanent manual override:
 - An unchanged status records a heartbeat event after `POOLD_EVENT_HEARTBEAT`.
 - Repeated identical errors are suppressed until the heartbeat interval.
 
-This keeps `poolctl watch` readable while `poolctl watch --all-polls` and `/observations` remain available for full poll visibility.
 
 ```mermaid
 sequenceDiagram
@@ -396,7 +282,6 @@ Native build:
 
 ```sh
 go build -o dist/poold ./cmd/poold
-go build -o dist/poolctl ./cmd/poolctl
 ```
 
 OpenWrt MIPS build:
@@ -405,11 +290,9 @@ OpenWrt MIPS build:
 mkdir -p dist/openwrt-mips
 GOOS=linux GOARCH=mips GOMIPS=softfloat CGO_ENABLED=0 \
   go build -trimpath -ldflags='-s -w' -o dist/openwrt-mips/poold ./cmd/poold
-GOOS=linux GOARCH=mips GOMIPS=softfloat CGO_ENABLED=0 \
-  go build -trimpath -ldflags='-s -w' -o dist/openwrt-mips/poolctl ./cmd/poolctl
 ```
 
-The binaries are statically linked.
+The binary is statically linked.
 
 ## OpenWrt Deployment
 
@@ -462,7 +345,6 @@ Useful local checks:
 
 ```sh
 go run ./cmd/poold -listen 127.0.0.1:8090
-go run ./cmd/poolctl -url http://127.0.0.1:8090 -token dev-token status
 ```
 
 ## Security Notes

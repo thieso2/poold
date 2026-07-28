@@ -280,54 +280,30 @@ func TestDesiredStateEndpoint(t *testing.T) {
 	}
 }
 
-func TestControlModeEndpoint(t *testing.T) {
+func TestLegacyMutationRoutesAreUnavailable(t *testing.T) {
 	handler, fake := testAPI(t)
-	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, TargetTemp: 36}
-
-	rec := authed(handler, http.MethodPut, "/control-mode", []byte(`{"manual_control":true}`))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   []byte
+	}{
+		{http.MethodGet, "/control-mode", nil},
+		{http.MethodPut, "/control-mode", []byte(`{"manual_control":true}`)},
+		{http.MethodPost, "/commands", []byte(`{"capability":"filter","state":true}`)},
+	} {
+		rec := authed(handler, tc.method, tc.path, tc.body)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s status = %d, want 404 or 405", tc.method, tc.path, rec.Code)
+		}
 	}
-	var mode pool.ControlMode
-	if err := json.Unmarshal(rec.Body.Bytes(), &mode); err != nil {
-		t.Fatal(err)
-	}
-	if !mode.ManualControl {
-		t.Fatalf("mode = %+v, want manual control", mode)
-	}
-
-	rec = authed(handler, http.MethodGet, "/control-mode", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &mode); err != nil {
-		t.Fatal(err)
-	}
-	if !mode.ManualControl {
-		t.Fatalf("mode = %+v, want persisted manual control", mode)
+	if got := fake.callCount(); got != 0 {
+		t.Fatalf("legacy mutations issued %d pool commands", got)
 	}
 }
 
-func TestCommandsEndpoint(t *testing.T) {
-	handler, fake := testAPI(t)
-	fake.status = pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}
-
-	rec := authed(handler, http.MethodPost, "/commands", []byte(`{"capability":"filter","state":true}`))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	var record pool.CommandRecord
-	if err := json.Unmarshal(rec.Body.Bytes(), &record); err != nil {
-		t.Fatal(err)
-	}
-	if !record.Success || record.Capability != "filter" {
-		t.Fatalf("record = %+v", record)
-	}
-	if fake.lastCapability() != "filter" {
-		t.Fatalf("last capability = %q", fake.lastCapability())
-	}
-
-	rec = authed(handler, http.MethodGet, "/commands?latest=1&limit=10", nil)
+func TestCommandHistoryEndpointRemainsAvailable(t *testing.T) {
+	handler, _ := testAPI(t)
+	rec := authed(handler, http.MethodGet, "/commands?latest=1&limit=10", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -337,7 +313,7 @@ func TestCommandsEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Commands) != 1 || response.Commands[0].Capability != "filter" || !response.Commands[0].Success {
+	if len(response.Commands) != 0 {
 		t.Fatalf("commands = %+v", response.Commands)
 	}
 }
@@ -389,22 +365,12 @@ func TestPlansEndpoint(t *testing.T) {
 	}
 }
 
-func TestPlansEndpointAcceptsPermanentManualOverride(t *testing.T) {
+func TestPlansEndpointRejectsManualOverride(t *testing.T) {
 	handler, _ := testAPI(t)
 	body := []byte(`{"plans":[{"id":"webui-manual","type":"manual_override","enabled":true,"desired_state":{"heater":false,"filter":false}}]}`)
 	rec := authed(handler, http.MethodPut, "/plans", body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-
-	var response struct {
-		Plans []pool.Plan `json:"plans"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Plans) != 1 || response.Plans[0].ExpiresAt != nil {
-		t.Fatalf("plans = %+v", response.Plans)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
