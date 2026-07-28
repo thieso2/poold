@@ -333,6 +333,9 @@ Run tests:
 
 ```sh
 go test ./...
+npm ci
+npx playwright install chromium webkit
+npm run test:browser
 ```
 
 Run formatting:

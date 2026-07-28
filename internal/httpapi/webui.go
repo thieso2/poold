@@ -68,7 +68,7 @@ const webUIHTMLTemplate = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#007c89">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -106,7 +106,7 @@ button, input, select {
   font: inherit;
 }
 button, .button-link {
-  min-height: 42px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -140,9 +140,15 @@ button.danger {
 button:disabled {
   opacity: .55;
 }
+button:focus-visible, .button-link:focus-visible,
+input:focus-visible, select:focus-visible {
+  outline: 3px solid #172126;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px #fff;
+}
 input, select {
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--field);
@@ -193,7 +199,7 @@ label {
 .app {
   width: min(1120px, 100%);
   margin: 0 auto;
-  padding: 14px;
+  padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
 }
 body[data-page="history"] {
   background: #fff;
@@ -446,6 +452,25 @@ h3 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+.manual-session-help {
+  min-height: 18px;
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .forms {
   display: grid;
@@ -748,8 +773,28 @@ body[data-page="history"] .timeline-canvas {
 .hidden {
   display: none !important;
 }
+@media (max-width: 430px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .top-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
 @media (min-width: 760px) {
-  .app { padding: 20px; }
+  .app {
+    padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  }
   .grid { grid-template-columns: 1.05fr .95fr; align-items: start; }
   .span-2 { grid-column: span 2; }
   .wide-only { display: inline; }
@@ -834,13 +879,15 @@ body[data-page="history"] .timeline-canvas {
       </div>
       <p class="manual-session-hint" id="manualSessionHint">Schedules and reconciliation govern the pool.</p>
       <div class="manual-session-orbit">
-        <button class="manual-session-control orbit-power" data-manual-cap="power" aria-label="Power off" aria-pressed="false" title="Power" disabled>⏻</button>
-        <button class="manual-session-control orbit-filter" data-manual-cap="filter" aria-label="Filter off" aria-pressed="false" title="Filter" disabled>◫</button>
-        <button class="manual-session-control orbit-heater" data-manual-cap="heater" aria-label="Heater off" aria-pressed="false" title="Heater" disabled>♨</button>
-        <button class="manual-session-control orbit-jets" data-manual-cap="jets" aria-label="Jets off" aria-pressed="false" title="Jets" disabled>≋</button>
-        <button class="manual-session-control orbit-bubbles" data-manual-cap="bubbles" aria-label="Bubbles off" aria-pressed="false" title="Bubbles" disabled>◌</button>
+        <button class="manual-session-control orbit-power" data-manual-cap="power" aria-label="Power off" aria-describedby="manualSessionHelp" aria-pressed="false" title="Power" disabled>⏻</button>
+        <button class="manual-session-control orbit-filter" data-manual-cap="filter" aria-label="Filter off" aria-describedby="manualSessionHelp" aria-pressed="false" title="Filter" disabled>◫</button>
+        <button class="manual-session-control orbit-heater" data-manual-cap="heater" aria-label="Heater off" aria-describedby="manualSessionHelp" aria-pressed="false" title="Heater" disabled>♨</button>
+        <button class="manual-session-control orbit-jets" data-manual-cap="jets" aria-label="Jets off" aria-describedby="manualSessionHelp" aria-pressed="false" title="Jets" disabled>≋</button>
+        <button class="manual-session-control orbit-bubbles" data-manual-cap="bubbles" aria-label="Bubbles off" aria-describedby="manualSessionHelp" aria-pressed="false" title="Bubbles" disabled>◌</button>
       </div>
+      <p class="manual-session-help" id="manualSessionHelp">Focus or press and hold an icon for its name and state.</p>
       <p class="manual-session-provenance" id="manualSessionProvenance" aria-live="polite"></p>
+      <p class="visually-hidden" id="manualSessionStatus" role="status" aria-live="polite" aria-atomic="true"></p>
       <div class="manual-session-fields">
         <label>Target temperature <input id="manualSessionTarget" type="number" min="10" max="40" step="1" disabled></label>
         <label>Duration
@@ -915,7 +962,7 @@ body[data-page="history"] .timeline-canvas {
       <div class="pager" id="activityPager"></div>
     </section>
   </div>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 </main>
 
 <script>
@@ -985,10 +1032,15 @@ function manualSessionObserved() {
   return representation && representation.observed ? representation.observed : null;
 }
 
+function manualSessionObservationIsStale(observed) {
+  if (!observed || !observed.observed_at) return true;
+  return Date.now() - new Date(observed.observed_at).getTime() > 90000;
+}
+
 function startManualSessionDraft() {
   var observed = manualSessionObserved();
   var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
-  if (!session && (!observed || !observed.connected)) return;
+  if (!session && (!observed || !observed.connected || manualSessionObservationIsStale(observed))) return;
   var base = session ? session.intended : observed.state;
   state.manualSessionDraft = {
     duration: "30m",
@@ -1566,7 +1618,8 @@ function renderPoolControl() {
   $("automaticControl").setAttribute("aria-pressed", manual ? "false" : "true");
   $("manualControl").setAttribute("aria-pressed", manual ? "true" : "false");
   $("automaticControl").disabled = state.pending;
-  $("manualControl").disabled = !!draft || (!session && (!observed || !observed.connected));
+  $("manualControl").disabled = !!draft || (!session &&
+    (!observed || !observed.connected || manualSessionObservationIsStale(observed)));
   $("cancelManualSession").disabled = !draft;
   if (draft) {
     $("manualSessionHint").textContent = draft.review_required ?
@@ -1585,9 +1638,21 @@ function renderPoolControl() {
       return session.outcomes[field].state === "failed";
     }).map(function(field) { return capLabels[field] || "Target temperature"; });
     $("manualSessionHint").textContent = "Manual session degraded. Failed: " + failed.join(", ") + ".";
+  } else if (observed && !observed.connected) {
+    $("manualSessionHint").textContent = "Pool offline. Starting a Manual session is unavailable.";
+  } else if (observed && manualSessionObservationIsStale(observed)) {
+    $("manualSessionHint").textContent = "Pool observation is stale. Refresh before starting a Manual session.";
   } else {
     $("manualSessionHint").textContent = "Schedules and reconciliation govern the pool.";
   }
+  announceManualSession($("manualSessionHint").textContent);
+}
+
+var lastManualSessionAnnouncement = "";
+function announceManualSession(message) {
+  if (!message || message === lastManualSessionAnnouncement) return;
+  lastManualSessionAnnouncement = message;
+  $("manualSessionStatus").textContent = message;
 }
 
 function renderControls() {
@@ -2661,6 +2726,12 @@ $("automaticControl").onclick = selectAutomaticControl;
 $("cancelManualSession").onclick = discardManualSessionDraft;
 qsa("[data-manual-cap]").forEach(function(button) {
   button.onclick = function() { stageManualSessionCapability(button.dataset.manualCap); };
+  var showHelp = function() {
+    $("manualSessionHelp").textContent = button.getAttribute("aria-label") + ". Toggle Manual-session " +
+      capLabels[button.dataset.manualCap].toLowerCase() + ".";
+  };
+  button.onfocus = showHelp;
+  button.onpointerdown = showHelp;
 });
 $("manualSessionTarget").onchange = function() {
   var target = Number($("manualSessionTarget").value);
