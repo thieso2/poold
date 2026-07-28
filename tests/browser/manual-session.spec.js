@@ -120,7 +120,7 @@ async function openDashboard(page, initial = representation()) {
   };
 }
 
-test("Variant C remains usable and geometrically sound", async ({ page }, testInfo) => {
+test("control layout remains usable and geometrically sound", async ({ page }, testInfo) => {
   await openDashboard(page);
   const viewport = page.viewportSize();
   const overflow = await page.evaluate(() => Array.from(document.querySelectorAll("body *"))
@@ -134,24 +134,30 @@ test("Variant C remains usable and geometrically sound", async ({ page }, testIn
   await expect(page.locator('meta[name="viewport"]')).not.toHaveAttribute("content", /user-scalable=no|maximum-scale=1/);
   await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveAttribute("content", "yes");
 
-  const orbit = page.locator(".manual-session-orbit");
-  const power = page.locator(".orbit-power");
-  const ring = page.locator(".manual-session-control:not(.orbit-power)");
-  const [orbitBox, powerBox] = await Promise.all([orbit.boundingBox(), power.boundingBox()]);
-  expect(Math.abs((powerBox.x + powerBox.width / 2) - (orbitBox.x + orbitBox.width / 2))).toBeLessThan(1);
-  expect(Math.abs((powerBox.y + powerBox.height / 2) - (orbitBox.y + orbitBox.height / 2))).toBeLessThan(1);
-  const boxes = await ring.evaluateAll(elements => elements.map(element => {
+  // Automatic shows the summary and no switches at all.
+  await expect(page.locator("[data-manual-cap]")).toHaveCount(0);
+  await expect(page.locator(".pc-minis .pc-mini")).toHaveCount(5);
+  await expect(page.locator(".pc-now-temp")).toContainText("35");
+
+  await page.locator("#manualControl").click();
+  const tiles = page.locator(".pc-cap");
+  await expect(tiles).toHaveCount(5);
+  const boxes = await tiles.evaluateAll(elements => elements.map(element => {
     const r = element.getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height };
   }));
-  for (const box of [powerBox, ...boxes]) {
+  const scrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  for (const box of boxes) {
     expect(box.width).toBeGreaterThanOrEqual(44);
     expect(box.height).toBeGreaterThanOrEqual(44);
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
     expect(box.y).toBeGreaterThanOrEqual(0);
-    expect(box.y + box.height).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.scrollHeight));
+    expect(box.y + box.height).toBeLessThanOrEqual(scrollHeight);
   }
+  // One single row: every tile shares a top edge.
+  const tops = new Set(boxes.map(box => Math.round(box.y)));
+  expect(tops.size).toBe(1);
   for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
     const overlap = boxes[i].x < boxes[j].x + boxes[j].width &&
       boxes[i].x + boxes[i].width > boxes[j].x &&
@@ -159,41 +165,44 @@ test("Variant C remains usable and geometrically sound", async ({ page }, testIn
       boxes[i].y + boxes[i].height > boxes[j].y;
     expect(overlap).toBe(false);
   }
+  for (const box of await page.locator("[data-manual-duration]").evaluateAll(els => els.map(e => e.getBoundingClientRect()))) {
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
   await page.screenshot({ path: testInfo.outputPath("accepted-dashboard.png"), fullPage: true });
 });
 
-test("accessible semantics, help, focus, announcements, and reduced motion", async ({ page }) => {
+test("accessible semantics, focus, announcements, and reduced motion", async ({ page }) => {
   await openDashboard(page);
+  await expect(page.locator("#manualSessionStatus")).toHaveAttribute("aria-live", "polite");
+
+  await page.locator("#manualControl").click();
   const controls = page.locator("[data-manual-cap]");
   await expect(controls).toHaveCount(5);
   for (const control of await controls.all()) {
     await expect(control).toHaveAccessibleName(/Power|Filter|Heater|Jets|Bubbles/);
     await expect(control).toHaveAttribute("aria-pressed", /true|false/);
-    await expect(control).toBeDisabled();
+    await expect(control).toHaveAttribute("title", /Power|Filter|Heater|Jets|Bubbles/);
+    await expect(control).toBeEnabled();
   }
-  await page.locator("#manualControl").click();
   const heater = page.locator('[data-manual-cap="heater"]');
   await heater.focus();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
   expect(await heater.evaluate(element => getComputedStyle(element).outlineStyle !== "none" ||
     getComputedStyle(element).boxShadow !== "none")).toBe(true);
-  await expect(page.locator("#manualSessionStatus")).toHaveAttribute("aria-live", "polite");
   await expect(page.locator("#manualSessionStatus")).toContainText("Draft saved");
-  await expect(heater).toHaveAttribute("aria-describedby", "manualSessionHelp");
-  await heater.dispatchEvent("pointerdown", { pointerType: "touch" });
-  await page.waitForTimeout(600);
-  await expect(page.locator("#manualSessionHelp")).toContainText("Heater");
+
+  // The icon carries its own name and state without any separate help text.
+  await expect(heater).toHaveAccessibleName(/Heater (on|off)/);
+
   await page.emulateMedia({ reducedMotion: "reduce" });
-  expect(await page.evaluate(() => getComputedStyle(document.querySelector(".manual-session-control")).transitionDuration)).toBe("0s");
+  expect(await page.evaluate(() => {
+    const svg = document.querySelector('[data-manual-cap="filter"] .spin');
+    return getComputedStyle(svg).animationName;
+  })).toBe("none");
+
   const accessibility = await new AxeBuilder({ page })
-    .include(".manual-session-modes")
-    .include(".manual-session-hint")
-    .include(".manual-session-orbit")
-    .include(".manual-session-help")
-    .include(".manual-session-provenance")
-    .include(".manual-session-fields")
-    .include(".manual-session-actions")
+    .include("#poolControl")
     .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
     .analyze();
   expect(accessibility.violations).toEqual([]);
@@ -204,17 +213,20 @@ test("keyboard-only Manual-session lifecycle", async ({ page }) => {
   await page.locator("body").focus();
   await tabTo(page, "#manualControl");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#manualSessionHint")).toContainText("Draft saved");
+  await expect(page.locator("#manualSessionStatus")).toContainText("Draft saved");
   expect(harness.requests.filter(request => request.method !== "GET")).toHaveLength(0);
 
   await tabTo(page, '[data-manual-cap="power"]');
   await page.keyboard.press("Space");
   await expect(page.locator('[data-manual-cap="power"]')).toHaveAttribute("aria-pressed", "false");
-  await tabTo(page, "#manualSessionApply");
+
+  // Each duration is its own submit; no separate Apply control exists.
+  await expect(page.locator("#manualSessionApply")).toHaveCount(0);
+  await tabTo(page, '[data-manual-duration="30m"]');
   await page.keyboard.press("Enter");
-  await expect(page.locator("#manualSessionHint")).toContainText("Applying");
   await expect(page.locator("#manualSessionStatus")).toContainText("Applying");
   expect(harness.requests.filter(request => request.method === "PUT")).toHaveLength(1);
+  expect(harness.requests.filter(request => request.method === "PUT").at(-1).body.duration).toBe("30m");
 
   harness.setCurrent(representation({
     control: "manual",
@@ -223,17 +235,16 @@ test("keyboard-only Manual-session lifecycle", async ({ page }) => {
   }));
   await tabTo(page, "#refresh");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#manualSessionHint")).toContainText("degraded");
   await expect(page.locator("#manualSessionStatus")).toContainText("degraded");
-  await tabTo(page, "#retryManualSession");
+  await tabTo(page, '[data-manual-act="retry"]');
   await page.keyboard.press("Enter");
   await expect.poll(() => harness.requests.filter(request => request.method === "POST").length).toBe(1);
-  await expect(page.locator("#manualSessionHint")).toContainText("Applying");
+  await expect(page.locator("#manualSessionStatus")).toContainText("Applying");
 
   harness.setCurrent(representation({ control: "manual", control_revision: "revision-2", session: session("active") }));
   await tabTo(page, "#refresh");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#manualSessionHint")).toContainText("active");
+  await expect(page.locator("#manualSessionStatus")).toContainText("active");
   await tabTo(page, "#automaticControl");
   await page.keyboard.press("Enter");
   await expect.poll(() => harness.requests.filter(request => request.method === "DELETE").length).toBe(1);
@@ -249,45 +260,51 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
   await page.locator("#automaticControl").click();
   await expect(page.locator("#manualControl")).toHaveAttribute("aria-pressed", "false");
 
+  // A dirty draft asks inline before it is thrown away — no browser dialog.
   await page.locator("#manualControl").click();
   await page.locator('[data-manual-cap="heater"]').click();
-  page.once("dialog", dialog => dialog.dismiss());
   await page.locator("#automaticControl").click();
+  await expect(page.locator(".pc-apply")).toContainText("Throw away this change?");
+  await page.locator('[data-manual-act="keep"]').click();
   await expect(page.locator("#manualControl")).toHaveAttribute("aria-pressed", "true");
-  page.once("dialog", dialog => dialog.accept());
-  await page.locator("#cancelManualSession").click();
+  await page.locator("#automaticControl").click();
+  await page.locator('[data-manual-act="discard"]').click();
+  await expect(page.locator("#manualControl")).toHaveAttribute("aria-pressed", "false");
 
   await page.locator("#manualControl").click();
   await page.locator('[data-manual-cap="heater"]').click();
   harness.failNextPut("offline");
-  await page.locator("#manualSessionApply").click();
+  await page.locator('[data-manual-duration="30m"]').click();
   await expect(page.locator("#toast")).toContainText("offline");
   await expect(page.locator("#manualControl")).toHaveAttribute("aria-pressed", "true");
 
   harness.failNextPut("conflict");
-  await page.locator("#manualSessionApply").click();
-  await expect(page.locator("#manualSessionHint")).toContainText("Review this rebased draft");
+  await page.locator('[data-manual-duration="30m"]').click();
+  await expect(page.locator("#manualSessionStatus")).toContainText("Review this rebased draft");
+  await expect(page.locator(".pc-label")).toContainText("CONTROL CHANGED");
 
   harness.failNextPut("lost");
-  await page.locator("#manualSessionApply").click();
+  await page.locator('[data-manual-duration="30m"]').click();
   const lostKey = harness.requests.filter(request => request.method === "PUT").at(-1).headers["idempotency-key"];
-  await page.locator("#manualSessionApply").click();
+  await page.locator('[data-manual-duration="30m"]').click();
   const retriedKey = harness.requests.filter(request => request.method === "PUT").at(-1).headers["idempotency-key"];
   expect(retriedKey).toBe(lostKey);
 
+  // Editing a live session: the target stepper is available because the session heats.
   harness.setCurrent(representation({
     control: "manual",
     control_revision: "revision-edit",
     session: session("active")
   }));
   await page.locator("#refresh").click();
-  await page.locator("#manualControl").click();
-  await expect(page.locator("#manualSessionTarget")).toHaveValue("36");
-  await page.locator("#manualSessionTarget").fill("37");
-  await page.locator("#manualSessionTarget").dispatchEvent("change");
-  await page.locator("#manualSessionApply").click();
+  await page.locator('[data-manual-act="edit"]').click();
+  await expect(page.locator(".pc-val b")).toHaveText("36°");
+  await page.locator('[data-manual-step="1"]').click();
+  await expect(page.locator(".pc-val b")).toHaveText("37°");
+  await page.locator('[data-manual-duration="10m"]').click();
   const edit = harness.requests.filter(request => request.method === "PUT").at(-1).body;
   expect(edit.base_observation_id).toBeUndefined();
+  expect(edit.duration).toBe("10m");
   expect(Object.keys(edit.intended).sort()).toEqual(
     ["bubbles", "filter", "heater", "jets", "power", "target_temp"].sort()
   );
@@ -323,7 +340,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
   }));
   await page.locator("#refresh").click();
   await expect(page.locator("#manualControl")).toBeDisabled();
-  await expect(page.locator("#manualSessionHint")).toContainText("stale");
+  await expect(page.locator("#manualSessionStatus")).toContainText("stale");
 
   harness.setCurrent(representation({
     observed: {
@@ -335,5 +352,5 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
   }));
   await page.locator("#refresh").click();
   await expect(page.locator("#manualControl")).toBeDisabled();
-  await expect(page.locator("#manualSessionHint")).toContainText("offline");
+  await expect(page.locator("#manualSessionStatus")).toContainText("offline");
 });

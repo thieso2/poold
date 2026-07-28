@@ -154,7 +154,7 @@ timestamp calculated from the committed `started_at`.
 }
 ```
 
-Allowed durations are `30m`, `60m`, `2h`, and `until_off`.
+Allowed durations are `10m`, `30m`, `60m`, `2h`, and `until_off`.
 
 `base_observation_id` is required when Automatic control is being replaced. The
 server performs a synchronous fresh pool read before committing:

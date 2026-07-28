@@ -422,6 +422,9 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 	startedAt := s.now().UTC()
 	var expiresAt *time.Time
 	switch request.Duration {
+	case "10m":
+		value := startedAt.Add(10 * time.Minute)
+		expiresAt = &value
 	case "30m":
 		value := startedAt.Add(30 * time.Minute)
 		expiresAt = &value
@@ -435,7 +438,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 	default:
 		return store.CreateManualSessionResult{}, &manualSessionFailure{
 			Code:    "invalid_request",
-			Message: "duration must be 30m, 60m, 2h, or until_off.",
+			Message: "duration must be 10m, 30m, 60m, 2h, or until_off.",
 		}
 	}
 	observedState := pool.ControllableState{}

@@ -99,6 +99,7 @@ func TestPutManualSessionAcceptsOnlyDocumentedDurations(t *testing.T) {
 		duration string
 		expires  time.Duration
 	}{
+		{duration: "10m", expires: 10 * time.Minute},
 		{duration: "30m", expires: 30 * time.Minute},
 		{duration: "60m", expires: time.Hour},
 		{duration: "2h", expires: 2 * time.Hour},

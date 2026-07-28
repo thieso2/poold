@@ -41,16 +41,24 @@ func TestWebUIIsPublic(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Pooly Control") {
 		t.Fatal("web UI title missing")
 	}
-	if !strings.Contains(rec.Body.String(), `class="manual-session-orbit"`) ||
-		!strings.Contains(rec.Body.String(), `class="manual-session-control orbit-power"`) {
-		t.Fatal("Variant C manual-session controls missing")
+	if !strings.Contains(rec.Body.String(), `<div class="pc" id="poolControl"></div>`) {
+		t.Fatal("pool control mount point missing")
 	}
-	if !strings.Contains(rec.Body.String(), `data-manual-cap="heater"`) ||
-		!strings.Contains(rec.Body.String(), `aria-label="Heater off"`) {
+	if !strings.Contains(rec.Body.String(), `data-manual-cap="`) ||
+		!strings.Contains(rec.Body.String(), `capLabels[cap] + " " + (on ? "on" : "off") + progress`) {
 		t.Fatal("accessible Manual session feature control missing")
 	}
-	if !strings.Contains(rec.Body.String(), `id="manualSessionTarget" type="number" min="10" max="40" step="1" disabled`) {
-		t.Fatal("Automatic target-temperature control is not natively disabled")
+	if !strings.Contains(rec.Body.String(), `(draft ? "" : " disabled")`) {
+		t.Fatal("Automatic feature controls are not natively disabled")
+	}
+	if !strings.Contains(rec.Body.String(), `data-manual-step="-1"`) ||
+		!strings.Contains(rec.Body.String(), `if (!shown.heater) return "";`) {
+		t.Fatal("target-temperature control must exist and appear only while heating")
+	}
+	for _, duration := range []string{"10m", "30m", "60m", "2h", "until_off"} {
+		if !strings.Contains(rec.Body.String(), `["`+duration+`", "`) {
+			t.Fatalf("duration %s missing from the apply controls", duration)
+		}
 	}
 	if !strings.Contains(rec.Body.String(), `sessionStorage.setItem("poold.manualSessionDraft"`) ||
 		!strings.Contains(rec.Body.String(), `duration: "30m"`) {
@@ -67,15 +75,16 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `"Idempotency-Key": attempt.idempotency_key`) {
 		t.Fatal("Manual session return-to-Automatic request and immediate response rendering are missing")
 	}
-	if !strings.Contains(rec.Body.String(), `"Added automatically: "`) ||
-		!strings.Contains(rec.Body.String(), `dependency-change`) {
+	if !strings.Contains(rec.Body.String(), `"Filter switched on — the heater needs it"`) ||
+		!strings.Contains(rec.Body.String(), `(dependency ? " dep" : "")`) ||
+		!strings.Contains(rec.Body.String(), `.pc-cap.dep .pc-flag`) {
 		t.Fatal("Manual session dependency provenance is not visibly distinguished")
 	}
 	if !strings.Contains(rec.Body.String(), `Manual session ended. Automatic control resumed.`) ||
 		!strings.Contains(rec.Body.String(), `previous.session.expires_at`) {
 		t.Fatal("Manual session expiry announcement is missing")
 	}
-	if !strings.Contains(rec.Body.String(), `id="retryManualSession"`) ||
+	if !strings.Contains(rec.Body.String(), `data-manual-act="retry"`) ||
 		!strings.Contains(rec.Body.String(), `api("/manual-session/retry", {`) ||
 		!strings.Contains(rec.Body.String(), `sessionStorage.setItem("poold.manualSessionRetry"`) ||
 		!strings.Contains(rec.Body.String(), `sessionStorage.removeItem("poold.manualSessionRetry"`) ||

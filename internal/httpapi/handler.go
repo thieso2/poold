@@ -504,11 +504,11 @@ func validatePutManualSession(request putManualSessionRequest) (pool.Controllabl
 		}
 	}
 	switch request.Duration {
-	case "30m", "60m", "2h", "until_off":
+	case "10m", "30m", "60m", "2h", "until_off":
 	default:
 		return pool.ControllableState{}, &manualSessionError{
 			Code:    "invalid_request",
-			Message: "duration must be 30m, 60m, 2h, or until_off.",
+			Message: "duration must be 10m, 30m, 60m, 2h, or until_off.",
 		}
 	}
 	if request.Intended == nil ||
