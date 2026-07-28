@@ -345,182 +345,189 @@ h3 {
   color: var(--muted);
   font-size: 13px;
 }
-/* ---- pool control: ownership, equipment, target, apply ---- */
-.pc { --live: #00727e; --live-deep: #005661; --live-soft: #e2f1f2; --live-line: #93c8cd;
-  --manual: #a55f00; --manual-ink: #8a4f00; --manual-soft: #fdf2e2; --manual-line: #e8bf80;
-  --data: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  display: grid; gap: 10px; }
-.pc-owner { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.pc-own {
-  display: grid; gap: 3px; align-content: start; text-align: left;
-  padding: 12px 13px 13px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--panel);
+/* ---- pool control: the unit ---- */
+.pc {
+  --case: #131a1e; --case-hi: #1d262b; --key: #1e262b; --key-edge: #2c383e;
+  --led: #3fe3d0; --led-dim: rgba(63,227,208,.16);
+  --warm: #ff9a3c; --warm-dim: rgba(255,154,60,.16);
+  --fault: #ff5f4d;
+  --etch: #6d7f88; --etch-hi: #a3b6bf;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  display: block;
+  margin: 0 -14px -14px;
+  padding: 14px;
+  border-radius: 0 0 7px 7px;
+  background: linear-gradient(180deg, var(--case-hi), var(--case));
+  color: var(--etch-hi);
 }
-.pc-own-head { display: flex; align-items: center; gap: 8px; }
-.pc-own-head svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; }
-.pc-own-name { font-family: var(--data); font-size: 12.5px; font-weight: 700; letter-spacing: .11em; }
-.pc-own p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
-.pc-own-flag {
-  justify-self: start; margin-top: 6px; padding: 3px 8px; border-radius: 5px;
-  font-family: var(--data); font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
-  background: #edf2f4; color: var(--muted);
-}
-.pc-own[aria-pressed="true"] { color: #fff; }
-.pc-own.auto[aria-pressed="true"] { border-color: var(--live-deep); background: var(--live); }
-.pc-own.man[aria-pressed="true"] { border-color: var(--manual); background: var(--manual); }
-.pc-own[aria-pressed="true"] p { color: rgba(255, 255, 255, .87); }
-.pc-own[aria-pressed="true"] .pc-own-flag { background: rgba(255, 255, 255, .2); color: #fff; }
-.pc-own:disabled { opacity: .5; }
+.pc button { font-family: inherit; }
+.pc .etch { font-size: 9.5px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: var(--etch); }
 
-.pc-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
-.pc-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  padding: 10px 13px; border-bottom: 1px solid var(--line); background: #f4f8f9;
+/* readout window */
+.pc-window {
+  position: relative; padding: 18px 16px 13px; border-radius: 14px;
+  background: linear-gradient(180deg, #05090b, #0a1114);
+  box-shadow: inset 0 2px 14px rgba(0,0,0,.9), inset 0 0 0 1px #222c31;
+  overflow: hidden;
 }
-.pc-head h3 { margin: 0; font-family: var(--data); font-size: 11px; font-weight: 700; letter-spacing: .12em; color: var(--muted); }
-.pc-head span { font-size: 11.5px; color: var(--muted); }
-.pc-lock { padding: 8px 13px; border-bottom: 1px solid var(--line); background: #f4f8f9; font-size: 12px; color: var(--muted); }
+.pc-window::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(255,255,255,.028) 0 1px, transparent 1px 3px);
+}
+.pc-digits { position: relative; display: flex; align-items: flex-start; justify-content: center; }
+.pc-seg { font-family: var(--mono); font-size: 84px; font-weight: 700; line-height: .84; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+.pc-seg.ghost { color: rgba(63,227,208,.075); }
+.pc-seg.live { position: absolute; left: 50%; transform: translateX(-50%); color: var(--led); text-shadow: 0 0 22px rgba(63,227,208,.5); }
+.pc-deg { align-self: flex-start; margin-top: 7px; font-family: var(--mono); font-size: 19px; color: var(--led); opacity: .8; }
+.pc-window-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; }
+.pc-leds { display: flex; flex-wrap: wrap; gap: 13px; }
+.pc-led { display: flex; align-items: center; gap: 6px; }
+.pc-led i { width: 6px; height: 6px; border-radius: 50%; background: #24333a; }
+.pc-led.on i { background: var(--led); box-shadow: 0 0 7px var(--led); }
+.pc-led.on.warm i { background: var(--warm); box-shadow: 0 0 7px var(--warm); }
+.pc-led.blink i { animation: pcBlink 1.05s steps(2, jump-none) infinite; }
+.pc-setpoint { font-family: var(--mono); font-size: 12.5px; color: var(--etch-hi); letter-spacing: .06em; white-space: nowrap; }
+@keyframes pcBlink { 50% { opacity: .15; } }
 
-.pc-temp { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 13px 0; }
-.pc-big { font-family: var(--data); font-size: 40px; font-weight: 700; line-height: 1; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
-.pc-big small { font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--muted); margin-left: 6px; }
-.pc-temp-say { text-align: right; }
-.pc-temp-say strong { display: block; font-size: 13px; }
-.pc-temp-say span { display: block; margin-top: 1px; font-size: 11.5px; color: var(--muted); }
+/* mode toggle */
+.pc-mode {
+  position: relative; display: grid; grid-template-columns: 1fr 1fr; align-items: center;
+  margin: 14px 0 4px; padding: 4px; border-radius: 12px;
+  background: #0c1215; box-shadow: inset 0 2px 8px rgba(0,0,0,.8);
+}
+.pc-knob {
+  position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 9px;
+  background: linear-gradient(180deg, #38464d, #232e33);
+  box-shadow: 0 2px 6px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.14);
+  transition: transform .22s cubic-bezier(.4,1.3,.5,1);
+}
+.pc-mode.manual .pc-knob { transform: translateX(100%); }
+.pc-mode button {
+  position: relative; z-index: 1; min-height: 40px; padding: 10px 4px; border: 0; background: none; cursor: pointer;
+  font-size: 10px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: var(--etch);
+}
+.pc-mode button[aria-pressed="true"] { color: #eaf6f8; }
+.pc-mode.manual button[aria-pressed="true"] { color: var(--warm); }
+.pc-mode button:disabled { opacity: .45; cursor: not-allowed; }
+.pc-legend { margin: 12px 2px 9px; }
 
-.pc-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 12px 13px 13px; }
-.pc-cap {
-  position: relative; display: grid; place-items: center; height: 64px; padding: 0;
-  border: 1.5px solid var(--line); border-radius: 12px; background: #f4f8f9; color: #6d8288;
+/* backlit keys */
+.pc-keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.pc-key {
+  position: relative; display: grid; justify-items: center; gap: 6px;
+  min-height: 64px; padding: 12px 3px 9px; border: 1px solid var(--key-edge); border-radius: 13px;
+  background: linear-gradient(180deg, #263137, var(--key));
+  box-shadow: 0 3px 0 #0c1114, 0 6px 12px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.09);
+  color: #7d9098; cursor: pointer;
+  transition: box-shadow .12s, background .12s, color .12s, transform .07s;
 }
-.pc-cap svg { width: 29px; height: 29px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.pc-cap[aria-pressed="true"] { border-color: var(--live-deep); background: var(--live); color: #fff; }
-.pc-cap:not(:disabled):hover { border-color: #6d8288; }
-.pc-cap:disabled { opacity: .8; }
-.pc-flag {
-  position: absolute; top: -5px; right: -5px; width: 13px; height: 13px; border-radius: 50%;
-  background: var(--manual); border: 2.5px solid var(--panel);
+.pc-key svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.pc-key span { font-size: 8px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.pc-key:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #0c1114, inset 0 1px 0 rgba(255,255,255,.06); }
+.pc-key[aria-pressed="true"] {
+  color: var(--led); border-color: rgba(63,227,208,.5);
+  background: linear-gradient(180deg, #1d3a3c, #14282b);
+  box-shadow: 0 3px 0 #0c1114, 0 0 20px var(--led-dim), inset 0 0 16px rgba(63,227,208,.14), inset 0 1px 0 rgba(255,255,255,.08);
 }
-.pc-cap.dep .pc-flag { background: #6d8288; }
-.pc-why { padding: 0 13px 12px; margin: 0; font-size: 12px; font-weight: 600; color: var(--manual); }
+.pc-key.warm[aria-pressed="true"] {
+  color: var(--warm); border-color: rgba(255,154,60,.5);
+  background: linear-gradient(180deg, #3b2a17, #26190d);
+  box-shadow: 0 3px 0 #0c1114, 0 0 20px var(--warm-dim), inset 0 0 16px rgba(255,154,60,.14), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.pc-key:disabled { opacity: .45; cursor: not-allowed; }
+.pc-key i.stat { position: absolute; top: 6px; right: 7px; width: 5px; height: 5px; border-radius: 50%; background: transparent; }
+.pc-key.pending i.stat { background: var(--warm); box-shadow: 0 0 6px var(--warm); animation: pcBlink 1.05s steps(2, jump-none) infinite; }
+.pc-key.failed { border-color: var(--fault); }
+.pc-key.failed i.stat { background: var(--fault); box-shadow: 0 0 6px var(--fault); }
+.pc-key i.edit { position: absolute; top: 6px; left: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--warm); }
+.pc-key.dep i.edit { background: var(--etch); }
+.pc-why { margin: 10px 2px 0; font-size: 11.5px; color: var(--warm); }
 
-.pc-target { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 13px; }
-.pc-target-note { font-size: 12.5px; color: var(--muted); }
-.pc-target-note.changed { color: var(--manual); font-weight: 600; }
-.pc-step { display: grid; grid-template-columns: 44px auto 44px; gap: 8px; align-items: center; }
-.pc-step button { height: 44px; padding: 0; border-radius: 10px; font-size: 20px; font-weight: 700; }
-.pc-val { display: grid; gap: 1px; justify-items: center; min-width: 70px; }
-.pc-val b { font-family: var(--data); font-size: 25px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-.pc-val.changed b { color: var(--manual); }
-.pc-val span { font-family: var(--data); font-size: 9px; letter-spacing: .12em; color: var(--muted); }
+/* setpoint rocker */
+.pc-rocker { display: grid; grid-template-columns: 54px 1fr 54px; gap: 8px; margin-top: 9px; }
+.pc-rocker button {
+  min-height: 52px; border: 1px solid var(--key-edge); border-radius: 12px; cursor: pointer;
+  background: linear-gradient(180deg, #263137, var(--key));
+  box-shadow: 0 3px 0 #0c1114, inset 0 1px 0 rgba(255,255,255,.09);
+  color: var(--etch-hi); font-size: 21px; font-weight: 700;
+}
+.pc-rocker button:active { transform: translateY(2px); box-shadow: 0 1px 0 #0c1114; }
+.pc-setwin {
+  display: grid; place-items: center; gap: 2px; border-radius: 12px;
+  background: #05090b; box-shadow: inset 0 2px 10px rgba(0,0,0,.85), inset 0 0 0 1px #222c31;
+}
+.pc-setwin b { font-family: var(--mono); font-size: 26px; color: var(--warm); text-shadow: 0 0 14px rgba(255,154,60,.4); }
 
-.pc-apply {
-  display: grid; gap: 10px; padding: 12px 13px; border: 1.5px solid var(--manual-line);
-  border-radius: 12px; background: var(--manual-soft);
+/* commit */
+.pc-commit { margin-top: 14px; padding-top: 13px; border-top: 1px dashed #2a353b; }
+.pc-holds { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-top: 9px; }
+.pc-holds button {
+  min-height: 46px; padding: 12px 2px; border: 1px solid #45372a; border-radius: 11px; cursor: pointer;
+  background: linear-gradient(180deg, #3a2b1a, #241a10); color: var(--warm);
+  font-size: 11.5px; font-weight: 700; letter-spacing: .03em;
+  box-shadow: 0 3px 0 #0c1114, inset 0 1px 0 rgba(255,255,255,.07);
 }
-.pc-apply-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.pc-apply-top strong { font-size: 13.5px; }
-.pc-apply-top span { font-family: var(--data); font-size: 10.5px; letter-spacing: .08em; color: var(--manual-ink); }
-.pc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.pc-chip { padding: 4px 9px; border: 1px solid var(--manual-line); border-radius: 999px; background: var(--panel); font-size: 12px; font-weight: 600; }
-.pc-chip i { font-style: normal; color: var(--muted); font-weight: 400; }
-.pc-note { margin: 0; font-size: 12px; color: var(--text); }
-.pc-label { font-family: var(--data); font-size: 9.5px; font-weight: 700; letter-spacing: .13em; color: var(--manual-ink); }
-.pc-durations { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 7px; margin-top: 6px; }
-.pc-durations button {
-  min-height: 44px; padding: 6px 4px; border: 1.5px solid var(--manual); border-radius: 10px;
-  background: var(--manual); color: #fff; font-size: 13px; font-weight: 700;
-}
-.pc-durations button:disabled { border-color: var(--manual-line); background: var(--panel); color: var(--muted); opacity: .75; }
-.pc-confirm { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pc-holds button:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #0c1114; }
+.pc-holds button:disabled { border-color: #29343a; background: #171e22; color: #55656d; box-shadow: none; cursor: not-allowed; }
+.pc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.pc-chip { padding: 3px 8px; border: 1px solid #45372a; border-radius: 999px; font-family: var(--mono); font-size: 10.5px; color: var(--warm); }
 
-.pc-session-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 13px; }
-.pc-state { display: grid; gap: 3px; }
-.pc-state b { display: flex; align-items: center; gap: 8px; font-family: var(--data); font-size: 12.5px; font-weight: 700; letter-spacing: .1em; }
-.pc-state b i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
-.pc-state span { font-size: 12.5px; color: var(--muted); }
-.pc-state.applying b { color: #9a6100; }
-.pc-state.active b { color: var(--ok, #1d7f45); }
-.pc-state.degraded b { color: #b3261e; }
-.pc-clock { font-family: var(--data); font-size: 25px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
-.pc-clock small { display: block; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: var(--muted); }
-.pc-outcomes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; padding: 12px 13px; border-top: 1px solid var(--line); }
-.pc-out {
-  position: relative; display: grid; place-items: center; height: 62px;
-  border: 1.5px solid var(--line); border-radius: 12px; background: #f4f8f9; color: #6d8288;
+/* session */
+.pc-timer { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pc-timer b { font-family: var(--mono); font-size: 29px; font-weight: 700; color: var(--led); letter-spacing: .03em; font-variant-numeric: tabular-nums; }
+.pc-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 11px; }
+.pc-acts button {
+  min-height: 44px; padding: 11px; border: 1px solid var(--key-edge); border-radius: 11px; cursor: pointer;
+  background: var(--key); color: var(--etch-hi);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase;
 }
-.pc-out svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.pc-out.on { border-color: var(--live-deep); background: var(--live); color: #fff; }
-.pc-out-temp { display: grid; gap: 1px; justify-items: center; color: var(--text); }
-.pc-out-temp b { font-family: var(--data); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-.pc-out-temp span { font-family: var(--data); font-size: 8px; letter-spacing: .1em; color: var(--muted); }
-.pc-out i {
-  position: absolute; top: -5px; right: -5px; width: 14px; height: 14px; border-radius: 50%;
-  border: 2.5px solid var(--panel); background: var(--ok, #1d7f45);
-}
-.pc-out.confirmed i { display: none; }
-.pc-out.pending i { background: #9a6100; animation: pcPulse 1.1s ease-in-out infinite; }
-.pc-out.failed { border-color: #b3261e; background: #fdeeec; color: #b3261e; }
-.pc-out.failed i { background: #b3261e; }
-@keyframes pcPulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-.pc-fail-note { margin: 0; padding: 0 13px 12px; font-size: 12.5px; color: #b3261e; }
-.pc-progress { margin: 0; padding: 0 13px 12px; font-size: 12.5px; color: var(--muted); }
-.pc-session-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 13px; border-top: 1px solid var(--line); background: #f4f8f9; }
-.pc-session-actions button { min-height: 38px; padding: 7px 12px; font-size: 13px; }
+.pc-acts button.hot { border-color: #45372a; background: linear-gradient(180deg, #3a2b1a, #241a10); color: var(--warm); }
+.pc-acts button:disabled { opacity: .4; cursor: not-allowed; }
+.pc-alert { margin: 11px 2px 0; font-size: 12px; color: var(--fault); }
 
-.pc-now { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; }
-.pc-now-lead { display: flex; align-items: baseline; gap: 11px; min-width: 0; }
-.pc-now-temp { font-family: var(--data); font-size: 27px; font-weight: 700; line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
-.pc-now-say strong { display: block; font-size: 13px; }
-.pc-now-say span { display: block; font-size: 11.5px; color: var(--muted); }
-.pc-minis { display: flex; gap: 6px; }
-.pc-mini {
-  display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto;
-  border: 1.5px solid var(--line); border-radius: 9px; background: #f4f8f9; color: #6d8288;
-}
-.pc-mini svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
-.pc-mini.on { border-color: var(--live-deep); background: var(--live); color: #fff; }
-.pc-next { position: relative; display: grid; grid-template-columns: 72px 1fr; gap: 12px; padding: 11px 13px; border-top: 1px solid var(--line); }
-.pc-next.soon::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--live); }
-.pc-next.soon { background: #f2fafb; }
-.pc-when { font-family: var(--data); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.pc-rel { display: block; font-family: var(--data); font-size: 10px; color: var(--muted); }
-.pc-next strong { display: block; font-size: 13px; }
-.pc-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
-.pc-tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.pc-tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.pc-tag.up { border-color: var(--live-line); background: var(--live-soft); color: var(--live); }
-.pc-after { margin: 5px 0 0; font-size: 11.5px; color: var(--muted); }
-.pc-foot { padding: 10px 13px; border-top: 1px solid var(--line); background: #f4f8f9; font-size: 12px; color: var(--muted); }
+/* schedule ahead */
+.pc-next { margin-top: 13px; border-top: 1px dashed #2a353b; padding-top: 6px; }
+.pc-next-row { display: grid; grid-template-columns: 58px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 2px; border-bottom: 1px solid #202a2f; }
+.pc-next-row:last-child { border-bottom: 0; }
+.pc-next-row time { font-family: var(--mono); font-size: 13px; color: var(--etch-hi); font-variant-numeric: tabular-nums; }
+.pc-next-row b { font-size: 12px; font-weight: 600; color: var(--etch-hi); }
+.pc-next-row b em { font-style: normal; color: var(--led); }
+.pc-next-row b em.warm { color: var(--warm); }
+.pc-next-row small { font-family: var(--mono); font-size: 10px; color: var(--etch); white-space: nowrap; }
+.pc-next-row p { margin: 2px 0 0; font-size: 11px; color: var(--etch); }
+.pc-offline { margin: 12px 0 0; padding: 10px 12px; border: 1px solid rgba(255,95,77,.4); border-radius: 10px; background: rgba(255,95,77,.08); font-size: 12px; color: #ffb3aa; }
+.pc button:focus-visible { outline: 2px solid var(--led); outline-offset: 3px; box-shadow: none; }
 
 @media (prefers-reduced-motion: no-preference) {
-  [aria-pressed="true"] .jet-stream, .pc-mini.on .jet-stream, .pc-out.on .jet-stream { animation: pcThrust 1.5s ease-out infinite; }
-  [aria-pressed="true"] .jet-stream:nth-of-type(2), .pc-mini.on .jet-stream:nth-of-type(2), .pc-out.on .jet-stream:nth-of-type(2) { animation-delay: .18s; }
-  [aria-pressed="true"] .jet-stream:nth-of-type(3), .pc-mini.on .jet-stream:nth-of-type(3), .pc-out.on .jet-stream:nth-of-type(3) { animation-delay: .36s; }
-  [aria-pressed="true"] .bub, .pc-mini.on .bub, .pc-out.on .bub { animation: pcRise 2.4s ease-in-out infinite; }
-  [aria-pressed="true"] .bub:nth-of-type(2), .pc-mini.on .bub:nth-of-type(2), .pc-out.on .bub:nth-of-type(2) { animation-delay: .5s; }
-  [aria-pressed="true"] .bub:nth-of-type(3), .pc-mini.on .bub:nth-of-type(3), .pc-out.on .bub:nth-of-type(3) { animation-delay: 1s; }
-  [aria-pressed="true"] .bub:nth-of-type(4), .pc-mini.on .bub:nth-of-type(4), .pc-out.on .bub:nth-of-type(4) { animation-delay: 1.5s; }
-  [aria-pressed="true"] .spin, .pc-mini.on .spin, .pc-out.on .spin { transform-box: view-box; transform-origin: 12px 12px; animation: pcSpin 2.6s linear infinite; }
-  [aria-pressed="true"] .flame, .pc-mini.on .flame, .pc-out.on .flame { transform-box: view-box; transform-origin: 12px 21px; animation: pcFlicker 1.5s ease-in-out infinite; }
-  [aria-pressed="true"] .pwr, .pc-mini.on .pwr, .pc-out.on .pwr { transform-box: view-box; transform-origin: 12px 12px; animation: pcBreathe 2.8s ease-in-out infinite; }
+  .pc-key[aria-pressed="true"] .jet-stream, .pc-led.on .jet-stream { animation: pcThrust 1.5s ease-out infinite; }
+  .pc-key[aria-pressed="true"] .jet-stream:nth-of-type(2) { animation-delay: .18s; }
+  .pc-key[aria-pressed="true"] .jet-stream:nth-of-type(3) { animation-delay: .36s; }
+  .pc-key[aria-pressed="true"] .jet-stream:nth-of-type(4) { animation-delay: .1s; }
+  .pc-key[aria-pressed="true"] .jet-stream:nth-of-type(5) { animation-delay: .28s; }
+  .pc-key[aria-pressed="true"] .jet-stream:nth-of-type(6) { animation-delay: .46s; }
+  .pc-key[aria-pressed="true"] .bub { animation: pcRise 2.4s ease-in-out infinite; }
+  .pc-key[aria-pressed="true"] .bub:nth-of-type(2) { animation-delay: .5s; }
+  .pc-key[aria-pressed="true"] .bub:nth-of-type(3) { animation-delay: 1s; }
+  .pc-key[aria-pressed="true"] .bub:nth-of-type(4) { animation-delay: 1.5s; }
+  .pc-key[aria-pressed="true"] .spin { transform-box: view-box; transform-origin: 12px 12px; animation: pcSpin 2.6s linear infinite; }
+  .pc-key[aria-pressed="true"] .flame { transform-box: view-box; transform-origin: 12px 21px; animation: pcFlicker 1.5s ease-in-out infinite; }
+  .pc-key[aria-pressed="true"] .pwr { transform-box: view-box; transform-origin: 12px 12px; animation: pcBreathe 2.8s ease-in-out infinite; }
 }
 @keyframes pcThrust { 0% { opacity: .25; transform: translateX(-1.5px); } 45% { opacity: 1; transform: translateX(0); } 100% { opacity: .25; transform: translateX(1.5px); } }
 @keyframes pcRise { 0% { opacity: 0; transform: translateY(2.5px); } 25% { opacity: 1; } 75% { opacity: .9; } 100% { opacity: 0; transform: translateY(-3.5px); } }
 @keyframes pcSpin { to { transform: rotate(360deg); } }
 @keyframes pcFlicker { 0%, 100% { transform: scale(1, 1); } 30% { transform: scale(1.07, .93); } 62% { transform: scale(.95, 1.06); } }
 @keyframes pcBreathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .58; transform: scale(1.07); } }
-@media (max-width: 560px) {
-  .pc-owner { grid-template-columns: 1fr; }
-  .pc-row { gap: 6px; padding: 11px; }
-  .pc-cap { height: 58px; }
-  .pc-cap svg { width: 26px; height: 26px; }
-}
-/* Keep the single icon row at a 44px touch target on the narrowest phones. */
+
 @media (max-width: 380px) {
-  .pc-outcomes { grid-template-columns: repeat(3, 1fr); }
-  .pc-row { gap: 4px; padding: 10px 8px; }
-  .pc-temp { padding: 10px 8px 0; }
-  .pc-cap svg { width: 24px; height: 24px; }
+  .pc-keys { gap: 5px; }
+  .pc-key { padding: 10px 2px 8px; }
+  .pc-key svg { width: 22px; height: 22px; }
+  .pc-key span { font-size: 7px; letter-spacing: .08em; }
+  .pc-holds { gap: 5px; }
+  .pc-holds button { font-size: 10.5px; padding: 12px 1px; }
+  .pc-seg { font-size: 70px; }
+  .pc-leds { gap: 9px; }
 }
 .visually-hidden {
   position: absolute !important;
@@ -1687,67 +1694,67 @@ function ownershipMarkup() {
   var observed = manualSessionObserved();
   var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
   var manual = !!draft || !!session;
-  var manualBlocked = !!draft || (!session &&
+  var blocked = !!draft || (!session &&
     (!observed || !observed.connected || manualSessionObservationIsStale(observed)));
-  var autoIcon = '<svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.6"/></svg>';
-  var handIcon = '<svg viewBox="0 0 24 24"><path d="M9 11V4.8a1.4 1.4 0 0 1 2.8 0V11"/><path d="M11.8 10.4V3.6a1.4 1.4 0 0 1 2.8 0V11"/><path d="M14.6 11V5.8a1.4 1.4 0 0 1 2.8 0V14"/><path d="M9 11V9.2a1.4 1.4 0 0 0-2.8 0v5.5c0 3.4 2.4 6.3 6 6.3s5.2-2.4 5.2-5.6"/></svg>';
-  return '<div class="pc-owner">' +
-    '<button class="pc-own auto" id="automaticControl" aria-pressed="' + (!manual) + '"' + (state.pending ? " disabled" : "") + ">" +
-      '<span class="pc-own-head">' + autoIcon + '<span class="pc-own-name">AUTOMATIC</span></span>' +
-      "<p>Your schedules run the pool. Controls stay locked.</p>" +
-      '<span class="pc-own-flag">' + (manual ? "TAP TO HAND BACK" : "IN CONTROL") + "</span></button>" +
-    '<button class="pc-own man" id="manualControl" aria-pressed="' + manual + '"' + (manualBlocked ? " disabled" : "") + ">" +
-      '<span class="pc-own-head">' + handIcon + '<span class="pc-own-name">MANUAL</span></span>' +
-      "<p>You set the pool yourself and hold it for a chosen time.</p>" +
-      '<span class="pc-own-flag">' + (manual ? "IN CONTROL" : "TAP TO TAKE OVER") + "</span></button></div>";
+  return '<div class="pc-mode ' + (manual ? "manual" : "auto") + '"><span class="pc-knob"></span>' +
+    '<button id="automaticControl" aria-pressed="' + (!manual) + '"' + (state.pending ? " disabled" : "") + ">Auto</button>" +
+    '<button id="manualControl" aria-pressed="' + manual + '"' + (blocked ? " disabled" : "") + ">Manual</button></div>";
+}
+
+function readoutMarkup() {
+  var observed = manualSessionObserved();
+  var shown = manualDisplayedState();
+  var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
+  var water = currentWaterTemp();
+  var value = water == null ? "--" : String(water);
+  var leds = manualCaps.map(function (cap) {
+    var on = !!shown[cap];
+    var sending = session && session.outcomes && session.outcomes[cap] &&
+      session.outcomes[cap].state === "pending";
+    return '<span class="pc-led' + (on ? " on" : "") + (cap === "heater" ? " warm" : "") +
+      (sending ? " blink" : "") + '"><i></i><span class="etch">' + capLabels[cap] + "</span></span>";
+  }).join("");
+  return '<div class="pc-window"><div class="pc-digits">' +
+    '<span class="pc-seg ghost" aria-hidden="true">' + value.replace(/./g, "8") + "</span>" +
+    '<span class="pc-seg live">' + value + '</span><span class="pc-deg">°C</span></div>' +
+    '<div class="pc-window-foot"><div class="pc-leds">' + leds + "</div>" +
+    '<span class="pc-setpoint">SET ' + shown.target_temp + "°</span></div></div>";
 }
 
 function equipmentMarkup() {
   var draft = state.manualSessionDraft;
   var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
-  var observed = manualSessionObserved();
   var shown = manualDisplayedState();
-  var base = manualBaseState();
-  var water = currentWaterTemp();
-  var say = shown.heater ?
-    (water != null && water < shown.target_temp ? "Heating to " + shown.target_temp + "°" : "At temperature") :
-    "Heating is off";
-
-  var tiles = manualCaps.map(function(cap) {
+  var keys = manualCaps.map(function (cap) {
     var on = !!shown[cap];
+    var outcome = session && session.outcomes && session.outcomes[cap] ? session.outcomes[cap].state : "confirmed";
     var explicit = !!(draft && draft.explicit && draft.explicit[cap]);
     var dependency = !!(draft && draft.dependencies && draft.dependencies[cap]);
-    var progress = session && session.outcomes && session.outcomes[cap] ? ", " + session.outcomes[cap].state : "";
-    return '<button class="pc-cap' + (dependency ? " dep" : "") + '" data-manual-cap="' + cap + '"' +
-      ' aria-pressed="' + on + '"' +
+    return '<button class="pc-key' + (cap === "heater" ? " warm" : "") +
+      (outcome === "pending" ? " pending" : "") + (outcome === "failed" ? " failed" : "") +
+      (dependency ? " dep" : "") + '" data-manual-cap="' + cap + '" aria-pressed="' + on + '"' +
       ' title="' + capLabels[cap] + " · " + (on ? "on" : "off") + '"' +
-      ' aria-label="' + capLabels[cap] + " " + (on ? "on" : "off") + progress + ", " + manualCapSubtitles[cap] + '"' +
-      (draft ? "" : " disabled") + '><span aria-hidden="true">' + manualCapIcons[cap] + "</span>" +
-      (explicit || dependency ? '<span class="pc-flag" aria-hidden="true"></span>' : "") + "</button>";
+      ' aria-label="' + capLabels[cap] + " " + (on ? "on" : "off") +
+      (session ? ", " + outcome : "") + ", " + manualCapSubtitles[cap] + '"' +
+      (draft ? "" : " disabled") + '><i class="stat"></i>' +
+      (explicit || dependency ? '<i class="edit"></i>' : "") +
+      manualCapIcons[cap] + "<span>" + capLabels[cap] + "</span></button>";
   }).join("");
 
   var why = "";
   if (draft && draft.dependencies) {
-    var reasons = Object.keys(draft.dependencies).map(function(field) {
+    var reasons = Object.keys(draft.dependencies).map(function (field) {
       var reason = draft.dependencies[field];
-      if (reason === "heater_filter") return "Filter switched on — the heater needs it";
-      if (reason === "feature_power") return "Power switched on — the feature needs it";
-      if (reason === "power_off") return capLabels[field] + " switched off — it follows the power";
-      if (reason === "filter_off") return "Heater switched off — it needs the filter";
+      if (reason === "heater_filter") return "Filter came on — the heater needs it";
+      if (reason === "feature_power") return "Power came on — the feature needs it";
+      if (reason === "power_off") return capLabels[field] + " went off — it follows the power";
+      if (reason === "filter_off") return "Heater went off — it needs the filter";
       return capLabels[field] + " changed automatically";
     });
-    var unique = reasons.filter(function(text, index) { return reasons.indexOf(text) === index; });
+    var unique = reasons.filter(function (t, i) { return reasons.indexOf(t) === i; });
     if (unique.length) why = '<p class="pc-why">' + escapeHTML(unique.join(" · ")) + "</p>";
   }
-
-  return '<div class="pc-card"><div class="pc-head"><h3>EQUIPMENT</h3><span>' +
-    (draft ? "Tap to switch" : "Read-only") + "</span></div>" +
-    (draft ? "" : '<div class="pc-lock">' + (session ?
-      "Locked while your session holds these settings — use Change settings below." :
-      "Locked because your schedules are in charge. Take over with Manual to change anything.") + "</div>") +
-    '<div class="pc-temp"><div class="pc-big">' + (water == null ? "--" : water) + "°<small>now</small></div>" +
-    '<div class="pc-temp-say"><strong>' + say + "</strong><span>" + observedAgeLabel(observed) + "</span></div></div>" +
-    '<div class="pc-row">' + tiles + "</div>" + why + "</div>";
+  return '<div class="pc-keys">' + keys + "</div>" + why;
 }
 
 function currentWaterTemp() {
@@ -1756,33 +1763,19 @@ function currentWaterTemp() {
 }
 
 function observedAgeLabel(observed) {
-  if (!observed || !observed.observed_at) return "No reading yet";
+  if (!observed || !observed.observed_at) return "No reading";
   var seconds = Math.max(0, Math.round((Date.now() - new Date(observed.observed_at).getTime()) / 1000));
-  if (seconds < 60) return "Read just now";
-  var minutes = Math.round(seconds / 60);
-  return "Read " + minutes + " min ago";
+  if (seconds < 60) return "Linked · just now";
+  return "Linked · " + Math.round(seconds / 60) + " min ago";
 }
 
 function targetMarkup() {
   var draft = state.manualSessionDraft;
   var shown = manualDisplayedState();
-  if (!shown.heater) return "";
-  var base = manualBaseState();
-  var changed = !!draft && draft.intended.target_temp !== base.target_temp;
-  var observed = manualSessionObserved();
-  var water = currentWaterTemp();
-  var note = changed ? "Was " + base.target_temp + "°" :
-    water != null && water < shown.target_temp ? (shown.target_temp - water) + "° to go from where the water is now" :
-    "The water is already there";
-  var control = draft ?
-    '<div class="pc-step"><button data-manual-step="-1" aria-label="Lower target">−</button>' +
-      '<span class="pc-val' + (changed ? " changed" : "") + '"><b>' + shown.target_temp + '°</b><span>TARGET</span></span>' +
-      '<button data-manual-step="1" aria-label="Raise target">+</button></div>' :
-    '<span class="pc-val"><b>' + shown.target_temp + '°</b><span>TARGET</span></span>';
-  return '<div class="pc-card"><div class="pc-head"><h3>TARGET TEMPERATURE</h3><span>' +
-    (draft ? "The heater stops here" : "Held by your session") + "</span></div>" +
-    '<div class="pc-target"><span class="pc-target-note' + (changed ? " changed" : "") + '">' + note + "</span>" +
-    control + "</div></div>";
+  if (!shown.heater || !draft) return "";
+  return '<div class="pc-rocker"><button data-manual-step="-1" aria-label="Lower setpoint">–</button>' +
+    '<span class="pc-setwin"><b>' + shown.target_temp + '°</b><span class="etch">Setpoint</span></span>' +
+    '<button data-manual-step="1" aria-label="Raise setpoint">+</button></div>';
 }
 
 function applyMarkup() {
@@ -1792,93 +1785,46 @@ function applyMarkup() {
   var base = draft.base || {};
   var changes = manualChangedFields();
   if (pendingDiscard) {
-    return '<div class="pc-apply"><div class="pc-apply-top"><strong>' +
+    return '<div class="pc-commit"><span class="etch">' +
       (changes.length === 1 ? "Throw away this change?" : "Throw away these " + changes.length + " changes?") +
-      "</strong></div>" +
-      '<p class="pc-note">They were never sent, so the pool is unaffected either way.</p>' +
-      '<div class="pc-confirm"><button data-manual-act="keep">Keep editing</button>' +
+      '</span><p class="pc-why" style="color:var(--etch-hi)">Nothing was sent, so the pool is unaffected either way.</p>' +
+      '<div class="pc-acts"><button data-manual-act="keep">Keep editing</button>' +
       '<button data-manual-act="discard">Throw away</button></div></div>';
   }
-  var chips = changes.map(function(field) {
-    if (field === "target_temp") {
-      return '<span class="pc-chip">Target ' + base[field] + "° <i>→</i> " + draft.intended[field] + "°</span>";
-    }
-    return '<span class="pc-chip">' + capLabels[field] + " " + (base[field] ? "on" : "off") +
-      " <i>→</i> " + (draft.intended[field] ? "on" : "off") + "</span>";
+  var chips = changes.map(function (field) {
+    if (field === "target_temp") return '<span class="pc-chip">SET ' + base[field] + "°→" + draft.intended[field] + "°</span>";
+    return '<span class="pc-chip">' + capLabels[field].toUpperCase() + " " + (draft.intended[field] ? "ON" : "OFF") + "</span>";
   }).join("");
   var canApply = (changes.length > 0 || !!session) && !state.pending;
-  var title = changes.length ? changes.length + " change" + (changes.length !== 1 ? "s" : "") + " ready" :
-    session ? "No changes — you can still restart the clock" : "No changes yet";
-  var label = draft.review_required ? "CONTROL CHANGED — REVIEW, THEN TAP A TIME" :
-    canApply ? "TAP A TIME TO APPLY" :
-    state.pending ? "WORKING…" : "TAP AN ICON ABOVE TO MAKE A CHANGE";
-  return '<div class="pc-apply"><div class="pc-apply-top"><strong>' + title + "</strong>" +
-    '<span>' + (session ? "EDITING SESSION" : "NEW SESSION") + "</span></div>" +
-    (changes.length ? '<div class="pc-chips">' + chips + "</div>" : "") +
-    '<p class="pc-note">The pool has not been told anything yet.' +
-    (session ? " Applying restarts the clock." : "") + "</p>" +
-    '<div><span class="pc-label">' + label + '</span><div class="pc-durations">' +
-    manualDurations.map(function(item) {
-      return '<button data-manual-duration="' + item[0] + '"' + (canApply ? "" : " disabled") + ">" + item[1] + "</button>";
-    }).join("") + "</div></div></div>";
+  var label = draft.review_required ? "Control changed — review, then run for" :
+    canApply ? "Run for" : state.pending ? "Working…" : "Press a key above to change something";
+  return '<div class="pc-commit">' + (chips ? '<div class="pc-chips">' + chips + "</div>" : "") +
+    '<span class="etch" style="display:block;margin-top:' + (chips ? "10px" : "0") + '">' + label + "</span>" +
+    '<div class="pc-holds">' + manualDurations.map(function (item) {
+      return '<button data-manual-duration="' + item[0] + '"' + (canApply ? "" : " disabled") + ">" +
+        item[1].replace(" min", "m").replace("60m", "1h").replace("2 hours", "2h").replace("Until off", "Hold") + "</button>";
+    }).join("") + "</div></div>";
 }
 
 function sessionMarkup() {
   var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
   if (!session) return "";
   var draft = state.manualSessionDraft;
-  var word = session.state === "applying" ? "APPLYING" : session.state === "degraded" ? "NEEDS ATTENTION" : "HOLDING";
-  var sub = session.state === "applying" ? "Sending your settings to the pool" :
-    session.state === "degraded" ? "Part of your session is not running" :
-    "The pool is held exactly as you set it";
-  var outcomeState = function(field) {
-    return ((session.outcomes && session.outcomes[field]) || {state: "pending"}).state;
-  };
-  var stateWord = {confirmed: "confirmed", pending: "still sending", failed: "not confirmed"};
-  var tiles = manualCaps.map(function(cap) {
-    var on = !!session.intended[cap];
-    var status = outcomeState(cap);
-    return '<div class="pc-out ' + status + (on ? " on" : "") + '" role="img" title="' +
-      capLabels[cap] + " · " + (on ? "on" : "off") + " · " + stateWord[status] + '"' +
-      ' aria-label="' + capLabels[cap] + " " + (on ? "on" : "off") + ", " + stateWord[status] + '">' +
-      manualCapIcons[cap] + "<i></i></div>";
-  }).join("");
-  var targetStatus = outcomeState("target_temp");
-  tiles += '<div class="pc-out ' + targetStatus + '" role="img" title="Target ' + session.intended.target_temp +
-    "° · " + stateWord[targetStatus] + '" aria-label="Target temperature ' + session.intended.target_temp +
-    " degrees, " + stateWord[targetStatus] + '"><span class="pc-out-temp"><b>' + session.intended.target_temp +
-    '°</b><span>TARGET</span></span><i></i></div>';
-
-  var note = "";
-  if (session.state === "degraded") {
-    var failures = manualCaps.concat(["target_temp"]).filter(function(field) {
-      return outcomeState(field) === "failed";
-    }).map(function(field) {
-      var outcome = session.outcomes[field];
-      var label = capLabels[field] || "Target temperature";
-      return label + " — " + (outcome.message || outcome.code || "not confirmed by the pool");
-    });
-    if (failures.length) note = '<p class="pc-fail-note">' + escapeHTML(failures.join(" · ")) + "</p>";
-  } else if (session.state === "applying") {
-    var confirmed = manualCaps.concat(["target_temp"]).filter(function(field) {
-      return outcomeState(field) === "confirmed";
-    }).length;
-    note = '<p class="pc-progress">' + confirmed + " of 6 confirmed by the pool.</p>";
-  }
-
-  var clock = session.expires_at ? manualSessionClock(session.expires_at) : "—";
-  var clockCap = session.expires_at ? "LEFT" : "UNTIL YOU STOP IT";
-  return '<div class="pc-card"><div class="pc-head"><h3>YOUR SESSION</h3><span>' +
-    durationLabel(session.duration) + "</span></div>" +
-    '<div class="pc-session-top"><div class="pc-state ' + session.state + '"><b><i></i>' + word + "</b>" +
-    '<span>' + sub + "</span></div>" +
-    '<div class="pc-clock" id="manualSessionClock">' + clock + "<small>" + clockCap + "</small></div></div>" +
-    '<div class="pc-outcomes">' + tiles + "</div>" + note +
-    '<div class="pc-session-actions">' +
-      (session.state === "degraded" ? '<button class="primary" data-manual-act="retry"' + (state.pending ? " disabled" : "") + ">Try the failed fields again</button>" : "") +
+  var failed = manualCaps.concat(["target_temp"]).filter(function (field) {
+    return session.outcomes && session.outcomes[field] && session.outcomes[field].state === "failed";
+  });
+  var clock = session.expires_at ? manualSessionClock(session.expires_at) : "——";
+  var alert = failed.length ? '<p class="pc-alert">' +
+    escapeHTML((capLabels[failed[0]] || "Target temperature") + " — " +
+      ((session.outcomes[failed[0]].message || session.outcomes[failed[0]].code) || "no acknowledgement")) + "</p>" : "";
+  return '<div class="pc-commit"><div class="pc-timer"><span class="etch">' +
+    (session.expires_at ? "Time left" : "No time limit") + '</span>' +
+    '<b id="manualSessionClock">' + clock + "</b></div>" + alert +
+    '<div class="pc-acts">' +
+      (failed.length ? '<button class="hot" data-manual-act="retry"' + (state.pending ? " disabled" : "") + ">Retry</button>" : "") +
       (draft ? '<button data-manual-act="stopEdit">Stop editing</button>' :
-        '<button data-manual-act="edit">Change settings</button>') +
-      '<button data-manual-act="automatic"' + (state.pending ? " disabled" : "") + ">Hand back to Automatic</button>" +
+        '<button data-manual-act="edit">Change</button>') +
+      '<button data-manual-act="automatic"' + (state.pending ? " disabled" : "") + ">Back to auto</button>" +
     "</div></div>";
 }
 
@@ -1896,11 +1842,13 @@ function renderPoolControl() {
   var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
   var observed = manualSessionObserved();
   var handsOn = !!draft || !!session;
-  var html = ownershipMarkup();
+  // The readout is the constant: it reads the pool whoever is in charge.
+  var html = readoutMarkup() + ownershipMarkup() +
+    '<p class="etch pc-legend">' + manualLegend() + "</p>";
   if (observed && !observed.connected) {
-    html += '<div class="pc-card"><div class="pc-lock">The pool is not answering. ' +
+    html += '<p class="pc-offline">The pool is not answering. ' +
       (session ? "The session you applied still stands and you can hand it back." :
-        "You cannot start a manual session until a fresh reading arrives.") + "</div></div>";
+        "You cannot start a manual session until a fresh reading arrives.") + "</p>";
   }
   html += handsOn ?
     equipmentMarkup() + targetMarkup() + applyMarkup() + sessionMarkup() :
@@ -1915,6 +1863,20 @@ function renderPoolControl() {
   bindPoolControl();
   startManualSessionTick();
   announceManualSession(manualSessionAnnouncement());
+}
+
+function manualLegend() {
+  var draft = state.manualSessionDraft;
+  var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
+  var observed = manualSessionObserved();
+  if (draft && draft.review_required) return "Control changed — review, then run it again";
+  if (draft) return "Set the keys, then choose how long";
+  if (session && session.state === "applying") return "Sending to the pool";
+  if (session && session.state === "degraded") return "One output did not answer";
+  if (session) return "You have the pool";
+  if (observed && !observed.connected) return "Pool offline";
+  if (observed && manualSessionObservationIsStale(observed)) return "Reading is stale";
+  return "Schedules hold the pool";
 }
 
 // Re-rendering replaces the control markup wholesale, which would otherwise drop
@@ -2169,52 +2131,28 @@ function relativeMinutes(at) {
   return "in " + rest + " min";
 }
 
+// In Automatic the readout and its LEDs already state what the pool is doing,
+// so this only has to answer what happens next.
 function automaticSummaryMarkup() {
-  var observed = manualSessionObserved();
-  var shown = observed && observed.state ? observed.state : {};
-  var water = currentWaterTemp();
-  var say;
-  if (!shown.power) say = {line: "Everything is off", sub: "The pool is powered down"};
-  else if (shown.heater) say = {line: "Heating to " + shown.target_temp + "°",
-    sub: water != null && water < shown.target_temp ? (shown.target_temp - water) + "° to go" : "Nearly there"};
-  else {
-    var extras = ["jets", "bubbles"].filter(function(cap) { return shown[cap]; })
-      .map(function(cap) { return capLabels[cap].toLowerCase(); });
-    if (extras.length) say = {line: extras.join(" and ") + " running", sub: "Not heating · target " + shown.target_temp + "°"};
-    else if (shown.filter) say = {line: "Circulating, not heating", sub: "Target " + shown.target_temp + "° when the schedule calls for it"};
-    else say = {line: "Powered, everything idle", sub: "Target " + shown.target_temp + "°"};
-  }
-
-  var minis = manualCaps.map(function(cap) {
-    var on = !!shown[cap];
-    return '<div class="pc-mini' + (on ? " on" : "") + '" role="img" title="' + capLabels[cap] + " · " + (on ? "on" : "off") +
-      '" aria-label="' + capLabels[cap] + " " + (on ? "on" : "off") + '">' + manualCapIcons[cap] + "</div>";
-  }).join("");
-
   var forecast = planForecast(3);
-  var next = forecast.length ? forecast.map(function(item, index) {
-    var tags = item.changes.map(function(change) {
-      if (change.cap === "target_temp") return '<span class="pc-tag up">Target ' + change.value + "°</span>";
-      return '<span class="pc-tag' + (change.on ? " up" : "") + '">' + capLabels[change.cap] + " " + (change.on ? "on" : "off") + "</span>";
-    }).join("");
-    var after = !item.power ? "Nothing running after this" :
-      item.running.length ? "Then running: " + item.running.map(function(cap) { return capLabels[cap]; }).join(", ") +
-        (item.target != null ? " · target " + item.target + "°" : "") :
-      "Then idle" + (item.target != null ? " · target " + item.target + "°" : "");
-    return '<div class="pc-next' + (index === 0 ? " soon" : "") + '"><div><span class="pc-when">' +
-      pad2(item.at.getHours()) + ":" + pad2(item.at.getMinutes()) + '</span><span class="pc-rel">' +
-      relativeMinutes(item.at) + "</span></div><div><strong>" + escapeHTML(item.name) + "</strong>" +
-      '<div class="pc-tags">' + tags + '</div><p class="pc-after">' + after + "</p></div></div>";
-  }).join("") : '<div class="pc-next"><div><span class="pc-when">—</span></div><div><strong>Nothing scheduled</strong>' +
-    '<p class="pc-after">No enabled plan changes the pool in the next three days.</p></div></div>';
+  var rows = forecast.length ? forecast.map(function (item) {
+    var what = item.changes.map(function (change) {
+      if (change.cap === "target_temp") return '<em class="warm">SET ' + change.value + "\u00b0</em>";
+      return '<em' + (change.cap === "heater" ? ' class="warm"' : (change.on ? "" : ' style="color:var(--etch)"')) +
+        ">" + capLabels[change.cap].toUpperCase() + " " + (change.on ? "ON" : "OFF") + "</em>";
+    }).join(" · ");
+    var after = !item.power ? "nothing runs after this" :
+      item.running.length ? "then " + item.running.map(function (c) { return capLabels[c].toLowerCase(); }).join(" + ") +
+        (item.target != null ? " to " + item.target + "\u00b0" : "") :
+      "then idle";
+    return '<div class="pc-next-row"><time>' + pad2(item.at.getHours()) + ":" + pad2(item.at.getMinutes()) +
+      "</time><div><b>" + what + '</b><p>' + escapeHTML(item.name) + " \u00b7 " + after + "</p></div>" +
+      "<small>" + relativeMinutes(item.at).replace("in ", "") + "</small></div>";
+  }).join("") : '<div class="pc-next-row"><time>--:--</time><div><b>Nothing scheduled</b>' +
+    '<p>No enabled plan changes the pool in the next three days.</p></div><small>—</small></div>';
 
-  return '<div class="pc-card"><div class="pc-head"><h3>RIGHT NOW</h3><span>' +
-    observedAgeLabel(observed) + "</span></div>" +
-    '<div class="pc-now"><div class="pc-now-lead"><span class="pc-now-temp">' + (water == null ? "--" : water) + "°</span>" +
-    '<span class="pc-now-say"><strong>' + say.line + "</strong><span>" + say.sub + "</span></span></div>" +
-    '<div class="pc-minis">' + minis + "</div></div>" +
-    '<div class="pc-head"><h3>WHAT HAPPENS NEXT</h3><span>From your schedules</span></div>' + next +
-    '<div class="pc-foot">Switch to Manual to change any of this yourself.</div></div>';
+  return '<div class="pc-next"><span class="etch" style="display:block;margin:6px 2px 2px">Next</span>' +
+    rows + "</div>";
 }
 
 var lastManualSessionAnnouncement = "";

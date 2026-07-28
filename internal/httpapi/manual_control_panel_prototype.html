@@ -1,0 +1,420 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pooly — Panel</title>
+<style>
+:root {
+  --case: #0f1417;
+  --case-hi: #1b2328;
+  --face: #171e22;
+  --key: #1e262b;
+  --key-edge: #2c383e;
+  --led: #3fe3d0;
+  --led-dim: rgba(63,227,208,.16);
+  --heat: #ff9a3c;
+  --heat-dim: rgba(255,154,60,.16);
+  --fault: #ff5f4d;
+  --etch: #6d7f88;
+  --etch-bright: #9fb2bb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "Helvetica Neue", Inter, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  min-height: 100vh;
+  padding: 22px 14px 40px;
+  background:
+    radial-gradient(120% 70% at 50% -10%, #1d262b 0%, #0b1013 60%),
+    #0b1013;
+  color: var(--etch-bright);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+.unit {
+  width: min(430px, 100%);
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid #29343a;
+  border-radius: 26px;
+  background: linear-gradient(180deg, var(--case-hi), var(--case));
+  box-shadow: 0 40px 90px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+/* silkscreen labels */
+.etch {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .22em;
+  text-transform: uppercase; color: var(--etch);
+}
+.badge-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.wordmark { display: flex; align-items: center; gap: 9px; }
+.wordmark b { font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--etch-bright); font-weight: 700; }
+.pilot { width: 7px; height: 7px; border-radius: 50%; background: var(--led); box-shadow: 0 0 9px var(--led); }
+.pilot.off { background: #2b3a40; box-shadow: none; }
+
+/* ---- readout window: the signature ---- */
+.window {
+  position: relative;
+  padding: 20px 18px 15px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #05090b, #0a1114);
+  box-shadow: inset 0 2px 14px rgba(0,0,0,.9), inset 0 0 0 1px #222c31;
+  overflow: hidden;
+}
+.window::after {
+  content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(180deg, rgba(255,255,255,.028) 0 1px, transparent 1px 3px);
+  pointer-events: none;
+}
+.digits { position: relative; display: flex; align-items: flex-start; justify-content: center; }
+.seg {
+  font-family: var(--mono);
+  font-size: 92px; font-weight: 700; line-height: .84;
+  letter-spacing: .04em; font-variant-numeric: tabular-nums;
+}
+.seg.ghost { color: rgba(63,227,208,.075); }
+.seg.live {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  color: var(--led); text-shadow: 0 0 22px rgba(63,227,208,.5);
+}
+.deg { align-self: flex-start; margin-top: 8px; font-family: var(--mono); font-size: 20px; color: var(--led); opacity: .8; }
+.window-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+.mini-leds { display: flex; gap: 16px; }
+.mini { display: flex; align-items: center; gap: 6px; }
+.mini i { width: 6px; height: 6px; border-radius: 50%; background: #24333a; }
+.mini.on i { background: var(--led); box-shadow: 0 0 7px var(--led); }
+.mini.on.warm i { background: var(--heat); box-shadow: 0 0 7px var(--heat); }
+.mini.blink i { animation: blink 1.05s steps(2, jump-none) infinite; }
+@keyframes blink { 50% { opacity: .15; } }
+.setpoint { font-family: var(--mono); font-size: 13px; color: var(--etch-bright); letter-spacing: .08em; }
+
+/* ---- mode switch: a real two-position toggle ---- */
+.mode {
+  display: grid; grid-template-columns: 1fr 1fr; align-items: center;
+  margin: 16px 0 4px; padding: 4px;
+  border-radius: 12px; background: #0c1215; box-shadow: inset 0 2px 8px rgba(0,0,0,.8);
+  position: relative;
+}
+.mode-knob {
+  position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px);
+  border-radius: 9px;
+  background: linear-gradient(180deg, #38464d, #232e33);
+  box-shadow: 0 2px 6px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.14);
+  transition: transform .22s cubic-bezier(.4,1.3,.5,1);
+}
+.mode[data-mode="manual"] .mode-knob { transform: translateX(100%); }
+.mode button {
+  position: relative; z-index: 1; padding: 11px 4px; border: 0; background: none;
+  font: inherit; cursor: pointer;
+  font-size: 10px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--etch);
+}
+.mode button[aria-pressed="true"] { color: #eaf6f8; }
+.mode[data-mode="manual"] button[aria-pressed="true"] { color: var(--heat); }
+
+.legend { margin: 12px 2px 8px; }
+
+/* ---- backlit keys ---- */
+.keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.key {
+  position: relative; display: grid; justify-items: center; gap: 7px;
+  padding: 13px 3px 10px; border: 1px solid var(--key-edge); border-radius: 13px;
+  background: linear-gradient(180deg, #263137, var(--key));
+  box-shadow: 0 3px 0 #0c1114, 0 6px 12px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.09);
+  color: #7d9098; cursor: pointer; font: inherit;
+  transition: box-shadow .12s, background .12s, color .12s, transform .07s;
+}
+.key svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.key span { font-size: 8px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.key:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #0c1114, inset 0 1px 0 rgba(255,255,255,.06); }
+.key[aria-pressed="true"] {
+  color: var(--led); background: linear-gradient(180deg, #1d3a3c, #14282b);
+  border-color: rgba(63,227,208,.5);
+  box-shadow: 0 3px 0 #0c1114, 0 0 20px var(--led-dim), inset 0 0 16px rgba(63,227,208,.14), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.key.warm[aria-pressed="true"] {
+  color: var(--heat); border-color: rgba(255,154,60,.5);
+  background: linear-gradient(180deg, #3b2a17, #26190d);
+  box-shadow: 0 3px 0 #0c1114, 0 0 20px var(--heat-dim), inset 0 0 16px rgba(255,154,60,.14), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.key:disabled { opacity: .42; cursor: not-allowed; }
+.key .stat {
+  position: absolute; top: 6px; right: 7px; width: 5px; height: 5px; border-radius: 50%;
+  background: transparent;
+}
+.key.pending .stat { background: var(--heat); box-shadow: 0 0 6px var(--heat); animation: blink 1.05s steps(2, jump-none) infinite; }
+.key.fault { border-color: var(--fault); }
+.key.fault .stat { background: var(--fault); box-shadow: 0 0 6px var(--fault); }
+
+/* ---- setpoint rocker ---- */
+.rocker { display: grid; grid-template-columns: 54px 1fr 54px; gap: 8px; align-items: stretch; margin-top: 9px; }
+.rocker button {
+  border: 1px solid var(--key-edge); border-radius: 12px; cursor: pointer;
+  background: linear-gradient(180deg, #263137, var(--key));
+  box-shadow: 0 3px 0 #0c1114, inset 0 1px 0 rgba(255,255,255,.09);
+  color: var(--etch-bright); font: 700 21px/1 var(--sans);
+}
+.rocker button:active { transform: translateY(2px); box-shadow: 0 1px 0 #0c1114; }
+.rocker button:disabled { opacity: .35; }
+.set-window {
+  display: grid; place-items: center; gap: 2px; border-radius: 12px;
+  background: #05090b; box-shadow: inset 0 2px 10px rgba(0,0,0,.85), inset 0 0 0 1px #222c31;
+}
+.set-window b { font-family: var(--mono); font-size: 27px; color: var(--heat); text-shadow: 0 0 14px rgba(255,154,60,.4); }
+
+/* ---- commit bar ---- */
+.commit { margin-top: 14px; padding-top: 13px; border-top: 1px dashed #2a353b; }
+.holds { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-top: 9px; }
+.holds button {
+  padding: 12px 2px; border: 1px solid #45372a; border-radius: 11px; cursor: pointer;
+  background: linear-gradient(180deg, #3a2b1a, #241a10);
+  color: var(--heat); font: 700 11.5px/1 var(--sans); letter-spacing: .04em;
+  box-shadow: 0 3px 0 #0c1114, inset 0 1px 0 rgba(255,255,255,.07);
+}
+.holds button:active { transform: translateY(2px); box-shadow: 0 1px 0 #0c1114; }
+.holds button:disabled { border-color: #29343a; background: #171e22; color: #55656d; box-shadow: none; }
+.timer { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.timer b { font-family: var(--mono); font-size: 30px; color: var(--led); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 11px; }
+.actions button {
+  padding: 12px; border: 1px solid var(--key-edge); border-radius: 11px; cursor: pointer;
+  background: var(--key); color: var(--etch-bright);
+  font: 700 11px/1 var(--sans); letter-spacing: .13em; text-transform: uppercase;
+}
+.fault-line { margin: 10px 0 0; font-size: 12px; color: var(--fault); }
+.next-line { margin: 11px 0 0; font-size: 12.5px; color: var(--etch); }
+.next-line b { color: var(--etch-bright); font-weight: 600; }
+
+button:focus-visible { outline: 2px solid var(--led); outline-offset: 3px; }
+.rig {
+  width: min(430px, 100%); margin: 16px auto 0; display: flex; gap: 6px; flex-wrap: wrap;
+}
+.rig button {
+  flex: 1; padding: 8px 6px; border: 1px solid #26323a; border-radius: 8px; cursor: pointer;
+  background: #10171b; color: #6d7f88; font: 600 10px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase;
+}
+.rig button[aria-pressed="true"] { border-color: var(--led); color: var(--led); }
+@media (prefers-reduced-motion: no-preference) {
+  .key[aria-pressed="true"] .jet-stream { animation: thrust 1.5s ease-out infinite; }
+  .key[aria-pressed="true"] .jet-stream:nth-of-type(2) { animation-delay: .18s; }
+  .key[aria-pressed="true"] .jet-stream:nth-of-type(3) { animation-delay: .36s; }
+  .key[aria-pressed="true"] .jet-stream:nth-of-type(4) { animation-delay: .1s; }
+  .key[aria-pressed="true"] .jet-stream:nth-of-type(5) { animation-delay: .28s; }
+  .key[aria-pressed="true"] .jet-stream:nth-of-type(6) { animation-delay: .46s; }
+  .key[aria-pressed="true"] .bub { animation: rise 2.4s ease-in-out infinite; }
+  .key[aria-pressed="true"] .bub:nth-of-type(2) { animation-delay: .5s; }
+  .key[aria-pressed="true"] .bub:nth-of-type(3) { animation-delay: 1s; }
+  .key[aria-pressed="true"] .bub:nth-of-type(4) { animation-delay: 1.5s; }
+  .key[aria-pressed="true"] .spin { transform-box: view-box; transform-origin: 12px 12px; animation: spin 2.6s linear infinite; }
+  .key[aria-pressed="true"] .flame { transform-box: view-box; transform-origin: 12px 21px; animation: flicker 1.5s ease-in-out infinite; }
+  .key[aria-pressed="true"] .pwr { transform-box: view-box; transform-origin: 12px 12px; animation: breathe 2.8s ease-in-out infinite; }
+}
+@keyframes thrust { 0% { opacity: .25; transform: translateX(-1.5px); } 45% { opacity: 1; transform: translateX(0); } 100% { opacity: .25; transform: translateX(1.5px); } }
+@keyframes rise { 0% { opacity: 0; transform: translateY(2.5px); } 25% { opacity: 1; } 75% { opacity: .9; } 100% { opacity: 0; transform: translateY(-3.5px); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes flicker { 0%, 100% { transform: scale(1, 1); } 30% { transform: scale(1.07, .93); } 62% { transform: scale(.95, 1.06); } }
+@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .58; transform: scale(1.07); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<main class="unit">
+  <div class="badge-row">
+    <div class="wordmark"><span class="pilot" id="pilot"></span><b>Pooly</b></div>
+    <span class="etch" id="linkState">Linked · 8 s ago</span>
+  </div>
+
+  <div class="window">
+    <div class="digits">
+      <span class="seg ghost">88</span><span class="seg live" id="temp">34</span>
+      <span class="deg">°C</span>
+    </div>
+    <div class="window-foot">
+      <div class="mini-leds" id="miniLeds"></div>
+      <span class="setpoint" id="setpoint">SET 36°</span>
+    </div>
+  </div>
+
+  <div class="mode" id="mode" data-mode="auto">
+    <div class="mode-knob"></div>
+    <button data-mode-btn="auto" aria-pressed="true">Auto</button>
+    <button data-mode-btn="manual" aria-pressed="false">Manual</button>
+  </div>
+
+  <p class="etch legend" id="legend">Schedules hold the pool</p>
+  <div class="keys" id="keys"></div>
+  <div id="extra"></div>
+</main>
+
+<div class="rig" id="rig"></div>
+
+<script>
+var ICONS = {
+  power: '<svg viewBox="0 0 24 24"><g class="pwr"><path d="M12 3v9"/><path d="M6.6 6.6a7.6 7.6 0 1 0 10.8 0"/></g></svg>',
+  filter: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.7"/><g class="spin"><path d="M12 10.3c2.3-1.5 4.1-1.7 5.5-.7"/><path d="M13.5 12.9c.5 2.7-.1 4.4-1.5 5.3"/><path d="M10.5 12.9c-2.9-1.2-4-2.7-4-4.6"/></g></svg>',
+  heater: '<svg viewBox="0 0 24 24"><g class="flame"><path d="M12 21c3.6 0 6-2.3 6-5.4 0-3.6-3-4.6-2.4-8.2C13.3 8.5 13 10.6 13 12c-1.3-.6-1.7-2.4-1.4-4.4C9.1 9.4 6 11.7 6 15.6 6 18.7 8.4 21 12 21Z"/></g></svg>',
+  jets: '<svg viewBox="0 0 24 24"><path class="jet-stream" d="M3 7h9"/><path class="jet-stream" d="M9.6 4.6 12 7l-2.4 2.4"/><path class="jet-stream" d="M3 12h13"/><path class="jet-stream" d="M13.6 9.6 16 12l-2.4 2.4"/><path class="jet-stream" d="M3 17h9"/><path class="jet-stream" d="M9.6 14.6 12 17l-2.4 2.4"/></svg>',
+  bubbles: '<svg viewBox="0 0 24 24"><path d="M2.8 5.2c1.6-1.4 3.2-1.4 4.8 0s3.2 1.4 4.8 0 3.2-1.4 4.8 0 3.2 1.4 4.8 0"/><circle class="bub" cx="7.4" cy="17.6" r="2.3"/><circle class="bub" cx="13.6" cy="18.6" r="1.5"/><circle class="bub" cx="15.8" cy="12.6" r="2.7"/><circle class="bub" cx="8.8" cy="10.6" r="1.7"/></svg>'
+};
+var CAPS = ["power","filter","heater","jets","bubbles"];
+var NAME = {power:"Power", filter:"Filter", heater:"Heat", jets:"Jets", bubbles:"Air"};
+var HOLDS = [["10m","10m"],["30m","30m"],["60m","1h"],["2h","2h"],["until_off","Hold"]];
+
+var S, tick;
+function base() {
+  return {
+    view: "auto", water: 34,
+    obs: {power:true, filter:true, heater:false, jets:false, bubbles:false, target:36},
+    draft: null, session: null
+  };
+}
+function shown() { return S.draft || (S.session ? S.session.intent : S.obs); }
+
+function render() {
+  var v = shown();
+  document.getElementById("temp").textContent = S.water;
+  document.getElementById("setpoint").textContent = "SET " + v.target + "°";
+  document.getElementById("pilot").className = "pilot" + (S.view === "manual" ? " " : "");
+  document.getElementById("mode").dataset.mode = S.draft || S.session ? "manual" : "auto";
+  document.querySelectorAll("[data-mode-btn]").forEach(function (b) {
+    b.setAttribute("aria-pressed", String((b.dataset.modeBtn === "manual") === !!(S.draft || S.session)));
+  });
+
+  document.getElementById("miniLeds").innerHTML = CAPS.map(function (c) {
+    var on = !!v[c];
+    return '<span class="mini' + (on ? " on" : "") + (c === "heater" ? " warm" : "") +
+      (S.session && S.session.out[c] === "pending" ? " blink" : "") +
+      '"><i></i><span class="etch">' + NAME[c] + "</span></span>";
+  }).join("");
+
+  document.getElementById("keys").innerHTML = CAPS.map(function (c) {
+    var on = !!v[c];
+    var st = S.session ? S.session.out[c] : "confirmed";
+    return '<button class="key' + (c === "heater" ? " warm" : "") + (st === "pending" ? " pending" : "") +
+      (st === "failed" ? " fault" : "") + '" data-cap="' + c + '" aria-pressed="' + on + '"' +
+      (S.draft ? "" : " disabled") + ' aria-label="' + NAME[c] + " " + (on ? "on" : "off") + '">' +
+      '<i class="stat"></i>' + ICONS[c] + "<span>" + NAME[c] + "</span></button>";
+  }).join("");
+
+  var legend = document.getElementById("legend");
+  var extra = document.getElementById("extra");
+  if (S.draft) {
+    legend.textContent = "Set the keys, then choose how long";
+    extra.innerHTML =
+      (v.heater ? rockerHTML(v.target) : "") +
+      '<div class="commit"><span class="etch">Run for</span><div class="holds">' +
+      HOLDS.map(function (h) { return '<button data-hold="' + h[0] + '">' + h[1] + "</button>"; }).join("") +
+      "</div></div>";
+  } else if (S.session) {
+    var s = S.session;
+    var fault = Object.keys(s.out).filter(function (k) { return s.out[k] === "failed"; });
+    legend.textContent = s.state === "applying" ? "Sending to the pool" :
+      fault.length ? "One output did not answer" : "You have the pool";
+    extra.innerHTML = '<div class="commit"><div class="timer"><span class="etch">' +
+      (s.remaining === null ? "No time limit" : "Time left") + '</span><b id="clock">' +
+      (s.remaining === null ? "——" : mmss(s.remaining)) + "</b></div>" +
+      (fault.length ? '<p class="fault-line">' + NAME[fault[0]] + " did not acknowledge. Retry or hand back.</p>" : "") +
+      '<div class="actions"><button data-act="edit">Change</button>' +
+      '<button data-act="auto">Back to auto</button></div></div>';
+  } else {
+    legend.textContent = "Schedules hold the pool";
+    extra.innerHTML = '<p class="next-line">Next: <b>heat on at 20:54</b>, then off at 23:24.</p>';
+  }
+  bind();
+}
+
+function rockerHTML(t) {
+  return '<div class="rocker"><button data-set="-1" aria-label="Lower setpoint">–</button>' +
+    '<span class="set-window"><b>' + t + '°</b><span class="etch">Setpoint</span></span>' +
+    '<button data-set="1" aria-label="Raise setpoint">+</button></div>';
+}
+function mmss(s) {
+  var m = Math.floor(s / 60), r = s % 60;
+  return (m < 10 ? "0" : "") + m + ":" + (r < 10 ? "0" : "") + r;
+}
+function deps(o, cap, val) {
+  o[cap] = val;
+  if (cap === "power" && !val) ["filter","heater","jets","bubbles"].forEach(function (f) { o[f] = false; });
+  if (cap !== "power" && val) o.power = true;
+  if (cap === "heater" && val) o.filter = true;
+  if (cap === "filter" && !val) o.heater = false;
+}
+function bind() {
+  document.querySelectorAll("[data-cap]").forEach(function (b) {
+    b.onclick = function () { if (!S.draft) return; deps(S.draft, b.dataset.cap, !S.draft[b.dataset.cap]); render(); };
+  });
+  document.querySelectorAll("[data-set]").forEach(function (b) {
+    b.onclick = function () { S.draft.target = Math.max(10, Math.min(40, S.draft.target + (+b.dataset.set))); render(); };
+  });
+  document.querySelectorAll("[data-hold]").forEach(function (b) {
+    b.onclick = function () { commit(b.dataset.hold); };
+  });
+  document.querySelectorAll("[data-mode-btn]").forEach(function (b) {
+    b.onclick = function () {
+      if (b.dataset.modeBtn === "manual") { S.draft = Object.assign({}, S.session ? S.session.intent : S.obs); }
+      else { S.draft = null; S.session = null; clearInterval(tick); }
+      render();
+    };
+  });
+  document.querySelectorAll("[data-act]").forEach(function (b) {
+    b.onclick = function () {
+      if (b.dataset.act === "edit") S.draft = Object.assign({}, S.session.intent);
+      else { S.session = null; S.draft = null; clearInterval(tick); }
+      render();
+    };
+  });
+}
+function commit(hold) {
+  var secs = hold === "10m" ? 600 : hold === "30m" ? 1800 : hold === "60m" ? 3600 : hold === "2h" ? 7200 : null;
+  var out = {}; CAPS.forEach(function (c) { out[c] = "pending"; });
+  S.session = {intent: Object.assign({}, S.draft), out: out, state: "applying", remaining: secs};
+  S.draft = null;
+  render();
+  CAPS.forEach(function (c, i) {
+    setTimeout(function () {
+      if (!S.session) return;
+      S.session.out[c] = "confirmed";
+      if (CAPS.every(function (x) { return S.session.out[x] === "confirmed"; })) S.session.state = "active";
+      render();
+    }, 400 + i * 320);
+  });
+  clearInterval(tick);
+  if (secs !== null) tick = setInterval(function () {
+    if (!S.session) return clearInterval(tick);
+    S.session.remaining--;
+    var el = document.getElementById("clock");
+    if (el) el.textContent = mmss(S.session.remaining);
+  }, 1000);
+}
+
+var RIG = [["auto","Automatic"],["draft","Manual draft"],["applying","Applying"],["holding","Holding"],["fault","Fault"]];
+document.getElementById("rig").innerHTML = RIG.map(function (r) {
+  return '<button data-rig="' + r[0] + '">' + r[1] + "</button>";
+}).join("");
+function scenario(name) {
+  clearInterval(tick);
+  S = base();
+  if (name === "draft") S.draft = Object.assign({}, S.obs);
+  if (name === "applying" || name === "holding" || name === "fault") {
+    var out = {}; CAPS.forEach(function (c) { out[c] = "confirmed"; });
+    var intent = {power:true, filter:true, heater:true, jets:false, bubbles:false, target:38};
+    if (name === "applying") { out.heater = "pending"; out.bubbles = "pending"; }
+    if (name === "fault") out.heater = "failed";
+    S.session = {intent: intent, out: out,
+      state: name === "applying" ? "applying" : name === "fault" ? "degraded" : "active",
+      remaining: name === "holding" ? 1790 : 2540};
+    tick = setInterval(function () {
+      if (!S.session) return clearInterval(tick);
+      S.session.remaining--;
+      var el = document.getElementById("clock");
+      if (el) el.textContent = mmss(S.session.remaining);
+    }, 1000);
+  }
+  document.querySelectorAll("[data-rig]").forEach(function (b) {
+    b.setAttribute("aria-pressed", String(b.dataset.rig === name));
+  });
+  render();
+}
+document.querySelectorAll("[data-rig]").forEach(function (b) {
+  b.onclick = function () { scenario(b.dataset.rig); };
+});
+scenario("auto");
+</script>

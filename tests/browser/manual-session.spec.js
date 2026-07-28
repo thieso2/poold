@@ -136,11 +136,12 @@ test("control layout remains usable and geometrically sound", async ({ page }, t
 
   // Automatic shows the summary and no switches at all.
   await expect(page.locator("[data-manual-cap]")).toHaveCount(0);
-  await expect(page.locator(".pc-minis .pc-mini")).toHaveCount(5);
-  await expect(page.locator(".pc-now-temp")).toContainText("35");
+  await expect(page.locator(".pc-led")).toHaveCount(5);
+  await expect(page.locator(".pc-seg.live")).toContainText("35");
+  await expect(page.locator(".pc-next-row").first()).toBeVisible();
 
   await page.locator("#manualControl").click();
-  const tiles = page.locator(".pc-cap");
+  const tiles = page.locator(".pc-key");
   await expect(tiles).toHaveCount(5);
   const boxes = await tiles.evaluateAll(elements => elements.map(element => {
     const r = element.getBoundingClientRect();
@@ -264,7 +265,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
   await page.locator("#manualControl").click();
   await page.locator('[data-manual-cap="heater"]').click();
   await page.locator("#automaticControl").click();
-  await expect(page.locator(".pc-apply")).toContainText("Throw away this change?");
+  await expect(page.locator(".pc-commit")).toContainText("Throw away this change?");
   await page.locator('[data-manual-act="keep"]').click();
   await expect(page.locator("#manualControl")).toHaveAttribute("aria-pressed", "true");
   await page.locator("#automaticControl").click();
@@ -281,7 +282,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
   harness.failNextPut("conflict");
   await page.locator('[data-manual-duration="30m"]').click();
   await expect(page.locator("#manualSessionStatus")).toContainText("Review this rebased draft");
-  await expect(page.locator(".pc-label")).toContainText("CONTROL CHANGED");
+  await expect(page.locator(".pc-commit").first()).toContainText("Control changed");
 
   harness.failNextPut("lost");
   await page.locator('[data-manual-duration="30m"]').click();
@@ -298,9 +299,9 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
   }));
   await page.locator("#refresh").click();
   await page.locator('[data-manual-act="edit"]').click();
-  await expect(page.locator(".pc-val b")).toHaveText("36°");
+  await expect(page.locator(".pc-setwin b")).toHaveText("36°");
   await page.locator('[data-manual-step="1"]').click();
-  await expect(page.locator(".pc-val b")).toHaveText("37°");
+  await expect(page.locator(".pc-setwin b")).toHaveText("37°");
   await page.locator('[data-manual-duration="10m"]').click();
   const edit = harness.requests.filter(request => request.method === "PUT").at(-1).body;
   expect(edit.base_observation_id).toBeUndefined();

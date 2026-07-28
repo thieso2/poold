@@ -45,14 +45,14 @@ func TestWebUIIsPublic(t *testing.T) {
 		t.Fatal("pool control mount point missing")
 	}
 	if !strings.Contains(rec.Body.String(), `data-manual-cap="`) ||
-		!strings.Contains(rec.Body.String(), `capLabels[cap] + " " + (on ? "on" : "off") + progress`) {
+		!strings.Contains(rec.Body.String(), `capLabels[cap] + " " + (on ? "on" : "off") +`) {
 		t.Fatal("accessible Manual session feature control missing")
 	}
 	if !strings.Contains(rec.Body.String(), `(draft ? "" : " disabled")`) {
 		t.Fatal("Automatic feature controls are not natively disabled")
 	}
 	if !strings.Contains(rec.Body.String(), `data-manual-step="-1"`) ||
-		!strings.Contains(rec.Body.String(), `if (!shown.heater) return "";`) {
+		!strings.Contains(rec.Body.String(), `if (!shown.heater || !draft) return "";`) {
 		t.Fatal("target-temperature control must exist and appear only while heating")
 	}
 	for _, duration := range []string{"10m", "30m", "60m", "2h", "until_off"} {
@@ -75,9 +75,9 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `"Idempotency-Key": attempt.idempotency_key`) {
 		t.Fatal("Manual session return-to-Automatic request and immediate response rendering are missing")
 	}
-	if !strings.Contains(rec.Body.String(), `"Filter switched on — the heater needs it"`) ||
+	if !strings.Contains(rec.Body.String(), `"Filter came on — the heater needs it"`) ||
 		!strings.Contains(rec.Body.String(), `(dependency ? " dep" : "")`) ||
-		!strings.Contains(rec.Body.String(), `.pc-cap.dep .pc-flag`) {
+		!strings.Contains(rec.Body.String(), `.pc-key.dep i.edit`) {
 		t.Fatal("Manual session dependency provenance is not visibly distinguished")
 	}
 	if !strings.Contains(rec.Body.String(), `Manual session ended. Automatic control resumed.`) ||
