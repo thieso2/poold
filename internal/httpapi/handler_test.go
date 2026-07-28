@@ -61,6 +61,12 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `"Idempotency-Key": draft.idempotency_key`) {
 		t.Fatal("Manual session read and complete Apply request are missing")
 	}
+	if strings.Count(rec.Body.String(), `method: "DELETE"`) != 1 ||
+		!strings.Contains(rec.Body.String(), `state.poolControlRepresentation = representation;`) ||
+		!strings.Contains(rec.Body.String(), `sessionStorage.setItem("poold.manualSessionClear"`) ||
+		!strings.Contains(rec.Body.String(), `"Idempotency-Key": attempt.idempotency_key`) {
+		t.Fatal("Manual session return-to-Automatic request and immediate response rendering are missing")
+	}
 	if !strings.Contains(rec.Body.String(), `"Added automatically: "`) ||
 		!strings.Contains(rec.Body.String(), `dependency-change`) {
 		t.Fatal("Manual session dependency provenance is not visibly distinguished")

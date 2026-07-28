@@ -3,12 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -292,10 +294,227 @@ func TestManualSessionMutationRequiresBearerToken(t *testing.T) {
 	}
 }
 
+func TestDeleteManualSessionCommitsAutomaticControlBeforeScheduleConvergence(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		Heater:     true,
+		TargetTemp: 38,
+	}
+	spa := newControllableSpa(base)
+	handler, st, observationID := manualSessionTestAPI(t, spa, base)
+	if err := st.SaveDesiredState(context.Background(), pool.DesiredState{
+		Power:      pool.BoolPtr(true),
+		Filter:     pool.BoolPtr(true),
+		Heater:     pool.BoolPtr(false),
+		TargetTemp: pool.IntPtr(36),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manual := createActiveManualSession(t, handler, observationID, base)
+	spa.blockCommands = make(chan struct{})
+
+	response := deleteManualSession(t, handler, "clear-online", manual.ControlRevision)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var automatic pool.PoolControlRepresentation
+	decodeJSON(t, response, &automatic)
+	if automatic.Control != pool.AutomaticControl || automatic.Session != nil {
+		t.Fatalf("representation = %+v, want complete Automatic control state", automatic)
+	}
+	if automatic.ControlRevision == manual.ControlRevision {
+		t.Fatal("control revision did not advance")
+	}
+	if automatic.Observed == nil || automatic.Observed.State != controllableState(base) {
+		t.Fatalf("observed = %+v, want complete latest observation", automatic.Observed)
+	}
+	assertNoManualSession(t, st)
+	events, err := st.Events(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundCleared := false
+	for _, event := range events {
+		if event.Type == "manual_session.cleared" {
+			foundCleared = true
+		}
+	}
+	if !foundCleared {
+		t.Fatalf("events = %+v, want atomic manual_session.cleared lifecycle event", events)
+	}
+
+	close(spa.blockCommands)
+	waitForCommands(t, spa, []string{"target_temp", "heater"})
+	latest, ok, err := st.LatestStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || latest.Heater || latest.TargetTemp != 36 {
+		t.Fatalf("latest status = %+v, want reconciled Automatic control schedule", latest)
+	}
+}
+
+func TestDeleteManualSessionSucceedsWhileSpaIsOffline(t *testing.T) {
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, Heater: true, TargetTemp: 38}
+	spa := newControllableSpa(base)
+	handler, st, observationID := manualSessionTestAPI(t, spa, base)
+	manual := createActiveManualSession(t, handler, observationID, base)
+	spa.statusErr = errors.New("dial timeout")
+	spa.setErr = errors.New("dial timeout")
+
+	response := deleteManualSession(t, handler, "clear-offline", manual.ControlRevision)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var automatic pool.PoolControlRepresentation
+	decodeJSON(t, response, &automatic)
+	if automatic.Control != pool.AutomaticControl || automatic.Session != nil {
+		t.Fatalf("representation = %+v, want Automatic", automatic)
+	}
+	assertNoManualSession(t, st)
+}
+
+func TestDeleteManualSessionReplaysOriginalResultWithoutDuplicateCommands(t *testing.T) {
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, Heater: true, TargetTemp: 38}
+	spa := newControllableSpa(base)
+	handler, st, observationID := manualSessionTestAPI(t, spa, base)
+	if err := st.SaveDesiredState(context.Background(), pool.DesiredState{Power: pool.BoolPtr(false), TargetTemp: pool.IntPtr(38)}); err != nil {
+		t.Fatal(err)
+	}
+	manual := createActiveManualSession(t, handler, observationID, base)
+
+	first := deleteManualSession(t, handler, "clear-replay", manual.ControlRevision)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body=%s", first.Code, first.Body.String())
+	}
+	waitForCommands(t, spa, []string{"heater", "filter", "power"})
+	second := deleteManualSession(t, handler, "clear-replay", manual.ControlRevision)
+	if second.Code != first.Code || second.Body.String() != first.Body.String() {
+		t.Fatalf("replay = (%d, %s), want (%d, %s)", second.Code, second.Body.String(), first.Code, first.Body.String())
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"heater", "filter", "power"}) {
+		t.Fatalf("commands after replay = %v, want no duplicates", got)
+	}
+}
+
+func TestDeleteManualSessionRejectsInvalidConcurrencyWithoutMutation(t *testing.T) {
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}
+	tests := []struct {
+		name       string
+		key        string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "missing idempotency key", body: `{"expected_control_revision":"REV"}`, wantStatus: 400, wantCode: "invalid_request"},
+		{name: "missing revision", key: "clear-missing-revision", body: `{}`, wantStatus: 400, wantCode: "invalid_request"},
+		{name: "unknown field", key: "clear-unknown", body: `{"expected_control_revision":"REV","extra":true}`, wantStatus: 400, wantCode: "invalid_request"},
+		{name: "stale revision", key: "clear-stale", body: `{"expected_control_revision":"stale"}`, wantStatus: 409, wantCode: "control_changed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spa := newControllableSpa(base)
+			handler, st, observationID := manualSessionTestAPI(t, spa, base)
+			manual := createActiveManualSession(t, handler, observationID, base)
+			body := []byte(strings.ReplaceAll(test.body, "REV", manual.ControlRevision))
+			response := manualSessionMutationRequest(handler, http.MethodDelete, test.key, body)
+			assertManualSessionError(t, response, test.wantStatus, test.wantCode)
+			session, err := st.ManualSession(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if session == nil || session.Revision != manual.ControlRevision {
+				t.Fatalf("session = %+v, want unchanged revision %q", session, manual.ControlRevision)
+			}
+		})
+	}
+
+	t.Run("reused key", func(t *testing.T) {
+		spa := newControllableSpa(base)
+		handler, st, observationID := manualSessionTestAPI(t, spa, base)
+		manual := createActiveManualSession(t, handler, observationID, base)
+		response := deleteManualSession(t, handler, "create-active", manual.ControlRevision)
+		assertManualSessionError(t, response, http.StatusConflict, "idempotency_key_reused")
+		session, err := st.ManualSession(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if session == nil || session.Revision != manual.ControlRevision {
+			t.Fatalf("session = %+v, want unchanged revision %q", session, manual.ControlRevision)
+		}
+	})
+}
+
+func TestDeleteManualSessionPersistenceFailureLeavesOwnershipIntact(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/poold.db"
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(NewService(st, newControllableSpa(base), scheduler.New(scheduler.Config{}), ServiceConfig{}), "secret")
+	manual := createActiveManualSession(t, handler, observationID, base)
+	faultDB, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer faultDB.Close()
+	if _, err := faultDB.ExecContext(ctx, `
+		CREATE TRIGGER fail_manual_session_clear
+		BEFORE INSERT ON events
+		WHEN NEW.type = 'manual_session.cleared'
+		BEGIN
+			SELECT RAISE(ABORT, 'injected clear persistence failure');
+		END
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	response := deleteManualSession(t, handler, "clear-failure", manual.ControlRevision)
+	assertManualSessionError(t, response, http.StatusInternalServerError, "persistence_error")
+
+	session, err := st.ManualSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session == nil || session.Revision != manual.ControlRevision {
+		t.Fatalf("session after failed clear = %+v, want unchanged revision %q", session, manual.ControlRevision)
+	}
+	if revision, err := st.ControlRevision(ctx); err != nil || revision != manual.ControlRevision {
+		t.Fatalf("control revision after failed clear = %q, %v; want %q", revision, err, manual.ControlRevision)
+	}
+	events, err := st.Events(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "manual_session.cleared" {
+			t.Fatalf("failed transaction persisted clear event %+v", event)
+		}
+	}
+	if _, err := faultDB.ExecContext(ctx, `DROP TRIGGER fail_manual_session_clear`); err != nil {
+		t.Fatal(err)
+	}
+	retry := deleteManualSession(t, handler, "clear-failure", manual.ControlRevision)
+	if retry.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, body=%s", retry.Code, retry.Body.String())
+	}
+}
+
 type controllableSpa struct {
 	mu            sync.Mutex
 	status        pool.Status
 	statusErr     error
+	setErr        error
 	statusCalls   int
 	commands      []string
 	blockCommands chan struct{}
@@ -324,6 +543,9 @@ func (s *controllableSpa) Set(_ context.Context, capability string, value any) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.commands = append(s.commands, capability)
+	if s.setErr != nil {
+		return pool.Status{}, s.setErr
+	}
 	switch capability {
 	case "power":
 		s.status.Power = boolValue(value)
@@ -396,8 +618,30 @@ func putManualSession(t *testing.T, handler http.Handler, key, revision string, 
 	return manualSessionRequest(handler, key, body)
 }
 
+func createActiveManualSession(t *testing.T, handler http.Handler, observationID int64, base pool.Status) pool.PoolControlRepresentation {
+	t.Helper()
+	response := putManualSession(t, handler, "create-active", controlRevision(t, handler), observationID, "until_off", controllableState(base))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", response.Code, response.Body.String())
+	}
+	return waitForManualSessionState(t, handler, "active")
+}
+
+func deleteManualSession(t *testing.T, handler http.Handler, key, revision string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"expected_control_revision": revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manualSessionMutationRequest(handler, http.MethodDelete, key, body)
+}
+
 func manualSessionRequest(handler http.Handler, key string, body []byte) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPut, "/manual-session", bytes.NewReader(body))
+	return manualSessionMutationRequest(handler, http.MethodPut, key, body)
+}
+
+func manualSessionMutationRequest(handler http.Handler, method, key string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/manual-session", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
@@ -406,6 +650,18 @@ func manualSessionRequest(handler http.Handler, key string, body []byte) *httpte
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
 	return response
+}
+
+func waitForCommands(t *testing.T, spa *controllableSpa, want []string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := spa.commandCapabilities(); reflect.DeepEqual(got, want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("commands = %v, want %v", spa.commandCapabilities(), want)
 }
 
 func waitForManualSessionState(t *testing.T, handler http.Handler, want string) pool.PoolControlRepresentation {

@@ -38,6 +38,7 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
 	mux.HandleFunc("GET /manual-session", api.handleGetManualSession)
 	mux.HandleFunc("PUT /manual-session", api.handlePutManualSession)
+	mux.HandleFunc("DELETE /manual-session", api.handleDeleteManualSession)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
 	mux.HandleFunc("GET /control-mode", api.handleGetControlMode)
@@ -286,6 +287,10 @@ type putManualSessionRequest struct {
 	Intended                *manualSessionIntentRequest `json:"intended"`
 }
 
+type deleteManualSessionRequest struct {
+	ExpectedControlRevision string `json:"expected_control_revision"`
+}
+
 type manualSessionError struct {
 	Code          string                          `json:"code"`
 	Message       string                          `json:"message"`
@@ -367,6 +372,73 @@ func (a *API) handlePutManualSession(w http.ResponseWriter, r *http.Request) {
 		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{
 			Code:    "persistence_error",
 			Message: "The Manual session could not be durably committed.",
+		})
+		return
+	}
+	writeJSON(w, result.Status, result.Representation)
+}
+
+func (a *API) handleDeleteManualSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "Idempotency-Key is required.",
+		})
+		return
+	}
+	var raw deleteManualSessionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "Request body is invalid: " + err.Error(),
+		})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "Request body must contain exactly one JSON object.",
+		})
+		return
+	}
+	if strings.TrimSpace(raw.ExpectedControlRevision) == "" {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "expected_control_revision is required.",
+		})
+		return
+	}
+	canonical, err := json.Marshal(raw)
+	if err != nil {
+		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{
+			Code:    "persistence_error",
+			Message: "The request could not be prepared.",
+		})
+		return
+	}
+	sum := sha256.Sum256(append([]byte("DELETE /manual-session\n"), canonical...))
+	result, err := a.service.clearManualSession(r.Context(), clearManualSessionRequest{
+		ExpectedRevision: raw.ExpectedControlRevision,
+		IdempotencyKey:   idempotencyKey,
+		Fingerprint:      hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		var failure *manualSessionFailure
+		if errors.As(err, &failure) {
+			writeManualSessionError(w, manualSessionFailureStatus(failure.Code), manualSessionError{
+				Code:    failure.Code,
+				Message: failure.Message,
+				Current: failure.Current,
+			})
+			return
+		}
+		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{
+			Code:    "persistence_error",
+			Message: "Automatic control could not be durably committed.",
 		})
 		return
 	}
