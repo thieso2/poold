@@ -225,99 +225,46 @@ body[data-page="history"] .app {
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 10px;
   padding: 2px 0 12px;
 }
-.topbar button {
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#settingsToggle {
   display: grid;
   place-items: center;
-  width: 44px;
-  min-height: 44px;
+  width: 36px;
+  min-height: 36px;
   padding: 0;
   border-radius: 999px;
   background: transparent;
   border-color: transparent;
   color: var(--muted);
 }
-.topbar button:hover:not(:disabled) {
+#settingsToggle:hover:not(:disabled) {
   border-color: var(--line);
-  background: var(--panel);
+  background: var(--panel-hi);
   color: var(--text);
   box-shadow: none;
 }
-.topbar button[aria-expanded="true"] {
+#settingsToggle[aria-expanded="true"] {
   border-color: var(--accent);
   color: var(--accent);
-  background: var(--panel);
+  background: var(--panel-hi);
 }
-.topbar svg {
-  width: 21px;
-  height: 21px;
+#settingsToggle svg {
+  width: 19px;
+  height: 19px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* ---- plans as sentences ---- */
-.line { position: relative; padding: 16px 2px 14px 22px; border-bottom: 1px solid var(--line); }
-.line:last-of-type { border-bottom: 0; }
-.line .lamp {
-  position: absolute; left: 2px; top: 22px; width: 8px; height: 8px; min-height: 0;
-  padding: 0; border: 0; border-radius: 50%; background: #2b3a41;
-}
-.line.on .lamp { background: var(--accent); box-shadow: 0 0 8px rgba(63, 227, 208, .7); }
-.line.on.kind-heater .lamp { background: var(--warn); box-shadow: 0 0 8px rgba(255, 154, 60, .7); }
-.line.on.kind-jets .lamp { background: #8f9dff; box-shadow: 0 0 8px rgba(143, 157, 255, .7); }
-.line.on.kind-bubbles .lamp { background: var(--ok); box-shadow: 0 0 8px rgba(79, 211, 154, .7); }
-.say { margin: 0; font-size: 17px; line-height: 1.85; font-weight: 300; color: var(--muted); text-wrap: pretty; }
-.line.on .say { color: var(--text); }
-.line:not(.on) .say { opacity: .62; }
-.slot {
-  display: inline-block; min-height: 0; margin: 0; padding: 2px 7px 3px;
-  border: 0; border-bottom: 1.5px dashed rgba(139, 160, 168, .45); border-radius: 3px;
-  background: rgba(255, 255, 255, .05); color: inherit;
-  font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 15px; font-weight: 600;
-}
-.slot:hover:not(:disabled) { background: rgba(255, 255, 255, .1); border-bottom-color: var(--text); box-shadow: none; }
-.slot-filter { color: var(--accent); }
-.slot-heater { color: var(--warn); }
-.slot-jets { color: #8f9dff; }
-.slot-bubbles { color: var(--ok); }
-.line-foot { display: flex; gap: 14px; margin-top: 6px; }
-.line-foot button {
-  min-height: 0; padding: 0; border: 0; background: none; color: var(--muted);
-  font-size: 11.5px; font-weight: 600;
-}
-.line-foot button:hover:not(:disabled) { color: var(--text); background: none; box-shadow: none; }
-.line-foot button.danger:hover:not(:disabled) { color: var(--bad); }
-.plans-empty { margin: 4px 0 14px; font-size: 15px; font-weight: 300; color: var(--muted); line-height: 1.6; }
-.plans-add { display: grid; gap: 7px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
-.plans-add button {
-  padding: 13px 14px; border-radius: 8px; background: var(--field); color: var(--text);
-  text-align: left; font-size: 15px; font-weight: 300; line-height: 1.5;
-}
-.plans-add b { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 13.5px; font-weight: 600; color: var(--accent); }
-.plans-add button:last-child b { color: var(--warn); }
-.plan-pop {
-  position: absolute; z-index: 40; min-width: 196px; padding: 9px;
-  border: 1px solid var(--line); border-radius: 9px; background: var(--panel-hi);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, .6);
-}
-.pop-label {
-  display: block; margin: 0 2px 7px;
-  font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 9.5px; font-weight: 700;
-  letter-spacing: .18em; text-transform: uppercase; color: var(--muted);
-}
-.pop-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-.pop-grid + .pop-grid { margin-top: 6px; }
-.pop-grid.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.pop-grid button { min-height: 38px; padding: 8px 6px; font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12.5px; }
-.pop-grid button[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
-.plan-pop input { font-family: var(--mono, ui-monospace, Menlo, monospace); font-weight: 600; }
-@media (max-width: 420px) { .say { font-size: 16px; line-height: 1.9; } .slot { font-size: 14px; } }
-
 .settings-sub {
   margin: -4px 0 14px;
   font-size: 12.5px;
@@ -956,11 +903,8 @@ body[data-page="history"] .timeline-canvas {
 </head>
 <body data-page="__POOLD_PAGE__">
 <main class="app">
-  <div class="topbar">
-    <a class="button-link history-only" href="/">Back to the pool</a>
-    <button id="settingsToggle" aria-label="Settings" aria-expanded="false" title="Settings">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>
-    </button>
+  <div class="topbar history-only">
+    <a class="button-link" href="/">Back to the pool</a>
   </div>
 
   <section class="tokenbar" id="tokenbar">
@@ -997,7 +941,12 @@ body[data-page="history"] .timeline-canvas {
     <section class="panel dashboard-only">
       <div class="panel-head">
         <h2>Pool</h2>
-        <span class="badge" id="busy">Ready</span>
+        <div class="head-actions">
+          <span class="badge" id="busy">Ready</span>
+      <button id="settingsToggle" aria-label="Settings" aria-expanded="false" title="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>
+      </button>
+        </div>
       </div>
       <div class="pc" id="poolControl"></div>
       <p class="visually-hidden" id="manualSessionStatus" role="status" aria-live="polite" aria-atomic="true"></p>
