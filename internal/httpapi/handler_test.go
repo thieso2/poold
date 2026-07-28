@@ -82,6 +82,13 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `session.intended`) {
 		t.Fatal("active edit and degraded Retry dashboard behavior missing")
 	}
+	if !strings.Contains(rec.Body.String(), `function rebaseManualSessionDraft`) ||
+		!strings.Contains(rec.Body.String(), `draft.review_required = true`) ||
+		!strings.Contains(rec.Body.String(), `delete draft.idempotency_key`) ||
+		!strings.Contains(rec.Body.String(), `err.detail.code === "control_changed"`) ||
+		!strings.Contains(rec.Body.String(), `err.detail.code === "observed_state_changed"`) {
+		t.Fatal("Manual session conflict rebase and review behavior missing")
+	}
 	if !strings.Contains(rec.Body.String(), eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")
 	}

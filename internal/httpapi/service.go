@@ -464,6 +464,23 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 }
 
 func (s *Service) retryManualSession(ctx context.Context, request retryManualSessionRequest) (store.RetryManualSessionResult, error) {
+	status, representation, found, err := s.store.ManualSessionMutationReplay(
+		ctx, request.IdempotencyKey, request.Fingerprint,
+	)
+	if errors.Is(err, store.ErrIdempotencyKeyReused) {
+		return store.RetryManualSessionResult{}, &manualSessionFailure{
+			Code: "idempotency_key_reused", Message: "The idempotency key was already used for a different operation.",
+		}
+	}
+	if err != nil {
+		return store.RetryManualSessionResult{}, err
+	}
+	if found {
+		return store.RetryManualSessionResult{
+			Status: status, Representation: representation, Replayed: true,
+		}, nil
+	}
+
 	current, err := s.PoolControl(ctx)
 	if err != nil {
 		return store.RetryManualSessionResult{}, err
@@ -501,6 +518,23 @@ func (s *Service) retryManualSession(ctx context.Context, request retryManualSes
 }
 
 func (s *Service) clearManualSession(ctx context.Context, request clearManualSessionRequest) (store.ClearManualSessionResult, error) {
+	status, representation, found, err := s.store.ManualSessionMutationReplay(
+		ctx, request.IdempotencyKey, request.Fingerprint,
+	)
+	if errors.Is(err, store.ErrIdempotencyKeyReused) {
+		return store.ClearManualSessionResult{}, &manualSessionFailure{
+			Code: "idempotency_key_reused", Message: "The idempotency key was already used for a different operation.",
+		}
+	}
+	if err != nil {
+		return store.ClearManualSessionResult{}, err
+	}
+	if found {
+		return store.ClearManualSessionResult{
+			Status: status, Representation: representation, Replayed: true,
+		}, nil
+	}
+
 	current, err := s.PoolControl(ctx)
 	if err != nil {
 		return store.ClearManualSessionResult{}, err
