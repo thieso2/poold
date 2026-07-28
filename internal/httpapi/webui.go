@@ -77,22 +77,24 @@ const webUIHTMLTemplate = `<!doctype html>
 <title>Pooly Control</title>
 <style>
 :root {
-  color-scheme: light;
-  --bg: #f4f7f8;
-  --panel: #ffffff;
-  --text: #172126;
-  --muted: #5d6b73;
-  --line: #d8e1e5;
-  --accent: #007c89;
-  --accent-strong: #005e67;
-  --ok: #1d7f45;
-  --warn: #a45f00;
-  --bad: #b42318;
-  --cool: #235ea8;
-  --soft: #eef6f8;
-  --field: #fbfdfe;
-  --shadow: 0 14px 34px rgba(23, 33, 38, .09);
-  --shadow-soft: 0 6px 18px rgba(23, 33, 38, .06);
+  color-scheme: dark;
+  --bg: #0b1013;
+  --panel: #151d21;
+  --panel-hi: #1b2429;
+  --text: #dce8eb;
+  --muted: #8ba0a8;
+  --line: #26323a;
+  --accent: #3fe3d0;
+  --accent-strong: #7defdf;
+  --ok: #4fd39a;
+  --warn: #ff9a3c;
+  --bad: #ff5f4d;
+  --cool: #6aa8e8;
+  --soft: #16232a;
+  --field: #101a1e;
+  --ink-on-accent: #05191c;
+  --shadow: 0 18px 40px rgba(0, 0, 0, .45);
+  --shadow-soft: 0 6px 18px rgba(0, 0, 0, .3);
 }
 * { box-sizing: border-box; }
 body {
@@ -110,7 +112,7 @@ button, .button-link {
   min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-hi);
   color: var(--text);
   font-weight: 700;
   transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
@@ -125,17 +127,17 @@ button, .button-link {
 button.primary, .button-link.primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--ink-on-accent);
 }
 button:hover:not(:disabled), .button-link:hover {
-  border-color: rgba(0, 124, 137, .42);
+  border-color: rgba(63, 227, 208, .45);
   box-shadow: var(--shadow-soft);
 }
 button:active:not(:disabled), .button-link:active {
   transform: translateY(1px);
 }
 button.danger {
-  border-color: #f0b8b3;
+  border-color: rgba(255, 95, 77, .5);
   color: var(--bad);
 }
 button:disabled {
@@ -143,9 +145,9 @@ button:disabled {
 }
 button:focus-visible, .button-link:focus-visible,
 input:focus-visible, select:focus-visible {
-  outline: 3px solid #172126;
+  outline: 3px solid var(--accent);
   outline-offset: 3px;
-  box-shadow: 0 0 0 5px #fff;
+  box-shadow: 0 0 0 5px rgba(11, 16, 19, .9);
 }
 input, select {
   width: 100%;
@@ -156,23 +158,23 @@ input, select {
   color: var(--text);
   font-size: 16px;
   padding: 9px 10px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
   transition: background .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 input:hover, select:hover {
-  border-color: #b8cbd2;
-  background: #fff;
+  border-color: #3a4a53;
+  background: var(--panel-hi);
 }
 input:focus, select:focus {
   outline: 0;
   border-color: var(--accent);
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(0, 124, 137, .14);
+  background: var(--panel-hi);
+  box-shadow: 0 0 0 3px rgba(63, 227, 208, .18);
 }
 select {
   appearance: none;
   padding-right: 36px;
-  background-image: linear-gradient(45deg, transparent 50%, #5d6b73 50%), linear-gradient(135deg, #5d6b73 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 18px) 18px, calc(100% - 13px) 18px;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
@@ -180,13 +182,13 @@ select {
 input[type="datetime-local"], input[type="time"] {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
-  background: linear-gradient(180deg, #fff, #f8fbfc);
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
 }
 input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator {
   border-radius: 7px;
   padding: 5px;
-  background-color: #edf6f8;
+  background-color: var(--soft);
   cursor: pointer;
 }
 label {
@@ -198,12 +200,12 @@ label {
   text-transform: uppercase;
 }
 .app {
-  width: min(1120px, 100%);
+  width: min(660px, 100%);
   margin: 0 auto;
   padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
 }
 body[data-page="history"] {
-  background: #fff;
+  background: var(--bg);
 }
 body[data-page="history"] .app {
   width: 100%;
@@ -297,14 +299,14 @@ h3 {
   min-height: 28px;
   padding: 4px 9px;
   border-radius: 999px;
-  background: #edf4f6;
+  background: var(--soft);
   color: var(--muted);
   font-weight: 800;
   font-size: 12px;
 }
-.badge.ok { background: #e8f5ee; color: var(--ok); }
-.badge.bad { background: #fdeceb; color: var(--bad); }
-.badge.warn { background: #fff3df; color: var(--warn); }
+.badge.ok { background: rgba(79, 211, 154, .14); color: var(--ok); }
+.badge.bad { background: rgba(255, 95, 77, .16); color: var(--bad); }
+.badge.warn { background: rgba(255, 154, 60, .16); color: var(--warn); }
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -569,7 +571,7 @@ h3 {
 }
 .segments button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--ink-on-accent);
 }
 .days {
   display: grid;
@@ -583,7 +585,7 @@ h3 {
 .day.active {
   background: var(--cool);
   border-color: var(--cool);
-  color: #fff;
+  color: #06121f;
 }
 .plan-list, .activity-list {
   display: grid;
@@ -635,8 +637,8 @@ h3 {
 .timeline-panel {
   min-height: 430px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(255, 255, 255, 1)),
-    radial-gradient(circle at 20% 0%, rgba(0, 124, 137, .08), transparent 34%);
+    linear-gradient(180deg, var(--panel-hi), var(--panel)),
+    radial-gradient(circle at 20% 0%, rgba(63, 227, 208, .10), transparent 34%);
 }
 .timeline-title {
   display: flex;
@@ -656,7 +658,7 @@ h3 {
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f2f7f9;
+  background: var(--soft);
   gap: 4px;
 }
 .timeline-controls .tabs:first-child {
@@ -674,9 +676,9 @@ h3 {
   color: var(--muted);
 }
 .timeline-controls .tabs button.active {
-  background: #fff;
+  background: var(--panel-hi);
   color: var(--text);
-  box-shadow: 0 3px 10px rgba(23, 33, 38, .08);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .35);
 }
 .timeline-legend {
   display: flex;
@@ -690,9 +692,9 @@ h3 {
   gap: 7px;
   min-height: 27px;
   padding: 4px 8px;
-  border: 1px solid #e3ebef;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fbfdfe;
+  background: var(--field);
   color: var(--muted);
   font-size: 12px;
   font-weight: 750;
@@ -709,7 +711,7 @@ h3 {
   height: 8px;
 }
 .legend-swatch.dash {
-  background: repeating-linear-gradient(90deg, #8f6f2a 0 6px, transparent 6px 10px);
+  background: repeating-linear-gradient(90deg, #b5852f 0 6px, transparent 6px 10px);
 }
 .legend-swatch.band {
   width: 16px;
@@ -719,10 +721,10 @@ h3 {
 .timeline-chart {
   margin-top: 12px;
   min-height: 330px;
-  border: 1px solid #e3ebef;
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
-  background: linear-gradient(180deg, #fff, #fbfdfe);
+  background: linear-gradient(180deg, var(--panel-hi), var(--field));
 }
 .timeline-canvas {
   width: 100%;
@@ -746,9 +748,9 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .tabs button.active {
-  background: #172126;
-  border-color: #172126;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--ink-on-accent);
 }
 .pager {
   display: grid;
@@ -772,8 +774,8 @@ h3 {
   margin-top: 12px;
   padding: 11px 12px;
   border-radius: 8px;
-  background: #172126;
-  color: #fff;
+  background: var(--accent);
+  color: var(--ink-on-accent);
   box-shadow: var(--shadow);
 }
 .toast.show {
@@ -863,13 +865,10 @@ body[data-page="history"] .timeline-canvas {
   .app {
     padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   }
-  .grid { grid-template-columns: 1.05fr .95fr; align-items: start; }
-  .span-2 { grid-column: span 2; }
   .wide-only { display: inline; }
   .controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .timeline-controls { grid-template-columns: 1.4fr .8fr; align-items: start; }
   .activity-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); width: min(560px, 100%); }
 }
 </style>
@@ -1229,7 +1228,7 @@ function setBusy(value, message) {
 function toast(message, kind) {
   var box = $("toast");
   box.textContent = message;
-  box.style.background = kind === "bad" ? "#b42318" : kind === "ok" ? "#1d7f45" : "#172126";
+  box.style.background = kind === "bad" ? "#7a2018" : kind === "ok" ? "#12503a" : "#1d262b";
   box.classList.add("show");
   clearTimeout(toast.timer);
   if (kind !== "busy") {
@@ -2498,11 +2497,11 @@ function renderTimelineLegend(data) {
     {label: "Target", kind: "dash"}
   ];
   if (state.timelineMode === "predicted") {
-    items.push({label: "Measured", color: "#172126", kind: "dot"});
-    items.push({label: "Correction", color: "#d97904", kind: "dot"});
+    items.push({label: "Measured", color: "#dce8eb", kind: "dot"});
+    items.push({label: "Correction", color: "#ff9a3c", kind: "dot"});
   }
   if ((data.annotations || []).length) {
-    items.push({label: "Command/plan", color: "#172126", kind: "dot"});
+    items.push({label: "Command/plan", color: "#dce8eb", kind: "dot"});
   }
   timelineFeatureLegendItems(data.feature_spans || []).forEach(function(item) {
     items.push(item);
@@ -2557,7 +2556,7 @@ function timelineOption(data) {
   var target = data.target || [];
   var values = timelineValues(modePoints, measured, target);
   if (!values.length || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-    return {title: {text: "No timeline data", left: "center", top: "middle", textStyle: {fontSize: 14, color: "#5d6b73", fontWeight: 600}}};
+    return {title: {text: "No timeline data", left: "center", top: "middle", textStyle: {fontSize: 14, color: "#8ba0a8", fontWeight: 600}}};
   }
   var min = Math.floor(Math.min.apply(null, values)) - 1;
   var max = Math.ceil(Math.max.apply(null, values)) + 1;
@@ -2583,19 +2582,19 @@ function timelineOption(data) {
     },
     axisPointer: {link: [{xAxisIndex: [0, 1]}]},
     xAxis: [
-      {type: "time", min: from, max: to, axisLabel: {color: "#5d6b73"}, axisLine: {lineStyle: {color: "#d8e1e5"}}, splitLine: {show: true, lineStyle: {color: "#eef3f5"}}},
-      {type: "time", min: from, max: to, gridIndex: 1, axisLabel: {show: isHistoryPage, color: "#5d6b73"}, axisLine: {lineStyle: {color: "#d8e1e5"}}, splitLine: {show: false}}
+      {type: "time", min: from, max: to, axisLabel: {color: "#8ba0a8"}, axisLine: {lineStyle: {color: "#2b3840"}}, splitLine: {show: true, lineStyle: {color: "#1e2a31"}}},
+      {type: "time", min: from, max: to, gridIndex: 1, axisLabel: {show: isHistoryPage, color: "#8ba0a8"}, axisLine: {lineStyle: {color: "#2b3840"}}, splitLine: {show: false}}
     ],
     yAxis: [
-      {type: "value", min: min, max: max, axisLabel: {formatter: "{value}°", color: "#5d6b73"}, axisLine: {show: false}, splitLine: {lineStyle: {color: "#e6edf0"}}},
-      {type: "category", gridIndex: 1, data: lanes.map(timelineLaneLabel), inverse: true, axisTick: {show: false}, axisLine: {show: false}, axisLabel: {color: "#5d6b73", fontSize: 12}, splitLine: {show: true, lineStyle: {color: "#eef3f5"}}}
+      {type: "value", min: min, max: max, axisLabel: {formatter: "{value}°", color: "#8ba0a8"}, axisLine: {show: false}, splitLine: {lineStyle: {color: "#1e2a31"}}},
+      {type: "category", gridIndex: 1, data: lanes.map(timelineLaneLabel), inverse: true, axisTick: {show: false}, axisLine: {show: false}, axisLabel: {color: "#8ba0a8", fontSize: 12}, splitLine: {show: true, lineStyle: {color: "#1e2a31"}}}
     ],
     series: timelineSeries(data, lanes, min, max)
   };
   if (isHistoryPage) {
     option.dataZoom = [
       {type: "inside", xAxisIndex: [0, 1], filterMode: "none"},
-      {type: "slider", xAxisIndex: [0, 1], filterMode: "none", bottom: 6, height: 24, borderColor: "#d8e1e5"}
+      {type: "slider", xAxisIndex: [0, 1], filterMode: "none", bottom: 6, height: 24, borderColor: "#2b3840"}
     ];
   }
   return option;
@@ -2622,8 +2621,8 @@ function timelineSeries(data, lanes, min, max) {
       data: timelineTargetData(data.target || []),
       showSymbol: false,
       step: "end",
-      lineStyle: {color: "#8f6f2a", width: 2, type: "dashed"},
-      itemStyle: {color: "#8f6f2a"},
+      lineStyle: {color: "#b5852f", width: 2, type: "dashed"},
+      itemStyle: {color: "#b5852f"},
       emphasis: {focus: "series"}
     },
     {
@@ -2643,14 +2642,14 @@ function timelineSeries(data, lanes, min, max) {
       type: "scatter",
       data: timelineLineData(measured, "pool_temp"),
       symbolSize: isHistoryPage ? 6 : 4,
-      itemStyle: {color: "#172126"}
+      itemStyle: {color: "#dce8eb"}
     });
     series.push({
       name: "Corrections",
       type: "scatter",
       data: timelineLineData((data.predicted || []).filter(function(point) { return point.kind === "correction"; }), "pool_temp"),
       symbolSize: isHistoryPage ? 10 : 7,
-      itemStyle: {color: "#d97904"}
+      itemStyle: {color: "#ff9a3c"}
     });
   }
   var annotations = timelineAnnotationData(data.annotations || [], max);
@@ -2661,7 +2660,7 @@ function timelineSeries(data, lanes, min, max) {
       data: annotations,
       symbol: "pin",
       symbolSize: isHistoryPage ? 18 : 13,
-      itemStyle: {color: "#172126"},
+      itemStyle: {color: "#dce8eb"},
       tooltip: {trigger: "item", formatter: timelineItemTooltip}
     });
   }
