@@ -39,6 +39,7 @@ type Service struct {
 	lastStatusEventAt        time.Time
 	lastStatusError          string
 	lastStatusErrorAt        time.Time
+	now                      func() time.Time
 }
 
 var ErrWeatherNotConfigured = errors.New("weather is not configured")
@@ -94,6 +95,7 @@ type ServiceConfig struct {
 	PollStableInterval       time.Duration
 	PollActiveInterval       time.Duration
 	WeatherProvider          WeatherProvider
+	Now                      func() time.Time
 }
 
 func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
@@ -110,6 +112,9 @@ func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
 }
 
 func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Scheduler, cfg ServiceConfig) *Service {
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	if cfg.EventHeartbeat <= 0 {
 		cfg.EventHeartbeat = 30 * time.Minute
 	}
@@ -139,7 +144,7 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		client:                   client,
 		scheduler:                sched,
 		weather:                  cfg.WeatherProvider,
-		startedAt:                time.Now().UTC(),
+		startedAt:                cfg.Now().UTC(),
 		observationRetention:     cfg.ObservationRetention,
 		eventRetention:           cfg.EventRetention,
 		eventHeartbeat:           cfg.EventHeartbeat,
@@ -152,6 +157,7 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		pollStableInterval:       cfg.PollStableInterval,
 		pollActiveInterval:       cfg.PollActiveInterval,
 		refreshRequests:          make(chan time.Duration, 16),
+		now:                      cfg.Now,
 	}
 }
 
@@ -208,7 +214,10 @@ func (s *Service) RefreshStatus(ctx context.Context) (pool.Status, error) {
 func (s *Service) ExecuteCommand(ctx context.Context, request pool.CommandRequest) (pool.CommandRecord, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
+	return s.executeCommandLocked(ctx, request)
+}
 
+func (s *Service) executeCommandLocked(ctx context.Context, request pool.CommandRequest) (pool.CommandRecord, error) {
 	capability := request.NormalizedCapability()
 	value, err := commandValue(capability, request)
 	if err != nil {
@@ -265,6 +274,23 @@ func (s *Service) DesiredState(ctx context.Context) (pool.DesiredState, error) {
 
 // PoolControl returns the current ownership and latest observed pool state.
 func (s *Service) PoolControl(ctx context.Context) (pool.PoolControlRepresentation, error) {
+	session, err := s.store.ManualSession(ctx)
+	if err != nil {
+		return pool.PoolControlRepresentation{}, err
+	}
+	now := s.now().UTC()
+	if session != nil && session.ExpiresAt != nil && !session.ExpiresAt.After(now) {
+		result, err := s.expireManualSession(ctx, session.Revision, now)
+		if err != nil {
+			return pool.PoolControlRepresentation{}, err
+		}
+		if result.Expired {
+			go func() {
+				_ = s.EnforceLatest(context.Background())
+			}()
+		}
+		return result.Representation, nil
+	}
 	return s.store.PoolControlRepresentation(ctx)
 }
 
@@ -341,7 +367,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		}
 	}
 
-	startedAt := time.Now().UTC()
+	startedAt := s.now().UTC()
 	var expiresAt *time.Time
 	switch request.Duration {
 	case "30m":
@@ -361,6 +387,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		}
 	}
 	outcomes := initialManualSessionOutcomes(pool.ControllableStateFromStatus(fresh), request.Intended)
+	s.commandMu.Lock()
 	result, err := s.store.CreateManualSession(ctx, store.CreateManualSessionParams{
 		ExpectedRevision: request.ExpectedRevision,
 		IdempotencyKey:   request.IdempotencyKey,
@@ -372,6 +399,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		Outcomes:         outcomes,
 		Observed:         controlObservation(observationID, fresh),
 	})
+	s.commandMu.Unlock()
 	if errors.Is(err, store.ErrControlChanged) {
 		current, currentErr := s.PoolControl(ctx)
 		if currentErr != nil {
@@ -406,13 +434,15 @@ func (s *Service) clearManualSession(ctx context.Context, request clearManualSes
 	if err != nil {
 		return store.ClearManualSessionResult{}, err
 	}
+	s.commandMu.Lock()
 	result, err := s.store.ClearManualSession(ctx, store.ClearManualSessionParams{
 		ExpectedRevision: request.ExpectedRevision,
 		IdempotencyKey:   request.IdempotencyKey,
 		Fingerprint:      request.Fingerprint,
-		ClearedAt:        time.Now().UTC(),
+		ClearedAt:        s.now().UTC(),
 		Observed:         current.Observed,
 	})
+	s.commandMu.Unlock()
 	var changed *store.ControlChangedError
 	if errors.As(err, &changed) {
 		return store.ClearManualSessionResult{}, &manualSessionFailure{
@@ -672,15 +702,55 @@ func (s *Service) EnforceLatest(ctx context.Context) error {
 	return s.Enforce(ctx, status)
 }
 
+// EstablishControl restores durable ownership before the polling loop can run schedules.
+func (s *Service) EstablishControl(ctx context.Context) error {
+	session, err := s.store.ManualSession(ctx)
+	if err != nil || session == nil {
+		return err
+	}
+	now := s.now().UTC()
+	if session.ExpiresAt != nil && !session.ExpiresAt.After(now) {
+		result, err := s.expireManualSession(ctx, session.Revision, now)
+		if err != nil {
+			return err
+		}
+		if result.Expired {
+			return s.EnforceLatest(ctx)
+		}
+		return nil
+	}
+	recovered, err := s.store.RecoverManualSession(ctx, session.Revision, now)
+	if err != nil || !recovered {
+		return err
+	}
+	return s.reconcileManualSession(ctx, session.Revision, session.Intended)
+}
+
+func (s *Service) expireManualSession(ctx context.Context, revision string, now time.Time) (store.ExpireManualSessionResult, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	return s.store.ExpireManualSession(ctx, revision, now)
+}
+
 func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 	session, err := s.store.ManualSession(ctx)
 	if err != nil {
 		return err
 	}
 	if session != nil {
-		return nil
+		now := s.now().UTC()
+		if session.ExpiresAt == nil || session.ExpiresAt.After(now) {
+			return nil
+		}
+		result, err := s.expireManualSession(ctx, session.Revision, now)
+		if err != nil {
+			return err
+		}
+		if !result.Expired {
+			return nil
+		}
 	}
-	now := time.Now()
+	now := s.now()
 	mode, err := s.controlMode(ctx, now)
 	if err != nil {
 		return err
@@ -688,6 +758,14 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 	if mode.Active(now) {
 		return nil
 	}
+	automatic, err := s.store.PoolControlRepresentation(ctx)
+	if err != nil {
+		return err
+	}
+	if automatic.Control != pool.AutomaticControl {
+		return nil
+	}
+	automaticRevision := automatic.ControlRevision
 
 	base, err := s.store.DesiredState(ctx)
 	if err != nil {
@@ -716,8 +794,12 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 			Value:      command.value,
 			Source:     "scheduler:" + evaluation.Source,
 		}
-		if _, err := s.ExecuteCommand(ctx, req); err != nil {
+		executed, err := s.executeAutomaticCommand(ctx, automaticRevision, req)
+		if err != nil {
 			return err
+		}
+		if !executed {
+			return nil
 		}
 	}
 	if len(commands) > 0 {
@@ -726,7 +808,28 @@ func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
 	return nil
 }
 
+func (s *Service) executeAutomaticCommand(ctx context.Context, revision string, request pool.CommandRequest) (bool, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	owns, err := s.store.AutomaticRevisionCurrent(ctx, revision)
+	if err != nil || !owns {
+		return false, err
+	}
+	_, err = s.executeCommandLocked(ctx, request)
+	return true, err
+}
+
 func (s *Service) NextScheduleWake(ctx context.Context, now time.Time, status pool.Status) (time.Time, bool, error) {
+	session, err := s.store.ManualSession(ctx)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if session != nil {
+		if session.ExpiresAt != nil {
+			return *session.ExpiresAt, true, nil
+		}
+		return time.Time{}, false, nil
+	}
 	mode, err := s.controlMode(ctx, now)
 	if err != nil {
 		return time.Time{}, false, err
@@ -827,11 +930,11 @@ type commandDiff struct {
 	value      json.RawMessage
 }
 
-func (s *Service) reconcileManualSession(ctx context.Context, revision string, intended pool.ControllableState) {
+func (s *Service) reconcileManualSession(ctx context.Context, revision string, intended pool.ControllableState) error {
 	for _, field := range manualReconciliationOrder(intended) {
 		current, err := s.store.ManualSession(ctx)
 		if err != nil || current == nil || current.Revision != revision {
-			return
+			return err
 		}
 		if current.Outcomes[field].State != "pending" {
 			continue
@@ -851,11 +954,11 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 			continue
 		}
 		if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
-			return
+			return err
 		}
 		current, err = s.store.ManualSession(ctx)
 		if err != nil || current == nil || current.Revision != revision {
-			return
+			return err
 		}
 		if current.Outcomes[field].State != "pending" {
 			continue
@@ -864,24 +967,53 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "dependency_not_met", dependency)
 			continue
 		}
-		owns, err := s.store.ManualSessionRevisionCurrent(ctx, revision)
-		if err != nil || !owns {
-			return
-		}
 		request := manualSessionCommand(field, intended)
 		request.Source = "manual_session:" + revision
-		if _, err := s.ExecuteCommand(ctx, request); err != nil {
+		executed, expired, err := s.executeManualCommand(ctx, revision, request)
+		if err != nil {
 			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "command_failed", err.Error())
 			continue
 		}
+		if expired {
+			result, expireErr := s.expireManualSession(ctx, revision, s.now().UTC())
+			if expireErr != nil {
+				return expireErr
+			}
+			if result.Expired {
+				go func() {
+					_ = s.EnforceLatest(context.Background())
+				}()
+			}
+			return nil
+		}
+		if !executed {
+			return nil
+		}
 		resultStatus, ok, err := s.store.LatestStatus(ctx)
 		if err != nil {
-			return
+			return err
 		}
 		if ok {
 			_ = s.store.ConfirmManualSessionStatus(ctx, revision, resultStatus)
 		}
 	}
+	return nil
+}
+
+func (s *Service) executeManualCommand(ctx context.Context, revision string, request pool.CommandRequest) (executed, expired bool, err error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	current, err := s.store.ManualSession(ctx)
+	if err != nil || current == nil || current.Revision != revision {
+		return false, false, err
+	}
+	if current.ExpiresAt != nil && !current.ExpiresAt.After(s.now().UTC()) {
+		return false, true, nil
+	}
+	if _, err := s.executeCommandLocked(ctx, request); err != nil {
+		return true, false, err
+	}
+	return true, false, nil
 }
 
 func manualReconciliationOrder(intended pool.ControllableState) []string {

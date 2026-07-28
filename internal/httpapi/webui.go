@@ -1170,7 +1170,13 @@ function loadStatus() {
 
 function loadPoolControl() {
   return api("/manual-session").then(function(representation) {
+    var previous = state.poolControlRepresentation;
     state.poolControlRepresentation = representation;
+    if (previous && previous.session && representation && !representation.session &&
+        previous.session.expires_at &&
+        new Date(previous.session.expires_at).getTime() <= Date.now()) {
+      toast("Manual session ended. Automatic control resumed.", "ok");
+    }
     if (state.manualSessionDraft && representation && representation.observed &&
         (!state.manualSessionDraft.expected_control_revision || !state.manualSessionDraft.base_observation_id)) {
       state.manualSessionDraft.expected_control_revision = representation.control_revision;
@@ -1206,8 +1212,10 @@ function scheduleManualSessionRefresh() {
 function scheduleManualSessionClock() {
   clearTimeout(manualSessionClockTimer);
   manualSessionClockTimer = setTimeout(function() {
-    renderControlMode();
-    scheduleManualSessionClock();
+    loadPoolControl().then(function() {
+      renderControlMode();
+      renderControls();
+    });
   }, 30000);
 }
 
