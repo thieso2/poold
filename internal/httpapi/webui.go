@@ -443,16 +443,27 @@ h3 {
 .pc-state.degraded b { color: #b3261e; }
 .pc-clock { font-family: var(--data); font-size: 25px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .pc-clock small { display: block; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: var(--muted); }
-.pc-outcome {
-  display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
-  padding: 8px 13px; border-top: 1px solid var(--line); font-size: 13px;
+.pc-outcomes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; padding: 12px 13px; border-top: 1px solid var(--line); }
+.pc-out {
+  position: relative; display: grid; place-items: center; height: 62px;
+  border: 1.5px solid var(--line); border-radius: 12px; background: #f4f8f9; color: #6d8288;
 }
-.pc-outcome .want { font-family: var(--data); font-size: 11.5px; color: var(--muted); letter-spacing: .06em; }
-.pc-outcome .mark { font-family: var(--data); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; }
-.mark.confirmed { color: var(--ok, #1d7f45); }
-.mark.pending { color: #9a6100; }
-.mark.failed { color: #b3261e; }
-.pc-outcome .msg { grid-column: 1 / -1; margin-top: 2px; font-size: 12px; color: #b3261e; }
+.pc-out svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.pc-out.on { border-color: var(--live-deep); background: var(--live); color: #fff; }
+.pc-out-temp { display: grid; gap: 1px; justify-items: center; color: var(--text); }
+.pc-out-temp b { font-family: var(--data); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.pc-out-temp span { font-family: var(--data); font-size: 8px; letter-spacing: .1em; color: var(--muted); }
+.pc-out i {
+  position: absolute; top: -5px; right: -5px; width: 14px; height: 14px; border-radius: 50%;
+  border: 2.5px solid var(--panel); background: var(--ok, #1d7f45);
+}
+.pc-out.confirmed i { display: none; }
+.pc-out.pending i { background: #9a6100; animation: pcPulse 1.1s ease-in-out infinite; }
+.pc-out.failed { border-color: #b3261e; background: #fdeeec; color: #b3261e; }
+.pc-out.failed i { background: #b3261e; }
+@keyframes pcPulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.pc-fail-note { margin: 0; padding: 0 13px 12px; font-size: 12.5px; color: #b3261e; }
+.pc-progress { margin: 0; padding: 0 13px 12px; font-size: 12.5px; color: var(--muted); }
 .pc-session-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 13px; border-top: 1px solid var(--line); background: #f4f8f9; }
 .pc-session-actions button { min-height: 38px; padding: 7px 12px; font-size: 13px; }
 
@@ -482,16 +493,16 @@ h3 {
 .pc-foot { padding: 10px 13px; border-top: 1px solid var(--line); background: #f4f8f9; font-size: 12px; color: var(--muted); }
 
 @media (prefers-reduced-motion: no-preference) {
-  [aria-pressed="true"] .jet-stream, .pc-mini.on .jet-stream { animation: pcThrust 1.5s ease-out infinite; }
-  [aria-pressed="true"] .jet-stream:nth-of-type(2), .pc-mini.on .jet-stream:nth-of-type(2) { animation-delay: .18s; }
-  [aria-pressed="true"] .jet-stream:nth-of-type(3), .pc-mini.on .jet-stream:nth-of-type(3) { animation-delay: .36s; }
-  [aria-pressed="true"] .bub, .pc-mini.on .bub { animation: pcRise 2.4s ease-in-out infinite; }
-  [aria-pressed="true"] .bub:nth-of-type(2), .pc-mini.on .bub:nth-of-type(2) { animation-delay: .5s; }
-  [aria-pressed="true"] .bub:nth-of-type(3), .pc-mini.on .bub:nth-of-type(3) { animation-delay: 1s; }
-  [aria-pressed="true"] .bub:nth-of-type(4), .pc-mini.on .bub:nth-of-type(4) { animation-delay: 1.5s; }
-  [aria-pressed="true"] .spin, .pc-mini.on .spin { transform-box: view-box; transform-origin: 12px 12px; animation: pcSpin 2.6s linear infinite; }
-  [aria-pressed="true"] .flame, .pc-mini.on .flame { transform-box: view-box; transform-origin: 12px 21px; animation: pcFlicker 1.5s ease-in-out infinite; }
-  [aria-pressed="true"] .pwr, .pc-mini.on .pwr { transform-box: view-box; transform-origin: 12px 12px; animation: pcBreathe 2.8s ease-in-out infinite; }
+  [aria-pressed="true"] .jet-stream, .pc-mini.on .jet-stream, .pc-out.on .jet-stream { animation: pcThrust 1.5s ease-out infinite; }
+  [aria-pressed="true"] .jet-stream:nth-of-type(2), .pc-mini.on .jet-stream:nth-of-type(2), .pc-out.on .jet-stream:nth-of-type(2) { animation-delay: .18s; }
+  [aria-pressed="true"] .jet-stream:nth-of-type(3), .pc-mini.on .jet-stream:nth-of-type(3), .pc-out.on .jet-stream:nth-of-type(3) { animation-delay: .36s; }
+  [aria-pressed="true"] .bub, .pc-mini.on .bub, .pc-out.on .bub { animation: pcRise 2.4s ease-in-out infinite; }
+  [aria-pressed="true"] .bub:nth-of-type(2), .pc-mini.on .bub:nth-of-type(2), .pc-out.on .bub:nth-of-type(2) { animation-delay: .5s; }
+  [aria-pressed="true"] .bub:nth-of-type(3), .pc-mini.on .bub:nth-of-type(3), .pc-out.on .bub:nth-of-type(3) { animation-delay: 1s; }
+  [aria-pressed="true"] .bub:nth-of-type(4), .pc-mini.on .bub:nth-of-type(4), .pc-out.on .bub:nth-of-type(4) { animation-delay: 1.5s; }
+  [aria-pressed="true"] .spin, .pc-mini.on .spin, .pc-out.on .spin { transform-box: view-box; transform-origin: 12px 12px; animation: pcSpin 2.6s linear infinite; }
+  [aria-pressed="true"] .flame, .pc-mini.on .flame, .pc-out.on .flame { transform-box: view-box; transform-origin: 12px 21px; animation: pcFlicker 1.5s ease-in-out infinite; }
+  [aria-pressed="true"] .pwr, .pc-mini.on .pwr, .pc-out.on .pwr { transform-box: view-box; transform-origin: 12px 12px; animation: pcBreathe 2.8s ease-in-out infinite; }
 }
 @keyframes pcThrust { 0% { opacity: .25; transform: translateX(-1.5px); } 45% { opacity: 1; transform: translateX(0); } 100% { opacity: .25; transform: translateX(1.5px); } }
 @keyframes pcRise { 0% { opacity: 0; transform: translateY(2.5px); } 25% { opacity: 1; } 75% { opacity: .9; } 100% { opacity: 0; transform: translateY(-3.5px); } }
@@ -506,6 +517,7 @@ h3 {
 }
 /* Keep the single icon row at a 44px touch target on the narrowest phones. */
 @media (max-width: 380px) {
+  .pc-outcomes { grid-template-columns: repeat(3, 1fr); }
   .pc-row { gap: 4px; padding: 10px 8px; }
   .pc-temp { padding: 10px 8px 0; }
   .pc-cap svg { width: 24px; height: 24px; }
@@ -1819,16 +1831,41 @@ function sessionMarkup() {
   var sub = session.state === "applying" ? "Sending your settings to the pool" :
     session.state === "degraded" ? "Part of your session is not running" :
     "The pool is held exactly as you set it";
-  var rows = manualCaps.concat(["target_temp"]).map(function(field) {
-    var outcome = (session.outcomes && session.outcomes[field]) || {state: "pending"};
-    var label = capLabels[field] || "Target temperature";
-    var want = field === "target_temp" ? session.intended[field] + "°" : (session.intended[field] ? "ON" : "OFF");
-    var mark = outcome.state === "confirmed" ? "● CONFIRMED" : outcome.state === "pending" ? "◐ SENDING" : "▲ FAILED";
-    return '<div class="pc-outcome"><span>' + label + '</span><span class="want">' + want + "</span>" +
-      '<span class="mark ' + outcome.state + '">' + mark + "</span>" +
-      (outcome.state === "failed" && (outcome.message || outcome.code) ?
-        '<span class="msg">' + escapeHTML(outcome.message || outcome.code) + "</span>" : "") + "</div>";
+  var outcomeState = function(field) {
+    return ((session.outcomes && session.outcomes[field]) || {state: "pending"}).state;
+  };
+  var stateWord = {confirmed: "confirmed", pending: "still sending", failed: "not confirmed"};
+  var tiles = manualCaps.map(function(cap) {
+    var on = !!session.intended[cap];
+    var status = outcomeState(cap);
+    return '<div class="pc-out ' + status + (on ? " on" : "") + '" role="img" title="' +
+      capLabels[cap] + " · " + (on ? "on" : "off") + " · " + stateWord[status] + '"' +
+      ' aria-label="' + capLabels[cap] + " " + (on ? "on" : "off") + ", " + stateWord[status] + '">' +
+      manualCapIcons[cap] + "<i></i></div>";
   }).join("");
+  var targetStatus = outcomeState("target_temp");
+  tiles += '<div class="pc-out ' + targetStatus + '" role="img" title="Target ' + session.intended.target_temp +
+    "° · " + stateWord[targetStatus] + '" aria-label="Target temperature ' + session.intended.target_temp +
+    " degrees, " + stateWord[targetStatus] + '"><span class="pc-out-temp"><b>' + session.intended.target_temp +
+    '°</b><span>TARGET</span></span><i></i></div>';
+
+  var note = "";
+  if (session.state === "degraded") {
+    var failures = manualCaps.concat(["target_temp"]).filter(function(field) {
+      return outcomeState(field) === "failed";
+    }).map(function(field) {
+      var outcome = session.outcomes[field];
+      var label = capLabels[field] || "Target temperature";
+      return label + " — " + (outcome.message || outcome.code || "not confirmed by the pool");
+    });
+    if (failures.length) note = '<p class="pc-fail-note">' + escapeHTML(failures.join(" · ")) + "</p>";
+  } else if (session.state === "applying") {
+    var confirmed = manualCaps.concat(["target_temp"]).filter(function(field) {
+      return outcomeState(field) === "confirmed";
+    }).length;
+    note = '<p class="pc-progress">' + confirmed + " of 6 confirmed by the pool.</p>";
+  }
+
   var clock = session.expires_at ? manualSessionClock(session.expires_at) : "—";
   var clockCap = session.expires_at ? "LEFT" : "UNTIL YOU STOP IT";
   return '<div class="pc-card"><div class="pc-head"><h3>YOUR SESSION</h3><span>' +
@@ -1836,7 +1873,7 @@ function sessionMarkup() {
     '<div class="pc-session-top"><div class="pc-state ' + session.state + '"><b><i></i>' + word + "</b>" +
     '<span>' + sub + "</span></div>" +
     '<div class="pc-clock" id="manualSessionClock">' + clock + "<small>" + clockCap + "</small></div></div>" +
-    rows +
+    '<div class="pc-outcomes">' + tiles + "</div>" + note +
     '<div class="pc-session-actions">' +
       (session.state === "degraded" ? '<button class="primary" data-manual-act="retry"' + (state.pending ? " disabled" : "") + ">Try the failed fields again</button>" : "") +
       (draft ? '<button data-manual-act="stopEdit">Stop editing</button>' :
