@@ -1216,6 +1216,21 @@ function manualSessionIdempotencyKey() {
   return "manual-" + Date.now() + "-" + Math.random().toString(16).slice(2);
 }
 
+function manualSessionClearAttempt(revision) {
+  var attempt = null;
+  try {
+    attempt = JSON.parse(sessionStorage.getItem("poold.manualSessionClear") || "null");
+  } catch (_) {}
+  if (!attempt || attempt.expected_control_revision !== revision || !attempt.idempotency_key) {
+    attempt = {
+      expected_control_revision: revision,
+      idempotency_key: manualSessionIdempotencyKey()
+    };
+    sessionStorage.setItem("poold.manualSessionClear", JSON.stringify(attempt));
+  }
+  return attempt;
+}
+
 function applyManualSessionDraft() {
   var draft = state.manualSessionDraft;
   if (!draft || state.pending) return;
@@ -1247,6 +1262,44 @@ function applyManualSessionDraft() {
     renderControlMode();
     renderControls();
   });
+}
+
+function endManualSession() {
+  var representation = state.poolControlRepresentation;
+  if (!representation || !representation.session || state.pending) return;
+  var attempt = manualSessionClearAttempt(representation.control_revision);
+  var body = {
+    expected_control_revision: attempt.expected_control_revision
+  };
+  setBusy(true, "Returning to Automatic control");
+  api("/manual-session", {
+    method: "DELETE",
+    headers: {"Idempotency-Key": attempt.idempotency_key},
+    body: JSON.stringify(body)
+  }).then(function(representation) {
+    sessionStorage.removeItem("poold.manualSessionClear");
+    state.poolControlRepresentation = representation;
+    state.manualSessionDraft = null;
+    saveManualSessionDraft();
+    renderControlMode();
+    renderControls();
+    toast("Automatic control resumed.", "ok");
+    scheduleManualSessionRefresh();
+  }).catch(function(err) {
+    toast("Manual session: " + err.message, "bad");
+  }).finally(function() {
+    setBusy(false);
+    renderControlMode();
+    renderControls();
+  });
+}
+
+function selectAutomaticControl() {
+  if (state.poolControlRepresentation && state.poolControlRepresentation.session) {
+    endManualSession();
+    return;
+  }
+  discardManualSessionDraft();
 }
 
 function loadControlMode() {
@@ -1425,7 +1478,7 @@ function renderControlMode() {
   var manual = !!draft || !!session;
   $("automaticControl").setAttribute("aria-pressed", manual ? "false" : "true");
   $("manualControl").setAttribute("aria-pressed", manual ? "true" : "false");
-  $("automaticControl").disabled = !!session;
+  $("automaticControl").disabled = state.pending;
   $("manualControl").disabled = !!session || (!draft && (!observed || !observed.connected));
   $("cancelManualSession").disabled = !draft;
   if (draft) {
@@ -2526,7 +2579,7 @@ $("settingsClose").onclick = function() {
 };
 $("refresh").onclick = loadAll;
 $("manualControl").onclick = startManualSessionDraft;
-$("automaticControl").onclick = discardManualSessionDraft;
+$("automaticControl").onclick = selectAutomaticControl;
 $("cancelManualSession").onclick = discardManualSessionDraft;
 qsa("[data-manual-cap]").forEach(function(button) {
   button.onclick = function() { stageManualSessionCapability(button.dataset.manualCap); };

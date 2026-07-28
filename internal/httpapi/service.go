@@ -64,6 +64,12 @@ type createManualSessionRequest struct {
 	Fingerprint       string
 }
 
+type clearManualSessionRequest struct {
+	ExpectedRevision string
+	IdempotencyKey   string
+	Fingerprint      string
+}
+
 type WeatherProvider interface {
 	ResolveLocation(context.Context, string, string) (pool.WeatherLocation, error)
 	CurrentWeather(context.Context, string, pool.WeatherLocation) (json.RawMessage, error)
@@ -403,6 +409,54 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		revision := result.Representation.ControlRevision
 		intended := result.Representation.Session.Intended
 		go s.reconcileManualSession(context.Background(), revision, intended)
+	}
+	return result, nil
+}
+
+func (s *Service) clearManualSession(ctx context.Context, request clearManualSessionRequest) (store.ClearManualSessionResult, error) {
+	current, err := s.PoolControl(ctx)
+	if err != nil {
+		return store.ClearManualSessionResult{}, err
+	}
+	result, err := s.store.ClearManualSession(ctx, store.ClearManualSessionParams{
+		ExpectedRevision: request.ExpectedRevision,
+		IdempotencyKey:   request.IdempotencyKey,
+		Fingerprint:      request.Fingerprint,
+		ClearedAt:        time.Now().UTC(),
+		Observed:         current.Observed,
+	})
+	var changed *store.ControlChangedError
+	if errors.As(err, &changed) {
+		return store.ClearManualSessionResult{}, &manualSessionFailure{
+			Code:    "control_changed",
+			Message: "Control changed after this draft was opened.",
+			Current: &changed.Current,
+		}
+	}
+	if errors.Is(err, store.ErrControlChanged) {
+		current, currentErr := s.PoolControl(ctx)
+		if currentErr != nil {
+			return store.ClearManualSessionResult{}, currentErr
+		}
+		return store.ClearManualSessionResult{}, &manualSessionFailure{
+			Code:    "control_changed",
+			Message: "Control changed after this draft was opened.",
+			Current: &current,
+		}
+	}
+	if errors.Is(err, store.ErrIdempotencyKeyReused) {
+		return store.ClearManualSessionResult{}, &manualSessionFailure{
+			Code:    "idempotency_key_reused",
+			Message: "The idempotency key was already used for a different operation.",
+		}
+	}
+	if err != nil {
+		return store.ClearManualSessionResult{}, err
+	}
+	if !result.Replayed {
+		go func() {
+			_ = s.EnforceLatest(context.Background())
+		}()
 	}
 	return result, nil
 }
