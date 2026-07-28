@@ -173,7 +173,7 @@ func TestAutomaticManualSessionRepresentationSurvivesRestart(t *testing.T) {
 	if got := first.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
-	var initial pool.ManualControlRepresentation
+	var initial pool.PoolControlRepresentation
 	if err := json.Unmarshal(first.Body.Bytes(), &initial); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestAutomaticManualSessionRepresentationSurvivesRestart(t *testing.T) {
 	if second.Code != http.StatusOK {
 		t.Fatalf("second status = %d, body=%s", second.Code, second.Body.String())
 	}
-	var restored pool.ManualControlRepresentation
+	var restored pool.PoolControlRepresentation
 	if err := json.Unmarshal(second.Body.Bytes(), &restored); err != nil {
 		t.Fatal(err)
 	}

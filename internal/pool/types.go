@@ -68,8 +68,8 @@ type ControlObservation struct {
 	State         ControllableState `json:"state"`
 }
 
-// ManualControlRepresentation is the authoritative pool-control representation.
-type ManualControlRepresentation struct {
+// PoolControlRepresentation is the authoritative pool-control representation.
+type PoolControlRepresentation struct {
 	Control         ControlOwnership             `json:"control"`
 	ControlRevision string                       `json:"control_revision"`
 	Observed        *ControlObservation          `json:"observed"`

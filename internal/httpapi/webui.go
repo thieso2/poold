@@ -898,15 +898,13 @@ var capLabels = {power:"Power", filter:"Filter", heater:"Heater", jets:"Jets", b
 var days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 var manualPlanID = "webui-manual";
 var legacyPausePlanID = "webui-pause";
-var manualDefaultMinutes = 30;
 var activityPageSize = 12;
 var activityKeys = ["events", "polls", "commands", "plan_executions", "heating_sessions"];
-var tempDebounceTimer = null;
 var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
   controlMode: {manual_control: false},
-  manualControlRepresentation: null,
+  poolControlRepresentation: null,
   manualSessionDraft: readManualSessionDraft(),
   weather: null,
   timeline: null,
@@ -927,7 +925,6 @@ var state = {
     heating_sessions: 0
   },
   activityHasOlder: {},
-  manualDraft: null,
   settingsOpen: false,
   planView: "plans",
   editPlanId: null,
@@ -959,7 +956,7 @@ function saveManualSessionDraft() {
 }
 
 function manualSessionObserved() {
-  var representation = state.manualControlRepresentation;
+  var representation = state.poolControlRepresentation;
   return representation && representation.observed ? representation.observed : null;
 }
 
@@ -1064,7 +1061,7 @@ function loadAll() {
   }
   setBusy(true);
   Promise.all([
-    loadStatus().then(loadManualControl),
+    loadStatus().then(loadPoolControl),
     loadControlMode(),
     loadWeather(),
     loadTimeline(),
@@ -1089,11 +1086,11 @@ function loadStatus() {
   });
 }
 
-function loadManualControl() {
+function loadPoolControl() {
   return api("/manual-session").then(function(representation) {
-    state.manualControlRepresentation = representation;
+    state.poolControlRepresentation = representation;
   }).catch(function(err) {
-    state.manualControlRepresentation = null;
+    state.poolControlRepresentation = null;
     toast("Pool control: " + err.message, "bad");
   });
 }
@@ -1109,7 +1106,6 @@ function loadControlMode() {
 function loadPlans() {
   return api("/plans").then(function(data) {
     state.plans = data.plans || [];
-    state.manualDraft = null;
   }).catch(function(err) {
     toast("Plans: " + err.message, "bad");
   });
@@ -2026,150 +2022,6 @@ function saveWeatherSettings() {
   }, "Weather settings saved");
 }
 
-function setControlMode(manual) {
-  runAction(function() {
-    return api("/control-mode", {method: "PUT", body: JSON.stringify({manual_control: manual})}).then(function(mode) {
-      state.controlMode = mode || {manual_control: false};
-      state.manualDraft = null;
-    });
-  }, manual ? "Manual pool control enabled" : "Automatic control enabled");
-}
-
-function toggleControl(cap, value) {
-  if (manualControlActive()) return setDirectBool(cap, value);
-  setManualBool(cap, value);
-}
-
-function setDirectBool(cap, value) {
-  var status = state.status || {};
-  var commands = [];
-  function add(commandCap, commandValue) {
-    commands.push({capability: commandCap, state: commandValue, source: "webui:manual_control"});
-  }
-  if (cap === "power" && value === false) {
-    add("power", false);
-  } else {
-    if (cap !== "power" && value === true && !status.power) add("power", true);
-    if (cap === "heater" && value === true && !status.filter) add("filter", true);
-    if (cap === "filter" && value === false && status.heater) add("heater", false);
-    add(cap, value);
-  }
-  runAction(function() {
-    return postCommandSequence(commands);
-  }, capLabels[cap] + " " + boolText(value));
-}
-
-function postCommandSequence(commands) {
-  var chain = Promise.resolve();
-  commands.forEach(function(command) {
-    chain = chain.then(function() {
-      return api("/commands", {method: "POST", body: JSON.stringify(command)});
-    });
-  });
-  return chain;
-}
-
-function setManualBool(cap, value) {
-  var desired = currentManualDesired();
-  if (cap === "power" && value === false) {
-    desired = {power: false};
-  } else {
-    if (cap !== "power" && value === true) desired.power = true;
-    desired[cap] = value;
-    if (cap === "filter" && value === false && desired.heater === true) desired.heater = false;
-  }
-  updateManualPlan(desired, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), capLabels[cap] + " " + boolText(value));
-}
-
-function scheduleControlTemp(value) {
-  clearTimeout(tempDebounceTimer);
-  tempDebounceTimer = setTimeout(function() {
-    if (manualControlActive()) {
-      setDirectTargetTemp(value);
-    } else {
-      setManualTargetTemp(value);
-    }
-  }, 650);
-}
-
-function setDirectTargetTemp(value) {
-  if (String(value).trim() === "") return;
-  var target = Number(value);
-  if (!Number.isFinite(target) || target < 10 || target > 40) return;
-  runAction(function() {
-    return api("/commands", {method: "POST", body: JSON.stringify({
-      capability: "target_temp",
-      value: target,
-      source: "webui:manual_control"
-    })});
-  }, "Target " + target + "°");
-}
-
-function setManualTargetTemp(value) {
-  if (String(value).trim() === "") {
-    var cleared = currentManualDesired();
-    delete cleared.target_temp;
-    if (!Object.keys(cleared).length) return clearManual();
-    return updateManualPlan(cleared, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), "Target cleared");
-  }
-  var target = Number(value);
-  if (!Number.isFinite(target) || target < 10 || target > 40) return;
-  var desired = currentManualDesired();
-  desired.target_temp = target;
-  updateManualPlan(desired, new Date(Date.now() + manualDefaultMinutes * 60 * 1000), "Target " + target + "°");
-}
-
-function adjustManual(minutes) {
-  var plan = activeManualPlan();
-  if (!plan) return;
-  if (!plan.expires_at) return;
-  var expiresAt = new Date(plan.expires_at).getTime() + minutes * 60 * 1000;
-  if (expiresAt <= Date.now()) return clearManual();
-  updateManualPlan(Object.assign({}, plan.desired_state || {}), new Date(expiresAt), "Manual time updated");
-}
-
-function clearManual() {
-  state.manualDraft = null;
-  updatePlans(state.plans.filter(function(plan) { return !isReservedManualPlan(plan); }), "Manual cleared");
-}
-
-function makeManualPermanent() {
-  var plan = activeManualPlan();
-  if (!plan) return;
-  var manualDesired = Object.assign({}, plan.desired_state || {});
-  if (!Object.keys(manualDesired).length) return;
-  var permanentPlan = {
-    id: manualPlanID,
-    type: "manual_override",
-    name: manualTitle(manualDesired),
-    enabled: true,
-    desired_state: manualDesired
-  };
-  runAction(function() {
-    return api("/plans", {method: "PUT", body: JSON.stringify({
-      plans: state.plans.filter(function(existing) { return !isReservedManualPlan(existing); }).concat([permanentPlan])
-    })}).then(function(data) {
-      state.plans = data.plans || [];
-      state.manualDraft = null;
-    });
-  }, "Manual control made permanent");
-}
-
-function updateManualPlan(desired, expiresAt, message) {
-  state.manualDraft = Object.assign({}, desired);
-  var plan = {
-    id: manualPlanID,
-    type: "manual_override",
-    name: manualTitle(desired),
-    enabled: true,
-    desired_state: desired,
-    expires_at: expiresAt.toISOString()
-  };
-  updatePlans(state.plans.filter(function(existing) {
-    return !isReservedManualPlan(existing);
-  }).concat([plan]), message || "Manual control saved");
-}
-
 function runAction(action, message) {
   if (!state.token) return toast("Token required", "bad");
   setBusy(true, "Working...");
@@ -2424,24 +2276,6 @@ function isReservedManualPlan(plan) {
   return plan && (plan.id === manualPlanID || plan.id === legacyPausePlanID);
 }
 
-function currentManualDesired() {
-  if (state.manualDraft) return Object.assign({}, state.manualDraft);
-  var plan = activeManualPlan();
-  return Object.assign({}, plan && plan.desired_state ? plan.desired_state : {});
-}
-
-function manualDesiredValue(cap) {
-  var plan = activeManualPlan();
-  var desired = state.manualDraft || (plan && plan.desired_state ? plan.desired_state : {});
-  return Object.prototype.hasOwnProperty.call(desired, cap) ? desired[cap] : undefined;
-}
-
-function manualTitle(desired) {
-  if (desired && desired.power === false) return "Pool stopped";
-  if (desired && desired.heater === true) return "Manual heating";
-  return "Manual control";
-}
-
 function manualSummary(desired) {
   var parts = [];
   caps.forEach(function(cap) {
@@ -2554,12 +2388,11 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (!isHistoryPage && state.token) Promise.all([loadStatus().then(loadManualControl), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
+  if (!isHistoryPage && state.token) Promise.all([loadStatus().then(loadPoolControl), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
 setInterval(function() {
   if (state.token) loadTimeline().then(renderTimeline);
 }, 60000);
-setInterval(renderManual, 1000);
 </script>
 </body>
 </html>

@@ -251,7 +251,7 @@ func (a *API) handleGetDesiredState(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleGetManualSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	representation, err := a.service.ManualControl(r.Context())
+	representation, err := a.service.PoolControl(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

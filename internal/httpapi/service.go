@@ -236,16 +236,17 @@ func (s *Service) DesiredState(ctx context.Context) (pool.DesiredState, error) {
 	return s.store.DesiredState(ctx)
 }
 
-func (s *Service) ManualControl(ctx context.Context) (pool.ManualControlRepresentation, error) {
+// PoolControl returns the current ownership and latest observed pool state.
+func (s *Service) PoolControl(ctx context.Context) (pool.PoolControlRepresentation, error) {
 	revision, err := s.store.ControlRevision(ctx)
 	if err != nil {
-		return pool.ManualControlRepresentation{}, err
+		return pool.PoolControlRepresentation{}, err
 	}
 	observations, err := s.store.LatestObservations(ctx, 1)
 	if err != nil {
-		return pool.ManualControlRepresentation{}, err
+		return pool.PoolControlRepresentation{}, err
 	}
-	representation := pool.ManualControlRepresentation{
+	representation := pool.PoolControlRepresentation{
 		Control:         pool.AutomaticControl,
 		ControlRevision: revision,
 	}
