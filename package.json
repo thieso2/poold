@@ -1,0 +1,11 @@
+{
+  "name": "poold-dashboard-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.11.0",
+    "@playwright/test": "1.62.0"
+  }
+}
