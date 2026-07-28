@@ -76,7 +76,7 @@ type PoolControlRepresentation struct {
 	Session         *ManualSessionRepresentation `json:"session"`
 }
 
-// ManualSessionRepresentation describes the complete durable Manual-session intent and progress.
+// ManualSessionRepresentation describes the complete durable Manual session intent and progress.
 type ManualSessionRepresentation struct {
 	State     string                    `json:"state"`
 	Duration  string                    `json:"duration"`
@@ -91,6 +91,59 @@ type CommandOutcome struct {
 	State   string `json:"state"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+}
+
+// ManualSession is the durable owner, complete intent, and reconciliation progress.
+type ManualSession struct {
+	Revision string `json:"revision"`
+	ManualSessionRepresentation
+}
+
+// ControllableFields is the stable field order used by Manual session outcomes.
+var ControllableFields = []string{"power", "filter", "heater", "jets", "bubbles", "target_temp"}
+
+// ControllableStateFromStatus drops observation-only and unsupported device fields.
+func ControllableStateFromStatus(status Status) ControllableState {
+	return ControllableState{
+		Power:      status.Power,
+		Filter:     status.Filter,
+		Heater:     status.Heater,
+		Jets:       status.Jets,
+		Bubbles:    status.Bubbles,
+		TargetTemp: status.TargetTemp,
+	}
+}
+
+// FieldEqual reports whether one named controllable field matches another state.
+func (s ControllableState) FieldEqual(field string, other ControllableState) bool {
+	switch field {
+	case "power":
+		return s.Power == other.Power
+	case "filter":
+		return s.Filter == other.Filter
+	case "heater":
+		return s.Heater == other.Heater
+	case "jets":
+		return s.Jets == other.Jets
+	case "bubbles":
+		return s.Bubbles == other.Bubbles
+	case "target_temp":
+		return s.TargetTemp == other.TargetTemp
+	default:
+		return false
+	}
+}
+
+// DependencyViolations returns stable codes for contradictory complete intent.
+func (s ControllableState) DependencyViolations() []string {
+	var violations []string
+	if !s.Power && (s.Filter || s.Heater || s.Jets || s.Bubbles) {
+		violations = append(violations, "power_required")
+	}
+	if s.Heater && !s.Filter {
+		violations = append(violations, "filter_required_for_heater")
+	}
+	return violations
 }
 
 // Active reports whether manual pool control is active at now.
