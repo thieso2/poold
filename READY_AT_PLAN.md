@@ -47,12 +47,11 @@ Defaults:
 ```mermaid
 flowchart TD
     Poll([Status refresh]) --> Status[Read current spa status]
-    Status --> Base[Load stored desired state]
+    Status --> Owner{Control owner}
+    Owner -->|Manual session| ManualIntent[Use complete Manual-session intent]
+    Owner -->|Automatic| Base[Load stored desired state]
     Base --> Plans[Load enabled plans]
-    Plans --> Manual{Active manual override?}
-
-    Manual -->|yes| ManualDesired[Use manual override desired state]
-    Manual -->|no| ReadyPlan{Enabled ready_by plan?}
+    Plans --> ReadyPlan{Enabled ready_by plan?}
 
     ReadyPlan -->|no| TimeWindow{Active time-window plan?}
     ReadyPlan -->|yes| HasInputs{Has target_temp and at or cron?}
@@ -69,7 +68,7 @@ flowchart TD
     TimeWindow -->|yes| WindowDesired[Apply active capability windows]
     TimeWindow -->|no| BaseOnly[Use stored desired state]
 
-    ManualDesired --> Constraints[Apply hardware constraints]
+    ManualIntent --> Constraints[Apply hardware constraints]
     HoldTarget --> Constraints
     Heat --> Constraints
     WindowDesired --> Constraints
@@ -123,14 +122,14 @@ The scheduler resolves the next matching local occurrence and calculates that oc
 
 ## Precedence
 
-Only one scheduler source wins for a given evaluation:
+Manual sessions pause Automatic control, including all schedule evaluation. During
+Automatic control, only one scheduler source wins for a given evaluation:
 
-1. Active manual override.
-2. Active `ready_by` plan.
-3. Active time-window plans.
-4. Stored desired state.
+1. Active `ready_by` plan.
+2. Active time-window plans.
+3. Stored desired state.
 
-This means an active manual override can suppress a Ready at plan. A Ready at plan that is active takes precedence over normal filter/heater time windows.
+An active Ready at plan takes precedence over normal filter/heater time windows.
 
 ## Important Behavior
 

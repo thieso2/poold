@@ -43,7 +43,8 @@ Introduce a recurring ready-by plan:
 }
 ```
 
-Manual overrides still take precedence. Time-window plans and base desired state remain lower priority.
+Manual sessions pause Automatic control, including this plan. Within Automatic
+control, time-window plans and base desired state remain lower priority.
 
 ## Conservative Start Calculation
 
