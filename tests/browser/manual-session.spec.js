@@ -132,6 +132,7 @@ test("Variant C remains usable and geometrically sound", async ({ page }, testIn
   expect(overflow).toEqual([]);
   await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
   await expect(page.locator('meta[name="viewport"]')).not.toHaveAttribute("content", /user-scalable=no|maximum-scale=1/);
+  await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveAttribute("content", "yes");
 
   const orbit = page.locator(".manual-session-orbit");
   const power = page.locator(".orbit-power");
@@ -297,7 +298,10 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
     control_revision: "revision-expiring",
     session: { ...session("active"), expires_at: new Date(Date.now() - 1000).toISOString() }
   }));
+  const expiryRefreshes = harness.requests.filter(request => request.method === "GET").length;
   await page.locator("#refresh").click();
+  await expect.poll(() => harness.requests.filter(request => request.method === "GET").length)
+    .toBeGreaterThan(expiryRefreshes);
   await page.evaluate(() => {
     window.__announcements = [];
     new MutationObserver(() => window.__announcements.push(document.querySelector("#toast").textContent))
