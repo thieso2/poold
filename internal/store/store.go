@@ -85,6 +85,21 @@ type ClearManualSessionResult struct {
 	Replayed       bool
 }
 
+// RetryManualSessionParams contains the atomic retry mutation input.
+type RetryManualSessionParams struct {
+	ExpectedRevision string
+	IdempotencyKey   string
+	Fingerprint      string
+	RetriedAt        time.Time
+}
+
+// RetryManualSessionResult contains either the committed or replayed retry response.
+type RetryManualSessionResult struct {
+	Status         int
+	Representation pool.PoolControlRepresentation
+	Replayed       bool
+}
+
 type rowQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
@@ -577,8 +592,14 @@ func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSess
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM manual_session`).Scan(&existing); err != nil {
 		return CreateManualSessionResult{}, err
 	}
-	if existing != 0 {
-		return CreateManualSessionResult{}, ErrControlChanged
+	replaced := existing != 0
+	if replaced {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM manual_session_outcomes WHERE revision = ?`, currentRevision); err != nil {
+			return CreateManualSessionResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM manual_session WHERE id = 1 AND revision = ?`, currentRevision); err != nil {
+			return CreateManualSessionResult{}, err
+		}
 	}
 
 	revision, err := newRevision()
@@ -636,10 +657,16 @@ func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSess
 	if err != nil {
 		return CreateManualSessionResult{}, err
 	}
+	eventType := "manual_session.created"
+	eventMessage := "Manual session created"
+	if replaced {
+		eventType = "manual_session.replaced"
+		eventMessage = "Manual session replaced"
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO events (created_at, type, message, data_json)
-		VALUES (?, 'manual_session.created', 'Manual session created', ?)
-	`, encodeTime(params.StartedAt), eventData); err != nil {
+		VALUES (?, ?, ?, ?)
+	`, encodeTime(params.StartedAt), eventType, eventMessage, eventData); err != nil {
 		return CreateManualSessionResult{}, err
 	}
 	responseJSON, err := json.Marshal(representation)
@@ -657,6 +684,91 @@ func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSess
 		return CreateManualSessionResult{}, err
 	}
 	return CreateManualSessionResult{Status: 202, Representation: representation}, nil
+}
+
+// RetryManualSession atomically resets every failed outcome and persists its response.
+func (s *Store) RetryManualSession(ctx context.Context, params RetryManualSessionParams) (RetryManualSessionResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	defer tx.Rollback()
+	status, representation, found, err := manualSessionMutationReplay(ctx, tx, params.IdempotencyKey, params.Fingerprint)
+	if err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	if found {
+		return RetryManualSessionResult{Status: status, Representation: representation, Replayed: true}, nil
+	}
+	var revision string
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM control_state WHERE id = 1`).Scan(&revision); err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	if revision != params.ExpectedRevision {
+		current, currentErr := poolControlRepresentationTx(ctx, tx, revision)
+		if currentErr != nil {
+			return RetryManualSessionResult{}, currentErr
+		}
+		return RetryManualSessionResult{}, &ControlChangedError{Current: current}
+	}
+	session, outcomes, err := manualSessionTx(ctx, tx, revision)
+	if err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	if session == nil {
+		current, currentErr := poolControlRepresentationTx(ctx, tx, revision)
+		if currentErr != nil {
+			return RetryManualSessionResult{}, currentErr
+		}
+		return RetryManualSessionResult{}, &ControlChangedError{Current: current}
+	}
+	changed := false
+	for field, outcome := range outcomes {
+		if outcome.State != "failed" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE manual_session_outcomes SET state = 'pending', code = NULL, message = NULL
+			WHERE revision = ? AND field = ?
+		`, revision, field); err != nil {
+			return RetryManualSessionResult{}, err
+		}
+		outcomes[field] = pool.CommandOutcome{State: "pending"}
+		changed = true
+	}
+	if changed {
+		if err := updateManualLifecycleTx(ctx, tx, revision, session.State, outcomes); err != nil {
+			return RetryManualSessionResult{}, err
+		}
+	}
+	representation, err = poolControlRepresentationTx(ctx, tx, revision)
+	if err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	responseJSON, err := json.Marshal(representation)
+	if err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO idempotency_records (key, fingerprint, response_status, response_json, created_at)
+		VALUES (?, ?, 202, ?, ?)
+	`, params.IdempotencyKey, params.Fingerprint, responseJSON, encodeTime(params.RetriedAt)); err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	eventData, err := json.Marshal(map[string]any{"control_revision": revision})
+	if err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO events (created_at, type, message, data_json)
+		VALUES (?, 'manual_session.retry', 'Manual session retry requested', ?)
+	`, encodeTime(params.RetriedAt), eventData); err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RetryManualSessionResult{}, err
+	}
+	return RetryManualSessionResult{Status: 202, Representation: representation}, nil
 }
 
 // ClearManualSession atomically returns ownership to Automatic and records its result.
@@ -927,6 +1039,45 @@ func (s *Store) ConfirmManualSessionStatus(ctx context.Context, revision string,
 		return err
 	}
 	return tx.Commit()
+}
+
+// MarkManualSessionDrift makes confirmed fields pending when polling observes drift.
+func (s *Store) MarkManualSessionDrift(ctx context.Context, revision string, status pool.Status) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	session, outcomes, err := manualSessionTx(ctx, tx, revision)
+	if err != nil || session == nil {
+		return false, err
+	}
+	observed := pool.ControllableStateFromStatus(status)
+	changed := false
+	for _, field := range pool.ControllableFields {
+		if outcomes[field].State != "confirmed" || observed.FieldEqual(field, session.Intended) {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE manual_session_outcomes
+			SET state = 'pending', code = NULL, message = NULL
+			WHERE revision = ? AND field = ? AND state = 'confirmed'
+		`, revision, field); err != nil {
+			return false, err
+		}
+		outcomes[field] = pool.CommandOutcome{State: "pending"}
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := updateManualLifecycleTx(ctx, tx, revision, session.State, outcomes); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // FailManualSessionOutcome records one stable failure for the owning session.

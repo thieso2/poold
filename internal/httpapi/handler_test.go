@@ -71,6 +71,13 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `dependency-change`) {
 		t.Fatal("Manual session dependency provenance is not visibly distinguished")
 	}
+	if !strings.Contains(rec.Body.String(), `id="retryManualSession"`) ||
+		!strings.Contains(rec.Body.String(), `api("/manual-session/retry", {`) ||
+		!strings.Contains(rec.Body.String(), `sessionStorage.setItem("poold.manualSessionRetry"`) ||
+		!strings.Contains(rec.Body.String(), `sessionStorage.removeItem("poold.manualSessionRetry"`) ||
+		!strings.Contains(rec.Body.String(), `session.intended`) {
+		t.Fatal("active edit and degraded Retry dashboard behavior missing")
+	}
 	if !strings.Contains(rec.Body.String(), eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")
 	}

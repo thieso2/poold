@@ -34,6 +34,7 @@ type Service struct {
 	pollActiveInterval       time.Duration
 	refreshRequests          chan time.Duration
 	commandMu                sync.Mutex
+	manualReconcileMu        sync.Mutex
 	weatherMu                sync.Mutex
 	statusEventMu            sync.Mutex
 	lastStatusEventAt        time.Time
@@ -57,11 +58,17 @@ func (e *manualSessionFailure) Error() string {
 
 type createManualSessionRequest struct {
 	ExpectedRevision  string
-	BaseObservationID int64
+	BaseObservationID *int64
 	Duration          string
 	Intended          pool.ControllableState
 	IdempotencyKey    string
 	Fingerprint       string
+}
+
+type retryManualSessionRequest struct {
+	ExpectedRevision string
+	IdempotencyKey   string
+	Fingerprint      string
 }
 
 type clearManualSessionRequest struct {
@@ -200,6 +207,12 @@ func (s *Service) RefreshStatus(ctx context.Context) (pool.Status, error) {
 		return pool.Status{}, err
 	}
 	s.recordObservationEvent(ctx, previous, previousOK, status)
+	if session, sessionErr := s.store.ManualSession(ctx); sessionErr == nil && session != nil {
+		drifted, driftErr := s.store.MarkManualSessionDrift(ctx, session.Revision, status)
+		if driftErr == nil && drifted {
+			go s.reconcileManualSession(context.Background(), session.Revision, session.Intended)
+		}
+	}
 	_ = s.store.Prune(ctx, s.observationRetention, s.eventRetention)
 	_ = s.Enforce(ctx, status)
 	return status, nil
@@ -298,47 +311,64 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		}, nil
 	}
 
-	base, ok, err := s.store.ObservationStatus(ctx, request.BaseObservationID)
+	current, err := s.PoolControl(ctx)
 	if err != nil {
 		return store.CreateManualSessionResult{}, err
 	}
-	if !ok {
+	if current.ControlRevision != request.ExpectedRevision {
 		return store.CreateManualSessionResult{}, &manualSessionFailure{
-			Code:    "invalid_request",
-			Message: "base_observation_id does not identify an observation.",
+			Code: "control_changed", Message: "Control changed after this draft was opened.", Current: &current,
 		}
 	}
-
-	fresh, err := s.client.Status(ctx)
-	if err != nil {
-		return store.CreateManualSessionResult{}, &manualSessionFailure{
-			Code:    "pool_unreachable",
-			Message: "The pool could not be reached for a fresh status read.",
+	var observed *pool.ControlObservation
+	if current.Session == nil {
+		if request.BaseObservationID == nil || *request.BaseObservationID <= 0 {
+			return store.CreateManualSessionResult{}, &manualSessionFailure{
+				Code: "invalid_request", Message: "base_observation_id is required.",
+			}
 		}
-	}
-	if fresh.ObservedAt.IsZero() {
-		fresh.ObservedAt = time.Now().UTC()
-	}
-	fresh.Connected = true
-	observationID, err := s.store.SaveObservation(ctx, fresh)
-	if err != nil {
-		return store.CreateManualSessionResult{}, err
-	}
-	changedFields := changedControllableFields(
-		pool.ControllableStateFromStatus(base),
-		pool.ControllableStateFromStatus(fresh),
-	)
-	if len(changedFields) != 0 {
-		current, currentErr := s.PoolControl(ctx)
-		if currentErr != nil {
-			return store.CreateManualSessionResult{}, currentErr
+		base, ok, err := s.store.ObservationStatus(ctx, *request.BaseObservationID)
+		if err != nil {
+			return store.CreateManualSessionResult{}, err
 		}
-		return store.CreateManualSessionResult{}, &manualSessionFailure{
-			Code:          "observed_state_changed",
-			Message:       "The pool changed after this draft was opened.",
-			ChangedFields: changedFields,
-			Current:       &current,
+		if !ok {
+			return store.CreateManualSessionResult{}, &manualSessionFailure{
+				Code: "invalid_request", Message: "base_observation_id does not identify an observation.",
+			}
 		}
+		fresh, err := s.client.Status(ctx)
+		if err != nil {
+			return store.CreateManualSessionResult{}, &manualSessionFailure{
+				Code: "pool_unreachable", Message: "The pool could not be reached for a fresh status read.",
+			}
+		}
+		if fresh.ObservedAt.IsZero() {
+			fresh.ObservedAt = time.Now().UTC()
+		}
+		fresh.Connected = true
+		observationID, err := s.store.SaveObservation(ctx, fresh)
+		if err != nil {
+			return store.CreateManualSessionResult{}, err
+		}
+		changedFields := changedControllableFields(pool.ControllableStateFromStatus(base), pool.ControllableStateFromStatus(fresh))
+		if len(changedFields) != 0 {
+			latest, currentErr := s.PoolControl(ctx)
+			if currentErr != nil {
+				return store.CreateManualSessionResult{}, currentErr
+			}
+			return store.CreateManualSessionResult{}, &manualSessionFailure{
+				Code: "observed_state_changed", Message: "The pool changed after this draft was opened.",
+				ChangedFields: changedFields, Current: &latest,
+			}
+		}
+		observed = controlObservation(observationID, fresh)
+	} else {
+		if request.BaseObservationID != nil {
+			return store.CreateManualSessionResult{}, &manualSessionFailure{
+				Code: "invalid_request", Message: "base_observation_id must be omitted when editing a Manual session.",
+			}
+		}
+		observed = current.Observed
 	}
 
 	startedAt := time.Now().UTC()
@@ -360,7 +390,11 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 			Message: "duration must be 30m, 60m, 2h, or until_off.",
 		}
 	}
-	outcomes := initialManualSessionOutcomes(pool.ControllableStateFromStatus(fresh), request.Intended)
+	observedState := pool.ControllableState{}
+	if observed != nil {
+		observedState = observed.State
+	}
+	outcomes := initialManualSessionOutcomes(observedState, request.Intended)
 	result, err := s.store.CreateManualSession(ctx, store.CreateManualSessionParams{
 		ExpectedRevision: request.ExpectedRevision,
 		IdempotencyKey:   request.IdempotencyKey,
@@ -370,7 +404,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		ExpiresAt:        expiresAt,
 		Intended:         request.Intended,
 		Outcomes:         outcomes,
-		Observed:         controlObservation(observationID, fresh),
+		Observed:         observed,
 	})
 	if errors.Is(err, store.ErrControlChanged) {
 		current, currentErr := s.PoolControl(ctx)
@@ -397,6 +431,34 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		revision := result.Representation.ControlRevision
 		intended := result.Representation.Session.Intended
 		go s.reconcileManualSession(context.Background(), revision, intended)
+	}
+	return result, nil
+}
+
+func (s *Service) retryManualSession(ctx context.Context, request retryManualSessionRequest) (store.RetryManualSessionResult, error) {
+	result, err := s.store.RetryManualSession(ctx, store.RetryManualSessionParams{
+		ExpectedRevision: request.ExpectedRevision,
+		IdempotencyKey:   request.IdempotencyKey,
+		Fingerprint:      request.Fingerprint,
+		RetriedAt:        time.Now().UTC(),
+	})
+	var changed *store.ControlChangedError
+	if errors.As(err, &changed) {
+		return store.RetryManualSessionResult{}, &manualSessionFailure{
+			Code: "control_changed", Message: "Control changed after this draft was opened.", Current: &changed.Current,
+		}
+	}
+	if errors.Is(err, store.ErrIdempotencyKeyReused) {
+		return store.RetryManualSessionResult{}, &manualSessionFailure{
+			Code: "idempotency_key_reused", Message: "The idempotency key was already used for a different operation.",
+		}
+	}
+	if err != nil {
+		return store.RetryManualSessionResult{}, err
+	}
+	if !result.Replayed && result.Representation.Session != nil &&
+		result.Representation.Session.State == "applying" {
+		go s.reconcileManualSession(context.Background(), result.Representation.ControlRevision, result.Representation.Session.Intended)
 	}
 	return result, nil
 }
@@ -828,6 +890,8 @@ type commandDiff struct {
 }
 
 func (s *Service) reconcileManualSession(ctx context.Context, revision string, intended pool.ControllableState) {
+	s.manualReconcileMu.Lock()
+	defer s.manualReconcileMu.Unlock()
 	for _, field := range manualReconciliationOrder(intended) {
 		current, err := s.store.ManualSession(ctx)
 		if err != nil || current == nil || current.Revision != revision {

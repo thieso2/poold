@@ -169,6 +169,130 @@ func TestPutManualSessionDisablesDependentsBeforeFilterAndPower(t *testing.T) {
 	}
 }
 
+func TestPutManualSessionEditsIntentWhileOfflineAndRestartsDuration(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	handler, _, observationID := manualSessionTestAPI(t, spa, base)
+	original := createActiveManualSession(t, handler, observationID, base)
+
+	spa.mu.Lock()
+	spa.statusErr = errors.New("offline")
+	spa.mu.Unlock()
+	intended := controllableState(base)
+	intended.TargetTemp = 38
+	response := putManualSessionEdit(t, handler, "edit-offline", original.ControlRevision, "60m", intended)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+
+	var edited pool.PoolControlRepresentation
+	decodeJSON(t, response, &edited)
+	if edited.ControlRevision == original.ControlRevision {
+		t.Fatal("edit did not advance control revision")
+	}
+	if edited.Session == nil || edited.Session.Intended != intended || edited.Session.Duration != "60m" {
+		t.Fatalf("edited session = %+v", edited.Session)
+	}
+	if !edited.Session.StartedAt.After(original.Session.StartedAt) {
+		t.Fatalf("started_at = %s, want after %s", edited.Session.StartedAt, original.Session.StartedAt)
+	}
+	if got := edited.Session.ExpiresAt.Sub(edited.Session.StartedAt); got != time.Hour {
+		t.Fatalf("expiry duration = %s, want 1h", got)
+	}
+}
+
+func TestRetryManualSessionResetsEveryFailureWithoutChangingIntentOrTiming(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	spa.setErr = errors.New("device rejected command")
+	handler, _, observationID := manualSessionTestAPI(t, spa, base)
+	intended := controllableState(base)
+	intended.Heater = true
+	response := putManualSession(t, handler, "create-failure", controlRevision(t, handler), observationID, "60m", intended)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	degraded := waitForManualSessionState(t, handler, "degraded")
+
+	spa.mu.Lock()
+	spa.setErr = nil
+	spa.mu.Unlock()
+	retry := retryManualSession(t, handler, "retry-all", degraded.ControlRevision)
+	if retry.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body=%s", retry.Code, retry.Body.String())
+	}
+	var applying pool.PoolControlRepresentation
+	decodeJSON(t, retry, &applying)
+	if applying.ControlRevision != degraded.ControlRevision ||
+		applying.Session.StartedAt != degraded.Session.StartedAt ||
+		!equalOptionalTime(applying.Session.ExpiresAt, degraded.Session.ExpiresAt) ||
+		applying.Session.Intended != degraded.Session.Intended {
+		t.Fatalf("retry changed session identity or intent: before=%+v after=%+v", degraded, applying)
+	}
+	if outcome := applying.Session.Outcomes["heater"]; outcome.State != "pending" || outcome.Code != "" || outcome.Message != "" {
+		t.Fatalf("heater outcome = %+v, want reset pending", outcome)
+	}
+	_ = waitForManualSessionState(t, handler, "active")
+}
+
+func TestPollingAttemptsManualSessionDriftOnceThenWaitsForRetry(t *testing.T) {
+	base := pool.Status{
+		ObservedAt: time.Now().UTC(),
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 36,
+	}
+	spa := newControllableSpa(base)
+	handler, _, service, observationID := manualSessionTestServiceAPI(t, spa, base)
+	active := createActiveManualSession(t, handler, observationID, base)
+
+	spa.mu.Lock()
+	spa.status.TargetTemp = 34
+	spa.setErr = errors.New("device rejected drift correction")
+	spa.mu.Unlock()
+	if _, err := service.RefreshStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	degraded := waitForManualSessionState(t, handler, "degraded")
+	if outcome := degraded.Session.Outcomes["target_temp"]; outcome.State != "failed" || outcome.Code != "command_failed" {
+		t.Fatalf("target_temp outcome = %+v", outcome)
+	}
+	waitForCommands(t, spa, []string{"target_temp"})
+
+	if _, err := service.RefreshStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"target_temp"}) {
+		t.Fatalf("commands after second poll = %v, want one drift attempt", got)
+	}
+
+	spa.mu.Lock()
+	spa.setErr = nil
+	spa.mu.Unlock()
+	retry := retryManualSession(t, handler, "retry-drift", active.ControlRevision)
+	if retry.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body=%s", retry.Code, retry.Body.String())
+	}
+	_ = waitForManualSessionState(t, handler, "active")
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"target_temp", "target_temp"}) {
+		t.Fatalf("commands after retry = %v", got)
+	}
+}
+
 func TestPutManualSessionRejectsInvalidRequestsWithoutMutation(t *testing.T) {
 	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, TargetTemp: 36}
 	tests := []struct {
@@ -609,6 +733,12 @@ func (s *controllableSpa) statusCallsCount() int {
 
 func manualSessionTestAPI(t *testing.T, spa intex.PoolClient, initial pool.Status) (http.Handler, *store.Store, int64) {
 	t.Helper()
+	handler, st, _, observationID := manualSessionTestServiceAPI(t, spa, initial)
+	return handler, st, observationID
+}
+
+func manualSessionTestServiceAPI(t *testing.T, spa intex.PoolClient, initial pool.Status) (http.Handler, *store.Store, *Service, int64) {
+	t.Helper()
 	st, err := store.Open(context.Background(), t.TempDir()+"/poold.db")
 	if err != nil {
 		t.Fatal(err)
@@ -619,7 +749,7 @@ func manualSessionTestAPI(t *testing.T, spa intex.PoolClient, initial pool.Statu
 		t.Fatal(err)
 	}
 	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{})
-	return New(service, "secret"), st, observationID
+	return New(service, "secret"), st, service, observationID
 }
 
 func controlRevision(t *testing.T, handler http.Handler) string {
@@ -645,6 +775,41 @@ func putManualSession(t *testing.T, handler http.Handler, key, revision string, 
 		t.Fatal(err)
 	}
 	return manualSessionRequest(handler, key, body)
+}
+
+func putManualSessionEdit(t *testing.T, handler http.Handler, key, revision, duration string, intended pool.ControllableState) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"expected_control_revision": revision,
+		"duration":                  duration,
+		"intended":                  intended,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manualSessionRequest(handler, key, body)
+}
+
+func retryManualSession(t *testing.T, handler http.Handler, key, revision string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"expected_control_revision": revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/manual-session/retry", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	return response
+}
+
+func equalOptionalTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
 }
 
 func createActiveManualSession(t *testing.T, handler http.Handler, observationID int64, base pool.Status) pool.PoolControlRepresentation {

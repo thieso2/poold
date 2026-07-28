@@ -38,6 +38,7 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
 	mux.HandleFunc("GET /manual-session", api.handleGetManualSession)
 	mux.HandleFunc("PUT /manual-session", api.handlePutManualSession)
+	mux.HandleFunc("POST /manual-session/retry", api.handleRetryManualSession)
 	mux.HandleFunc("DELETE /manual-session", api.handleDeleteManualSession)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
@@ -350,7 +351,7 @@ func (a *API) handlePutManualSession(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256(append([]byte("PUT /manual-session\n"), canonical...))
 	result, err := a.service.createManualSession(r.Context(), createManualSessionRequest{
 		ExpectedRevision:  raw.ExpectedControlRevision,
-		BaseObservationID: *raw.BaseObservationID,
+		BaseObservationID: raw.BaseObservationID,
 		Duration:          raw.Duration,
 		Intended:          intended,
 		IdempotencyKey:    idempotencyKey,
@@ -373,6 +374,53 @@ func (a *API) handlePutManualSession(w http.ResponseWriter, r *http.Request) {
 			Code:    "persistence_error",
 			Message: "The Manual session could not be durably committed.",
 		})
+		return
+	}
+	writeJSON(w, result.Status, result.Representation)
+}
+
+func (a *API) handleRetryManualSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{Code: "invalid_request", Message: "Idempotency-Key is required."})
+		return
+	}
+	var raw deleteManualSessionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{Code: "invalid_request", Message: "Request body is invalid: " + err.Error()})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{Code: "invalid_request", Message: "Request body must contain exactly one JSON object."})
+		return
+	}
+	if strings.TrimSpace(raw.ExpectedControlRevision) == "" {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{Code: "invalid_request", Message: "expected_control_revision is required."})
+		return
+	}
+	canonical, err := json.Marshal(raw)
+	if err != nil {
+		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{Code: "persistence_error", Message: "The request could not be prepared."})
+		return
+	}
+	sum := sha256.Sum256(append([]byte("POST /manual-session/retry\n"), canonical...))
+	result, err := a.service.retryManualSession(r.Context(), retryManualSessionRequest{
+		ExpectedRevision: raw.ExpectedControlRevision,
+		IdempotencyKey:   idempotencyKey,
+		Fingerprint:      hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		var failure *manualSessionFailure
+		if errors.As(err, &failure) {
+			writeManualSessionError(w, manualSessionFailureStatus(failure.Code), manualSessionError{
+				Code: failure.Code, Message: failure.Message, Current: failure.Current,
+			})
+			return
+		}
+		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{Code: "persistence_error", Message: "The retry could not be durably committed."})
 		return
 	}
 	writeJSON(w, result.Status, result.Representation)
@@ -452,10 +500,10 @@ func validatePutManualSession(request putManualSessionRequest) (pool.Controllabl
 			Message: "expected_control_revision is required.",
 		}
 	}
-	if request.BaseObservationID == nil || *request.BaseObservationID <= 0 {
+	if request.BaseObservationID != nil && *request.BaseObservationID <= 0 {
 		return pool.ControllableState{}, &manualSessionError{
 			Code:    "invalid_request",
-			Message: "base_observation_id is required.",
+			Message: "base_observation_id must be a positive observation identifier.",
 		}
 	}
 	switch request.Duration {
