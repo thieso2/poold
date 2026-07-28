@@ -659,6 +659,7 @@ func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSess
 		"control_revision": revision,
 		"duration":         params.Duration,
 		"state":            state,
+		"outcomes":         params.Outcomes,
 	})
 	if err != nil {
 		return CreateManualSessionResult{}, err
@@ -674,6 +675,14 @@ func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSess
 		VALUES (?, ?, ?, ?)
 	`, encodeTime(params.StartedAt), eventType, eventMessage, eventData); err != nil {
 		return CreateManualSessionResult{}, err
+	}
+	if state == "applying" {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO events (created_at, type, message, data_json)
+			VALUES (?, 'manual_session.applying', 'Manual session applying', ?)
+		`, encodeTime(params.StartedAt), eventData); err != nil {
+			return CreateManualSessionResult{}, err
+		}
 	}
 	responseJSON, err := json.Marshal(representation)
 	if err != nil {
@@ -761,7 +770,10 @@ func (s *Store) RetryManualSession(ctx context.Context, params RetryManualSessio
 	`, params.IdempotencyKey, params.Fingerprint, responseJSON, encodeTime(params.RetriedAt)); err != nil {
 		return RetryManualSessionResult{}, err
 	}
-	eventData, err := json.Marshal(map[string]any{"control_revision": revision})
+	eventData, err := json.Marshal(map[string]any{
+		"control_revision": revision,
+		"outcomes":         outcomes,
+	})
 	if err != nil {
 		return RetryManualSessionResult{}, err
 	}
@@ -959,7 +971,15 @@ func (s *Store) RecoverManualSession(ctx context.Context, expectedRevision strin
 	`, expectedRevision); err != nil {
 		return false, err
 	}
-	data, err := json.Marshal(map[string]any{"control_revision": expectedRevision})
+	_, outcomes, err := manualSessionTx(ctx, tx, expectedRevision)
+	if err != nil {
+		return false, err
+	}
+	data, err := json.Marshal(map[string]any{
+		"control_revision": expectedRevision,
+		"decision":         "resume_reconciliation",
+		"outcomes":         outcomes,
+	})
 	if err != nil {
 		return false, err
 	}
@@ -2319,7 +2339,18 @@ func updateManualLifecycleTx(ctx context.Context, tx *sql.Tx, revision, previous
 	`, current, revision); err != nil {
 		return err
 	}
-	data, err := json.Marshal(map[string]any{"control_revision": revision, "state": current})
+	failedFields := make([]string, 0)
+	for _, field := range pool.ControllableFields {
+		if outcomes[field].State == "failed" {
+			failedFields = append(failedFields, field)
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"control_revision": revision,
+		"state":            current,
+		"outcomes":         outcomes,
+		"failed_fields":    failedFields,
+	})
 	if err != nil {
 		return err
 	}

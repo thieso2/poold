@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ type Service struct {
 	lastStatusErrorAt         time.Time
 	manualCommandDispatchHook func()
 	now                       func() time.Time
+	logger                    *slog.Logger
 }
 
 var ErrWeatherNotConfigured = errors.New("weather is not configured")
@@ -105,6 +107,7 @@ type ServiceConfig struct {
 	PollActiveInterval       time.Duration
 	WeatherProvider          WeatherProvider
 	Now                      func() time.Time
+	Logger                   *slog.Logger
 }
 
 func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
@@ -123,6 +126,9 @@ func publicWeatherSettings(settings pool.WeatherSettings) WeatherSettingsView {
 func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Scheduler, cfg ServiceConfig) *Service {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
 	}
 	if cfg.EventHeartbeat <= 0 {
 		cfg.EventHeartbeat = 30 * time.Minute
@@ -167,7 +173,28 @@ func NewService(st *store.Store, client intex.PoolClient, sched *scheduler.Sched
 		pollActiveInterval:       cfg.PollActiveInterval,
 		refreshRequests:          make(chan time.Duration, 16),
 		now:                      cfg.Now,
+		logger:                   cfg.Logger,
 	}
+}
+
+func (s *Service) logManualSession(event, revision string, attrs ...any) {
+	args := []any{"event", event, "control_revision", revision}
+	args = append(args, attrs...)
+	s.logger.Info("Manual session evidence", args...)
+}
+
+func (s *Service) recordManualSessionConflict(ctx context.Context, code, expectedRevision string, current pool.PoolControlRepresentation, changedFields []string) {
+	data := map[string]any{
+		"code":                      code,
+		"control_revision":          current.ControlRevision,
+		"expected_control_revision": expectedRevision,
+	}
+	if len(changedFields) != 0 {
+		data["changed_fields"] = changedFields
+	}
+	_, _ = s.store.AddEvent(ctx, "manual_session.conflict", "Manual session change conflicted", data)
+	s.logManualSession("manual_session.conflict", current.ControlRevision,
+		"code", code, "expected_control_revision", expectedRevision, "changed_fields", changedFields)
 }
 
 func (s *Service) RefreshRequests() <-chan time.Duration {
@@ -218,6 +245,7 @@ func (s *Service) RefreshStatus(ctx context.Context) (pool.Status, error) {
 	if session, sessionErr := s.store.ManualSession(ctx); sessionErr == nil && session != nil {
 		drifted, driftErr := s.store.MarkManualSessionDrift(ctx, session.Revision, status)
 		if driftErr == nil && drifted {
+			s.logManualSession("manual_session.applying", session.Revision, "reason", "observed_drift")
 			go s.reconcileManualSession(context.Background(), session.Revision, session.Intended)
 		}
 	}
@@ -346,6 +374,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		return store.CreateManualSessionResult{}, err
 	}
 	if current.ControlRevision != request.ExpectedRevision {
+		s.recordManualSessionConflict(ctx, "control_changed", request.ExpectedRevision, current, nil)
 		return store.CreateManualSessionResult{}, &manualSessionFailure{
 			Code: "control_changed", Message: "Control changed after this draft was opened.", Current: &current,
 		}
@@ -386,6 +415,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 			if currentErr != nil {
 				return store.CreateManualSessionResult{}, currentErr
 			}
+			s.recordManualSessionConflict(ctx, "observed_state_changed", request.ExpectedRevision, latest, changedFields)
 			return store.CreateManualSessionResult{}, &manualSessionFailure{
 				Code: "observed_state_changed", Message: "The pool changed after this draft was opened.",
 				ChangedFields: changedFields, Current: &latest,
@@ -443,6 +473,7 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 		if currentErr != nil {
 			return store.CreateManualSessionResult{}, currentErr
 		}
+		s.recordManualSessionConflict(ctx, "control_changed", request.ExpectedRevision, current, nil)
 		return store.CreateManualSessionResult{}, &manualSessionFailure{
 			Code:    "control_changed",
 			Message: "Control changed after this draft was opened.",
@@ -457,6 +488,18 @@ func (s *Service) createManualSession(ctx context.Context, request createManualS
 	}
 	if err != nil {
 		return store.CreateManualSessionResult{}, err
+	}
+	if !result.Replayed {
+		event := "manual_session.created"
+		if current.Session != nil {
+			event = "manual_session.replaced"
+		}
+		s.logManualSession(event, result.Representation.ControlRevision,
+			"state", result.Representation.Session.State, "outcomes", result.Representation.Session.Outcomes)
+		if result.Representation.Session.State == "applying" {
+			s.logManualSession("manual_session.applying", result.Representation.ControlRevision,
+				"outcomes", result.Representation.Session.Outcomes)
+		}
 	}
 	if !result.Replayed && result.Representation.Session != nil &&
 		result.Representation.Session.State == "applying" {
@@ -490,6 +533,7 @@ func (s *Service) retryManualSession(ctx context.Context, request retryManualSes
 		return store.RetryManualSessionResult{}, err
 	}
 	if current.ControlRevision != request.ExpectedRevision || current.Session == nil {
+		s.recordManualSessionConflict(ctx, "control_changed", request.ExpectedRevision, current, nil)
 		return store.RetryManualSessionResult{}, &manualSessionFailure{
 			Code: "control_changed", Message: "Control changed after this draft was opened.", Current: &current,
 		}
@@ -502,6 +546,7 @@ func (s *Service) retryManualSession(ctx context.Context, request retryManualSes
 	})
 	var changed *store.ControlChangedError
 	if errors.As(err, &changed) {
+		s.recordManualSessionConflict(ctx, "control_changed", request.ExpectedRevision, changed.Current, nil)
 		return store.RetryManualSessionResult{}, &manualSessionFailure{
 			Code: "control_changed", Message: "Control changed after this draft was opened.", Current: &changed.Current,
 		}
@@ -513,6 +558,10 @@ func (s *Service) retryManualSession(ctx context.Context, request retryManualSes
 	}
 	if err != nil {
 		return store.RetryManualSessionResult{}, err
+	}
+	if !result.Replayed {
+		s.logManualSession("manual_session.retry", result.Representation.ControlRevision,
+			"outcomes", result.Representation.Session.Outcomes)
 	}
 	if !result.Replayed && result.Representation.Session != nil &&
 		result.Representation.Session.State == "applying" {
@@ -554,6 +603,7 @@ func (s *Service) clearManualSession(ctx context.Context, request clearManualSes
 	s.commandMu.Unlock()
 	var changed *store.ControlChangedError
 	if errors.As(err, &changed) {
+		s.recordManualSessionConflict(ctx, "control_changed", request.ExpectedRevision, changed.Current, nil)
 		return store.ClearManualSessionResult{}, &manualSessionFailure{
 			Code:    "control_changed",
 			Message: "Control changed after this draft was opened.",
@@ -565,6 +615,7 @@ func (s *Service) clearManualSession(ctx context.Context, request clearManualSes
 		if currentErr != nil {
 			return store.ClearManualSessionResult{}, currentErr
 		}
+		s.recordManualSessionConflict(ctx, "control_changed", request.ExpectedRevision, current, nil)
 		return store.ClearManualSessionResult{}, &manualSessionFailure{
 			Code:    "control_changed",
 			Message: "Control changed after this draft was opened.",
@@ -581,6 +632,8 @@ func (s *Service) clearManualSession(ctx context.Context, request clearManualSes
 		return store.ClearManualSessionResult{}, err
 	}
 	if !result.Replayed {
+		s.logManualSession("manual_session.cleared", result.Representation.ControlRevision,
+			"previous_revision", request.ExpectedRevision)
 		go func() {
 			_ = s.EnforceLatest(context.Background())
 		}()
@@ -832,13 +885,46 @@ func (s *Service) EstablishControl(ctx context.Context) error {
 	if err != nil || !recovered {
 		return err
 	}
+	s.logManualSession("manual_session.recovered", session.Revision, "decision", "resume_reconciliation")
 	return s.reconcileManualSession(ctx, session.Revision, session.Intended)
 }
 
 func (s *Service) expireManualSession(ctx context.Context, revision string, now time.Time) (store.ExpireManualSessionResult, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	return s.store.ExpireManualSession(ctx, revision, now)
+	result, err := s.store.ExpireManualSession(ctx, revision, now)
+	if err == nil && result.Expired {
+		s.logManualSession("manual_session.expired", result.Representation.ControlRevision,
+			"previous_revision", revision, "decision", "resume_automatic_control")
+	}
+	return result, err
+}
+
+func (s *Service) failManualSessionOutcome(ctx context.Context, revision, field, code, message string) {
+	if err := s.store.FailManualSessionOutcome(ctx, revision, field, code, message); err != nil {
+		return
+	}
+	session, err := s.store.ManualSession(ctx)
+	if err == nil && session != nil && session.Revision == revision && session.Outcomes[field].State == "failed" {
+		s.logManualSession("manual_session.degraded", revision,
+			"capability", field, "outcome", "failed", "code", code)
+	}
+}
+
+func (s *Service) confirmManualSessionStatus(ctx context.Context, revision string, status pool.Status) error {
+	previous, err := s.store.ManualSession(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
+		return err
+	}
+	session, err := s.store.ManualSession(ctx)
+	if err == nil && session != nil && session.Revision == revision &&
+		(previous == nil || previous.Revision != revision || previous.State != session.State) {
+		s.logManualSession("manual_session."+session.State, revision, "outcomes", session.Outcomes)
+	}
+	return err
 }
 
 func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
@@ -1053,7 +1139,7 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 
 		status, err := s.client.Status(ctx)
 		if err != nil {
-			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "pool_unreachable", "The pool could not be refreshed before this command.")
+			s.failManualSessionOutcome(ctx, revision, field, "pool_unreachable", "The pool could not be refreshed before this command.")
 			continue
 		}
 		status.Connected = true
@@ -1062,7 +1148,7 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 		}
 		owned, err := s.persistManualSessionStatus(ctx, revision, status)
 		if err != nil {
-			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "persistence_error", "The refreshed pool status could not be stored.")
+			s.failManualSessionOutcome(ctx, revision, field, "persistence_error", "The refreshed pool status could not be stored.")
 			continue
 		}
 		if !owned {
@@ -1076,14 +1162,14 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 			continue
 		}
 		if dependency := unmetManualDependency(field, intended, status); dependency != "" {
-			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "dependency_not_met", dependency)
+			s.failManualSessionOutcome(ctx, revision, field, "dependency_not_met", dependency)
 			continue
 		}
 		request := manualSessionCommand(field, intended)
 		request.Source = "manual_session:" + revision
 		executed, expired, err := s.executeManualCommand(ctx, revision, request)
 		if err != nil {
-			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "command_failed", err.Error())
+			s.failManualSessionOutcome(ctx, revision, field, "command_failed", err.Error())
 			continue
 		}
 		if expired {
@@ -1106,7 +1192,7 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 			return err
 		}
 		if ok {
-			_ = s.store.ConfirmManualSessionStatus(ctx, revision, resultStatus)
+			_ = s.confirmManualSessionStatus(ctx, revision, resultStatus)
 		}
 	}
 	return nil
@@ -1122,7 +1208,7 @@ func (s *Service) persistManualSessionStatus(ctx context.Context, revision strin
 	if _, err := s.store.SaveObservation(ctx, status); err != nil {
 		return true, err
 	}
-	if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
+	if err := s.confirmManualSessionStatus(ctx, revision, status); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -1155,6 +1241,7 @@ func (s *Service) executeManualCommand(ctx context.Context, revision string, req
 	value, err := commandValue(record.Capability, request)
 	if err != nil {
 		_ = s.store.FinishCommand(ctx, id, false, nil, err)
+		s.recordManualCommandOutcome(ctx, id, revision, record.Capability, "failed", "invalid_command")
 		return true, false, err
 	}
 	if s.manualCommandDispatchHook != nil {
@@ -1172,7 +1259,10 @@ func (s *Service) executeManualCommand(ctx context.Context, revision string, req
 			_, _ = s.store.AddEvent(ctx, "manual_session.stale_worker_discarded", "Stale Manual session command discarded", map[string]any{
 				"control_revision": revision,
 				"capability":       record.Capability,
+				"outcome":          "discarded_before_dispatch",
 			})
+			s.logManualSession("manual_session.stale_worker_discarded", revision,
+				"capability", record.Capability, "outcome", "discarded_before_dispatch")
 			return false, false, nil
 		}
 		return false, false, err
@@ -1192,6 +1282,7 @@ func (s *Service) executeManualCommand(ctx context.Context, revision string, req
 	s.physicalCommandMu.Unlock()
 	if commandErr != nil {
 		_ = s.store.FinishCommand(ctx, id, false, nil, commandErr)
+		s.recordManualCommandOutcome(ctx, id, revision, record.Capability, "failed", "command_failed")
 		return true, false, commandErr
 	}
 	status.Connected = true
@@ -1214,22 +1305,36 @@ func (s *Service) executeManualCommand(ctx context.Context, revision string, req
 		_, _ = s.store.AddEvent(ctx, "manual_session.stale_worker_discarded", "Stale Manual session command result discarded", map[string]any{
 			"control_revision": revision,
 			"capability":       record.Capability,
+			"outcome":          "discarded_result",
 		})
+		s.logManualSession("manual_session.stale_worker_discarded", revision,
+			"capability", record.Capability, "outcome", "discarded_result")
 		return false, false, nil
 	}
 	if _, err := s.store.SaveObservation(ctx, status); err != nil {
 		return true, false, err
 	}
-	if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
+	if err := s.confirmManualSessionStatus(ctx, revision, status); err != nil {
 		return true, false, err
 	}
-	_, _ = s.store.AddEvent(ctx, "command", "command completed", map[string]any{
-		"id":               id,
-		"capability":       record.Capability,
-		"control_revision": revision,
-	})
+	s.recordManualCommandOutcome(ctx, id, revision, record.Capability, "confirmed", "")
 	s.requestRefreshAfter(s.commandConfirmDelay)
 	return true, false, nil
+}
+
+func (s *Service) recordManualCommandOutcome(ctx context.Context, id int64, revision, capability, outcome, code string) {
+	data := map[string]any{
+		"id":               id,
+		"capability":       capability,
+		"control_revision": revision,
+		"outcome":          outcome,
+	}
+	if code != "" {
+		data["code"] = code
+	}
+	_, _ = s.store.AddEvent(ctx, "command", "Manual session command "+outcome, data)
+	s.logManualSession("manual_session.command", revision,
+		"capability", capability, "outcome", outcome, "code", code)
 }
 
 func manualReconciliationOrder(intended pool.ControllableState) []string {

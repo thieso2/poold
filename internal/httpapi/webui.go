@@ -2427,9 +2427,33 @@ function eventLine(event, previousObservation) {
   if (event.type === "status_error" && event.data && event.data.error) return event.data.error;
   if (event.type === "command" && event.data) return commandLine(event.data);
   if (event.type === "command_error" && event.data) return title(event.data.capability) + " failed · " + (event.data.error || event.message || "");
-  if (event.type === "control_mode" && event.data) return event.data.manual_control && event.data.expires_at ? "Manual pool control on until " + formatDateTime(event.data.expires_at) : (event.data.manual_control ? "Manual pool control on" : "Automatic control on");
+  if (event.type && event.type.indexOf("manual_session.") === 0) return manualSessionEventLine(event);
+  if (event.type === "control_mode" || legacyManualActivity(event)) return "Legacy manual control · " + (event.message || "Historical activity");
   if (event.type === "scheduler" && event.data) return planExecutionLine(event);
   return event.message || "";
+}
+
+function manualSessionEventLine(event) {
+  var data = event.data || {};
+  var transition = event.type.replace("manual_session.", "").replace(/_/g, " ");
+  var parts = ["Manual session " + transition];
+  var failed = data.failed_fields || [];
+  if (!failed.length && data.outcomes) {
+    Object.keys(data.outcomes).forEach(function(field) {
+      if (data.outcomes[field] && data.outcomes[field].state === "failed") failed.push(field);
+    });
+  }
+  if (failed.length) parts.push("Failed fields: " + failed.map(title).join(", "));
+  if (data.capability) parts.push(title(data.capability) + (data.outcome ? " " + data.outcome : ""));
+  if (data.code) parts.push(title(data.code));
+  return parts.join(" · ");
+}
+
+function legacyManualActivity(record) {
+  var data = record.data || {};
+  var source = String(record.source || data.source || "");
+  var kind = String(record.kind || data.kind || "");
+  return /manual_override|webui-manual|webui-pause/.test(source + " " + kind);
 }
 
 function previousObservationEvent(rows, index) {
@@ -2440,6 +2464,7 @@ function previousObservationEvent(rows, index) {
 }
 
 function commandLine(command) {
+  if (legacyManualActivity(command)) return "Legacy manual control · " + title(command.capability);
   var value = commandValueText(command);
   var result = command.success ? "ok" : "failed";
   var parts = [title(command.capability) + (value ? " " + value : ""), result];
