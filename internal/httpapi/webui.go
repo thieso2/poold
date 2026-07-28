@@ -387,6 +387,25 @@ h3 {
   background: #e9f6f7;
   color: var(--accent-strong);
 }
+.manual-session-control.explicit-change::after,
+.manual-session-control.dependency-change::after {
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  transform: translateX(-50%);
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: var(--panel);
+  content: "Edited";
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.manual-session-control.dependency-change::after {
+  content: "Auto";
+}
 .orbit-power {
   left: 50%;
   top: 50%;
@@ -420,6 +439,13 @@ h3 {
   display: grid;
   grid-template-columns: 1fr 1.5fr;
   gap: 8px;
+}
+.manual-session-provenance {
+  min-height: 18px;
+  margin: -4px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 .forms {
   display: grid;
@@ -814,6 +840,7 @@ body[data-page="history"] .timeline-canvas {
         <button class="manual-session-control orbit-jets" data-manual-cap="jets" aria-label="Jets off" aria-pressed="false" title="Jets" disabled>≋</button>
         <button class="manual-session-control orbit-bubbles" data-manual-cap="bubbles" aria-label="Bubbles off" aria-pressed="false" title="Bubbles" disabled>◌</button>
       </div>
+      <p class="manual-session-provenance" id="manualSessionProvenance" aria-live="polite"></p>
       <div class="manual-session-fields">
         <label>Target temperature <input id="manualSessionTarget" type="number" min="10" max="40" step="1" disabled></label>
         <label>Duration
@@ -965,7 +992,12 @@ function startManualSessionDraft() {
   if (!observed || !observed.connected) return;
   state.manualSessionDraft = {
     duration: "30m",
+    base: Object.assign({}, observed.state),
     intended: Object.assign({}, observed.state),
+    expected_control_revision: state.poolControlRepresentation.control_revision,
+    base_observation_id: observed.observation_id,
+    explicit: {},
+    dependencies: {},
     dirty: false
   };
   saveManualSessionDraft();
@@ -987,19 +1019,67 @@ function stageManualSessionCapability(cap) {
   if (!draft) return;
   var intended = draft.intended;
   var value = !intended[cap];
+  draft.explicit = draft.explicit || {};
+  draft.dependencies = draft.dependencies || {};
+  draft.explicit[cap] = true;
+  delete draft.dependencies[cap];
   intended[cap] = value;
-  if (cap !== "power" && value) intended.power = true;
-  if (cap === "heater" && value) intended.filter = true;
-  if (cap === "power" && !value) {
-    intended.filter = false;
-    intended.heater = false;
-    intended.jets = false;
-    intended.bubbles = false;
+  if (cap !== "power" && value && !intended.power) {
+    markManualSessionDependency(draft, "power", true, "feature_power");
   }
-  if (cap === "filter" && !value) intended.heater = false;
+  if (cap === "heater" && value && !intended.filter) {
+    markManualSessionDependency(draft, "filter", true, "heater_filter");
+  }
+  if (cap === "power" && !value) {
+    ["filter", "heater", "jets", "bubbles"].forEach(function(field) {
+      markManualSessionDependency(draft, field, false, "power_off");
+    });
+  }
+  if (cap === "filter" && !value && intended.heater) {
+    markManualSessionDependency(draft, "heater", false, "filter_off");
+  }
+  reconcileManualSessionProvenance(draft);
   draft.dirty = true;
   saveManualSessionDraft();
   renderControls();
+}
+
+function markManualSessionDependency(draft, field, value, reason) {
+  if (draft.intended[field] === value) return;
+  draft.intended[field] = value;
+  draft.dependencies = draft.dependencies || {};
+  draft.explicit = draft.explicit || {};
+  draft.dependencies[field] = reason;
+  delete draft.explicit[field];
+}
+
+function reconcileManualSessionProvenance(draft) {
+  var base = draft.base || {};
+  draft.explicit = draft.explicit || {};
+  draft.dependencies = draft.dependencies || {};
+  Object.keys(draft.dependencies).forEach(function(field) {
+    var reason = draft.dependencies[field];
+    if ((reason === "heater_filter" && !draft.intended.heater) ||
+        (reason === "filter_off" && draft.intended.filter) ||
+        (reason === "power_off" && draft.intended.power)) {
+      draft.intended[field] = base[field];
+      delete draft.dependencies[field];
+    }
+  });
+  if (draft.dependencies.power === "feature_power" &&
+      !draft.intended.filter && !draft.intended.heater &&
+      !draft.intended.jets && !draft.intended.bubbles) {
+    draft.intended.power = base.power;
+    delete draft.dependencies.power;
+  }
+  ["power", "filter", "heater", "jets", "bubbles", "target_temp"].forEach(function(field) {
+    if (draft.intended[field] === base[field]) {
+      delete draft.explicit[field];
+      delete draft.dependencies[field];
+    } else if (draft.explicit[field]) {
+      delete draft.dependencies[field];
+    }
+  });
 }
 
 function setBusy(value, message) {
@@ -1035,9 +1115,11 @@ function api(path, options) {
     return resp.text().then(function(text) {
       var body = text ? JSON.parse(text) : null;
       if (!resp.ok) {
-        var message = body && body.error ? body.error : resp.status + " " + resp.statusText;
+        var detail = body && body.error;
+        var message = detail && detail.message ? detail.message : detail || resp.status + " " + resp.statusText;
         var error = new Error(message);
         error.status = resp.status;
+        error.detail = detail;
         throw error;
       }
       return body;
@@ -1089,9 +1171,81 @@ function loadStatus() {
 function loadPoolControl() {
   return api("/manual-session").then(function(representation) {
     state.poolControlRepresentation = representation;
+    if (state.manualSessionDraft && representation && representation.observed &&
+        (!state.manualSessionDraft.expected_control_revision || !state.manualSessionDraft.base_observation_id)) {
+      state.manualSessionDraft.expected_control_revision = representation.control_revision;
+      state.manualSessionDraft.base_observation_id = representation.observed.observation_id;
+      state.manualSessionDraft.base = Object.assign({}, representation.observed.state);
+      state.manualSessionDraft.explicit = state.manualSessionDraft.explicit || {};
+      state.manualSessionDraft.dependencies = state.manualSessionDraft.dependencies || {};
+      saveManualSessionDraft();
+    }
+    if (representation && representation.session && representation.session.state === "applying") {
+      scheduleManualSessionRefresh();
+    } else if (representation && representation.session && representation.session.state === "active") {
+      scheduleManualSessionClock();
+    }
   }).catch(function(err) {
     state.poolControlRepresentation = null;
     toast("Pool control: " + err.message, "bad");
+  });
+}
+
+var manualSessionRefreshTimer = null;
+var manualSessionClockTimer = null;
+function scheduleManualSessionRefresh() {
+  clearTimeout(manualSessionRefreshTimer);
+  manualSessionRefreshTimer = setTimeout(function() {
+    loadPoolControl().then(function() {
+      renderControlMode();
+      renderControls();
+    });
+  }, 800);
+}
+
+function scheduleManualSessionClock() {
+  clearTimeout(manualSessionClockTimer);
+  manualSessionClockTimer = setTimeout(function() {
+    renderControlMode();
+    scheduleManualSessionClock();
+  }, 30000);
+}
+
+function manualSessionIdempotencyKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  return "manual-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+}
+
+function applyManualSessionDraft() {
+  var draft = state.manualSessionDraft;
+  if (!draft || state.pending) return;
+  if (!draft.idempotency_key) {
+    draft.idempotency_key = manualSessionIdempotencyKey();
+    saveManualSessionDraft();
+  }
+  var body = {
+    expected_control_revision: draft.expected_control_revision,
+    base_observation_id: draft.base_observation_id,
+    duration: draft.duration,
+    intended: draft.intended
+  };
+  setBusy(true, "Applying Manual session");
+  api("/manual-session", {
+    method: "PUT",
+    headers: {"Idempotency-Key": draft.idempotency_key},
+    body: JSON.stringify(body)
+  }).then(function(representation) {
+    state.poolControlRepresentation = representation;
+    state.manualSessionDraft = null;
+    saveManualSessionDraft();
+    toast("Manual session committed and applying.", "ok");
+    scheduleManualSessionRefresh();
+  }).catch(function(err) {
+    toast("Manual session: " + err.message, "bad");
+  }).finally(function() {
+    setBusy(false);
+    renderControlMode();
+    renderControls();
   });
 }
 
@@ -1266,31 +1420,76 @@ function renderSettings() {
 function renderControlMode() {
   var draft = state.manualSessionDraft;
   var observed = manualSessionObserved();
-  $("automaticControl").setAttribute("aria-pressed", draft ? "false" : "true");
-  $("manualControl").setAttribute("aria-pressed", draft ? "true" : "false");
-  $("manualControl").disabled = !draft && (!observed || !observed.connected);
+  var representation = state.poolControlRepresentation;
+  var session = representation && representation.session;
+  var manual = !!draft || !!session;
+  $("automaticControl").setAttribute("aria-pressed", manual ? "false" : "true");
+  $("manualControl").setAttribute("aria-pressed", manual ? "true" : "false");
+  $("automaticControl").disabled = !!session;
+  $("manualControl").disabled = !!session || (!draft && (!observed || !observed.connected));
   $("cancelManualSession").disabled = !draft;
-  $("manualSessionHint").textContent = draft
-    ? "Draft saved in this tab. This read-only baseline cannot apply it yet."
-    : "Schedules and reconciliation govern the pool.";
+  if (draft) {
+    $("manualSessionHint").textContent = "Draft saved in this tab. Apply commits the complete intended state.";
+  } else if (session && session.state === "applying") {
+    var confirmed = Object.keys(session.outcomes || {}).filter(function(field) {
+      return session.outcomes[field].state === "confirmed";
+    }).length;
+    $("manualSessionHint").textContent = "Applying Manual session: " + confirmed + " of 6 fields confirmed.";
+  } else if (session && session.state === "active") {
+    $("manualSessionHint").textContent = "Manual session active · " +
+      (session.expires_at ? manualSessionRemaining(session.expires_at) : "Until turned off.");
+  } else {
+    $("manualSessionHint").textContent = "Schedules and reconciliation govern the pool.";
+  }
 }
 
 function renderControls() {
   var draft = state.manualSessionDraft;
   var observed = manualSessionObserved();
-  var displayed = draft ? draft.intended : observed ? observed.state : {};
+  var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
+  var displayed = draft ? draft.intended : session ? session.intended : observed ? observed.state : {};
   qsa("[data-manual-cap]").forEach(function(button) {
     var cap = button.dataset.manualCap;
     var enabled = !!displayed[cap];
     button.disabled = !draft;
+    button.classList.toggle("explicit-change", !!(draft && draft.explicit && draft.explicit[cap]));
+    button.classList.toggle("dependency-change", !!(draft && draft.dependencies && draft.dependencies[cap]));
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
-    button.setAttribute("aria-label", capLabels[cap] + " " + (enabled ? "on" : "off"));
+    var progress = session && session.outcomes && session.outcomes[cap] ? ", " + session.outcomes[cap].state : "";
+    button.setAttribute("aria-label", capLabels[cap] + " " + (enabled ? "on" : "off") + progress);
   });
   $("manualSessionTarget").disabled = !draft;
   $("manualSessionDuration").disabled = !draft;
   $("manualSessionTarget").value = displayed.target_temp == null ? "" : displayed.target_temp;
-  $("manualSessionDuration").value = draft ? draft.duration : "30m";
-  $("manualSessionApply").disabled = true;
+  $("manualSessionDuration").value = draft ? draft.duration : session ? session.duration : "30m";
+  $("manualSessionApply").disabled = !draft || state.pending;
+  var explicit = draft && draft.explicit ? Object.keys(draft.explicit).map(function(field) {
+    return capLabels[field] || "Target temperature";
+  }) : [];
+  var dependencies = draft && draft.dependencies ? Object.keys(draft.dependencies).map(function(field) {
+    return capLabels[field];
+  }) : [];
+  var provenance = [];
+  if (explicit.length) provenance.push("Edited: " + explicit.join(", "));
+  if (dependencies.length) provenance.push("Added automatically: " + dependencies.join(", "));
+  if (session && session.outcomes) {
+    provenance.push(["power", "filter", "heater", "jets", "bubbles", "target_temp"].map(function(field) {
+      var label = capLabels[field] || "Target temperature";
+      var outcome = session.outcomes[field] || {state: "pending"};
+      return label + ": " + outcome.state;
+    }).join(" · "));
+  }
+  $("manualSessionProvenance").textContent = provenance.join(" · ");
+}
+
+function manualSessionRemaining(expiresAt) {
+  var seconds = Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000));
+  if (seconds < 60) return seconds + "s remaining.";
+  var minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return minutes + "m remaining.";
+  var hours = Math.floor(minutes / 60);
+  var remainder = minutes % 60;
+  return hours + "h" + (remainder ? " " + remainder + "m" : "") + " remaining.";
 }
 
 function renderPlans() {
@@ -2339,8 +2538,12 @@ $("manualSessionTarget").onchange = function() {
     return;
   }
   state.manualSessionDraft.intended.target_temp = target;
+  state.manualSessionDraft.explicit = state.manualSessionDraft.explicit || {};
+  state.manualSessionDraft.explicit.target_temp = true;
+  reconcileManualSessionProvenance(state.manualSessionDraft);
   state.manualSessionDraft.dirty = true;
   saveManualSessionDraft();
+  renderControls();
 };
 $("manualSessionDuration").onchange = function() {
   if (!state.manualSessionDraft) return;
@@ -2348,6 +2551,7 @@ $("manualSessionDuration").onchange = function() {
   state.manualSessionDraft.dirty = true;
   saveManualSessionDraft();
 };
+$("manualSessionApply").onclick = applyManualSessionDraft;
 $("reloadPlans").onclick = function() {
   loadPlans().then(renderPlans);
 };

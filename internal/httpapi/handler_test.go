@@ -47,18 +47,23 @@ func TestWebUIIsPublic(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `data-manual-cap="heater"`) ||
 		!strings.Contains(rec.Body.String(), `aria-label="Heater off"`) {
-		t.Fatal("accessible Manual-session feature control missing")
+		t.Fatal("accessible Manual session feature control missing")
 	}
 	if !strings.Contains(rec.Body.String(), `id="manualSessionTarget" type="number" min="10" max="40" step="1" disabled`) {
 		t.Fatal("Automatic target-temperature control is not natively disabled")
 	}
 	if !strings.Contains(rec.Body.String(), `sessionStorage.setItem("poold.manualSessionDraft"`) ||
 		!strings.Contains(rec.Body.String(), `duration: "30m"`) {
-		t.Fatal("per-tab 30-minute Manual-session draft behavior missing")
+		t.Fatal("per-tab 30-minute Manual session draft behavior missing")
 	}
 	if !strings.Contains(rec.Body.String(), `api("/manual-session")`) ||
-		strings.Contains(rec.Body.String(), `api("/manual-session",`) {
-		t.Fatal("Manual-session baseline must only read the mutation endpoint")
+		!strings.Contains(rec.Body.String(), `api("/manual-session", {`) ||
+		!strings.Contains(rec.Body.String(), `"Idempotency-Key": draft.idempotency_key`) {
+		t.Fatal("Manual session read and complete Apply request are missing")
+	}
+	if !strings.Contains(rec.Body.String(), `"Added automatically: "`) ||
+		!strings.Contains(rec.Body.String(), `dependency-change`) {
+		t.Fatal("Manual session dependency provenance is not visibly distinguished")
 	}
 	if !strings.Contains(rec.Body.String(), eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")

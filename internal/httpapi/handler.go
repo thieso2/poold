@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +37,7 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("GET /events", api.handleEvents)
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
 	mux.HandleFunc("GET /manual-session", api.handleGetManualSession)
+	mux.HandleFunc("PUT /manual-session", api.handlePutManualSession)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
 	mux.HandleFunc("GET /control-mode", api.handleGetControlMode)
@@ -63,6 +67,13 @@ func (a *API) auth(next http.Handler) http.Handler {
 		const prefix = "Bearer "
 		if !strings.HasPrefix(value, prefix) ||
 			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(value, prefix)), []byte(a.token)) != 1 {
+			if strings.HasPrefix(r.URL.Path, "/manual-session") {
+				writeManualSessionError(w, http.StatusUnauthorized, manualSessionError{
+					Code:    "unauthorized",
+					Message: "Missing or invalid bearer token.",
+				})
+				return
+			}
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
 		}
@@ -257,6 +268,192 @@ func (a *API) handleGetManualSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, representation)
+}
+
+type manualSessionIntentRequest struct {
+	Power      *bool `json:"power"`
+	Filter     *bool `json:"filter"`
+	Heater     *bool `json:"heater"`
+	Jets       *bool `json:"jets"`
+	Bubbles    *bool `json:"bubbles"`
+	TargetTemp *int  `json:"target_temp"`
+}
+
+type putManualSessionRequest struct {
+	ExpectedControlRevision string                      `json:"expected_control_revision"`
+	BaseObservationID       *int64                      `json:"base_observation_id"`
+	Duration                string                      `json:"duration"`
+	Intended                *manualSessionIntentRequest `json:"intended"`
+}
+
+type manualSessionError struct {
+	Code          string                          `json:"code"`
+	Message       string                          `json:"message"`
+	ChangedFields []string                        `json:"changed_fields"`
+	Violations    []string                        `json:"violations"`
+	Current       *pool.PoolControlRepresentation `json:"current"`
+}
+
+type manualSessionErrorEnvelope struct {
+	Error manualSessionError `json:"error"`
+}
+
+func (a *API) handlePutManualSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "Idempotency-Key is required.",
+		})
+		return
+	}
+	var raw putManualSessionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "Request body is invalid: " + err.Error(),
+		})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeManualSessionError(w, http.StatusBadRequest, manualSessionError{
+			Code:    "invalid_request",
+			Message: "Request body must contain exactly one JSON object.",
+		})
+		return
+	}
+	intended, failure := validatePutManualSession(raw)
+	if failure != nil {
+		status := http.StatusBadRequest
+		if failure.Code == "invalid_state" {
+			status = http.StatusUnprocessableEntity
+		}
+		writeManualSessionError(w, status, *failure)
+		return
+	}
+	canonical, err := json.Marshal(raw)
+	if err != nil {
+		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{
+			Code:    "persistence_error",
+			Message: "The request could not be prepared.",
+		})
+		return
+	}
+	sum := sha256.Sum256(append([]byte("PUT /manual-session\n"), canonical...))
+	result, err := a.service.createManualSession(r.Context(), createManualSessionRequest{
+		ExpectedRevision:  raw.ExpectedControlRevision,
+		BaseObservationID: *raw.BaseObservationID,
+		Duration:          raw.Duration,
+		Intended:          intended,
+		IdempotencyKey:    idempotencyKey,
+		Fingerprint:       hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		var failure *manualSessionFailure
+		if errors.As(err, &failure) {
+			status := manualSessionFailureStatus(failure.Code)
+			writeManualSessionError(w, status, manualSessionError{
+				Code:          failure.Code,
+				Message:       failure.Message,
+				ChangedFields: failure.ChangedFields,
+				Violations:    failure.Violations,
+				Current:       failure.Current,
+			})
+			return
+		}
+		writeManualSessionError(w, http.StatusInternalServerError, manualSessionError{
+			Code:    "persistence_error",
+			Message: "The Manual session could not be durably committed.",
+		})
+		return
+	}
+	writeJSON(w, result.Status, result.Representation)
+}
+
+func validatePutManualSession(request putManualSessionRequest) (pool.ControllableState, *manualSessionError) {
+	if strings.TrimSpace(request.ExpectedControlRevision) == "" {
+		return pool.ControllableState{}, &manualSessionError{
+			Code:    "invalid_request",
+			Message: "expected_control_revision is required.",
+		}
+	}
+	if request.BaseObservationID == nil || *request.BaseObservationID <= 0 {
+		return pool.ControllableState{}, &manualSessionError{
+			Code:    "invalid_request",
+			Message: "base_observation_id is required.",
+		}
+	}
+	switch request.Duration {
+	case "30m", "60m", "2h", "until_off":
+	default:
+		return pool.ControllableState{}, &manualSessionError{
+			Code:    "invalid_request",
+			Message: "duration must be 30m, 60m, 2h, or until_off.",
+		}
+	}
+	if request.Intended == nil ||
+		request.Intended.Power == nil ||
+		request.Intended.Filter == nil ||
+		request.Intended.Heater == nil ||
+		request.Intended.Jets == nil ||
+		request.Intended.Bubbles == nil ||
+		request.Intended.TargetTemp == nil {
+		return pool.ControllableState{}, &manualSessionError{
+			Code:    "invalid_request",
+			Message: "intended must contain every controllable field.",
+		}
+	}
+	if *request.Intended.TargetTemp < 10 || *request.Intended.TargetTemp > 40 {
+		return pool.ControllableState{}, &manualSessionError{
+			Code:    "invalid_request",
+			Message: "target_temp must be an integer from 10 through 40.",
+		}
+	}
+	intended := pool.ControllableState{
+		Power:      *request.Intended.Power,
+		Filter:     *request.Intended.Filter,
+		Heater:     *request.Intended.Heater,
+		Jets:       *request.Intended.Jets,
+		Bubbles:    *request.Intended.Bubbles,
+		TargetTemp: *request.Intended.TargetTemp,
+	}
+	if violations := intended.DependencyViolations(); len(violations) != 0 {
+		return pool.ControllableState{}, &manualSessionError{
+			Code:       "invalid_state",
+			Message:    "The intended state has contradictory dependencies.",
+			Violations: violations,
+		}
+	}
+	return intended, nil
+}
+
+func manualSessionFailureStatus(code string) int {
+	switch code {
+	case "invalid_request":
+		return http.StatusBadRequest
+	case "invalid_state":
+		return http.StatusUnprocessableEntity
+	case "control_changed", "observed_state_changed", "idempotency_key_reused":
+		return http.StatusConflict
+	case "pool_unreachable":
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func writeManualSessionError(w http.ResponseWriter, status int, failure manualSessionError) {
+	if failure.ChangedFields == nil {
+		failure.ChangedFields = []string{}
+	}
+	if failure.Violations == nil {
+		failure.Violations = []string{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, manualSessionErrorEnvelope{Error: failure})
 }
 
 func (a *API) handlePutDesiredState(w http.ResponseWriter, r *http.Request) {

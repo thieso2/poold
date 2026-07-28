@@ -43,6 +43,27 @@ type Service struct {
 
 var ErrWeatherNotConfigured = errors.New("weather is not configured")
 
+type manualSessionFailure struct {
+	Code          string
+	Message       string
+	ChangedFields []string
+	Violations    []string
+	Current       *pool.PoolControlRepresentation
+}
+
+func (e *manualSessionFailure) Error() string {
+	return e.Message
+}
+
+type createManualSessionRequest struct {
+	ExpectedRevision  string
+	BaseObservationID int64
+	Duration          string
+	Intended          pool.ControllableState
+	IdempotencyKey    string
+	Fingerprint       string
+}
+
 type WeatherProvider interface {
 	ResolveLocation(context.Context, string, string) (pool.WeatherLocation, error)
 	CurrentWeather(context.Context, string, pool.WeatherLocation) (json.RawMessage, error)
@@ -242,6 +263,10 @@ func (s *Service) PoolControl(ctx context.Context) (pool.PoolControlRepresentati
 	if err != nil {
 		return pool.PoolControlRepresentation{}, err
 	}
+	session, err := s.store.ManualSession(ctx)
+	if err != nil {
+		return pool.PoolControlRepresentation{}, err
+	}
 	observations, err := s.store.LatestObservations(ctx, 1)
 	if err != nil {
 		return pool.PoolControlRepresentation{}, err
@@ -250,25 +275,166 @@ func (s *Service) PoolControl(ctx context.Context) (pool.PoolControlRepresentati
 		Control:         pool.AutomaticControl,
 		ControlRevision: revision,
 	}
+	if session != nil {
+		representation.Control = pool.ManualControl
+		representation.Session = &pool.ManualSessionRepresentation{
+			State:     session.State,
+			Duration:  session.Duration,
+			StartedAt: session.StartedAt,
+			ExpiresAt: session.ExpiresAt,
+			Intended:  session.Intended,
+			Outcomes:  session.Outcomes,
+		}
+	}
 	if len(observations) == 0 {
 		return representation, nil
 	}
 	observation := observations[0]
-	status := observation.Status
-	representation.Observed = &pool.ControlObservation{
-		ObservationID: observation.ID,
+	representation.Observed = controlObservation(observation.ID, observation.Status)
+	return representation, nil
+}
+
+func controlObservation(id int64, status pool.Status) *pool.ControlObservation {
+	return &pool.ControlObservation{
+		ObservationID: id,
 		ObservedAt:    status.ObservedAt,
 		Connected:     status.Connected,
-		State: pool.ControllableState{
-			Power:      status.Power,
-			Filter:     status.Filter,
-			Heater:     status.Heater,
-			Jets:       status.Jets,
-			Bubbles:    status.Bubbles,
-			TargetTemp: status.TargetTemp,
-		},
+		State:         pool.ControllableStateFromStatus(status),
 	}
-	return representation, nil
+}
+
+func (s *Service) createManualSession(ctx context.Context, request createManualSessionRequest) (store.CreateManualSessionResult, error) {
+	base, ok, err := s.store.ObservationStatus(ctx, request.BaseObservationID)
+	if err != nil {
+		return store.CreateManualSessionResult{}, err
+	}
+	if !ok {
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:    "invalid_request",
+			Message: "base_observation_id does not identify an observation.",
+		}
+	}
+
+	fresh, err := s.client.Status(ctx)
+	if err != nil {
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:    "pool_unreachable",
+			Message: "The pool could not be reached for a fresh status read.",
+		}
+	}
+	if fresh.ObservedAt.IsZero() {
+		fresh.ObservedAt = time.Now().UTC()
+	}
+	fresh.Connected = true
+	observationID, err := s.store.SaveObservation(ctx, fresh)
+	if err != nil {
+		return store.CreateManualSessionResult{}, err
+	}
+	changedFields := changedControllableFields(
+		pool.ControllableStateFromStatus(base),
+		pool.ControllableStateFromStatus(fresh),
+	)
+	if len(changedFields) != 0 {
+		current, currentErr := s.PoolControl(ctx)
+		if currentErr != nil {
+			return store.CreateManualSessionResult{}, currentErr
+		}
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:          "observed_state_changed",
+			Message:       "The pool changed after this draft was opened.",
+			ChangedFields: changedFields,
+			Current:       &current,
+		}
+	}
+
+	startedAt := time.Now().UTC()
+	var expiresAt *time.Time
+	switch request.Duration {
+	case "30m":
+		value := startedAt.Add(30 * time.Minute)
+		expiresAt = &value
+	case "60m":
+		value := startedAt.Add(time.Hour)
+		expiresAt = &value
+	case "2h":
+		value := startedAt.Add(2 * time.Hour)
+		expiresAt = &value
+	case "until_off":
+	default:
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:    "invalid_request",
+			Message: "duration must be 30m, 60m, 2h, or until_off.",
+		}
+	}
+	outcomes := initialManualSessionOutcomes(pool.ControllableStateFromStatus(fresh), request.Intended)
+	result, err := s.store.CreateManualSession(ctx, store.CreateManualSessionParams{
+		ExpectedRevision: request.ExpectedRevision,
+		IdempotencyKey:   request.IdempotencyKey,
+		Fingerprint:      request.Fingerprint,
+		Duration:         request.Duration,
+		StartedAt:        startedAt,
+		ExpiresAt:        expiresAt,
+		Intended:         request.Intended,
+		Outcomes:         outcomes,
+		Observed:         controlObservation(observationID, fresh),
+	})
+	if errors.Is(err, store.ErrControlChanged) {
+		current, currentErr := s.PoolControl(ctx)
+		if currentErr != nil {
+			return store.CreateManualSessionResult{}, currentErr
+		}
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:    "control_changed",
+			Message: "Control changed after this draft was opened.",
+			Current: &current,
+		}
+	}
+	if errors.Is(err, store.ErrIdempotencyKeyReused) {
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:    "idempotency_key_reused",
+			Message: "The idempotency key was already used for a different operation.",
+		}
+	}
+	if err != nil {
+		return store.CreateManualSessionResult{}, err
+	}
+	if !result.Replayed && result.Representation.Session != nil &&
+		result.Representation.Session.State == "applying" {
+		revision := result.Representation.ControlRevision
+		intended := result.Representation.Session.Intended
+		go s.reconcileManualSession(context.Background(), revision, intended)
+	}
+	return result, nil
+}
+
+func changedControllableFields(base, fresh pool.ControllableState) []string {
+	var changed []string
+	for _, field := range pool.ControllableFields {
+		if !base.FieldEqual(field, fresh) {
+			changed = append(changed, field)
+		}
+	}
+	return changed
+}
+
+func initialManualSessionOutcomes(observed, intended pool.ControllableState) map[string]pool.CommandOutcome {
+	outcomes := make(map[string]pool.CommandOutcome, len(pool.ControllableFields))
+	pending := false
+	for _, field := range pool.ControllableFields {
+		state := "pending"
+		if observed.FieldEqual(field, intended) {
+			state = "confirmed"
+		} else {
+			pending = true
+		}
+		outcomes[field] = pool.CommandOutcome{State: state}
+	}
+	// Ownership always becomes visibly applying before the asynchronous worker
+	// confirms a no-op intent from its own fresh reconciliation read.
+	if !pending {
+		outcomes["power"] = pool.CommandOutcome{State: "pending"}
+	}
+	return outcomes
 }
 
 func (s *Service) SaveDesiredState(ctx context.Context, desired pool.DesiredState) error {
@@ -465,6 +631,13 @@ func (s *Service) EnforceLatest(ctx context.Context) error {
 }
 
 func (s *Service) Enforce(ctx context.Context, status pool.Status) error {
+	session, err := s.store.ManualSession(ctx)
+	if err != nil {
+		return err
+	}
+	if session != nil {
+		return nil
+	}
 	now := time.Now()
 	mode, err := s.controlMode(ctx, now)
 	if err != nil {
@@ -610,6 +783,126 @@ type commandDiff struct {
 	capability string
 	state      *bool
 	value      json.RawMessage
+}
+
+func (s *Service) reconcileManualSession(ctx context.Context, revision string, intended pool.ControllableState) {
+	for _, field := range manualReconciliationOrder(intended) {
+		current, err := s.store.ManualSession(ctx)
+		if err != nil || current == nil || current.Revision != revision {
+			return
+		}
+		if current.Outcomes[field].State != "pending" {
+			continue
+		}
+
+		status, err := s.client.Status(ctx)
+		if err != nil {
+			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "pool_unreachable", "The pool could not be refreshed before this command.")
+			continue
+		}
+		status.Connected = true
+		if status.ObservedAt.IsZero() {
+			status.ObservedAt = time.Now().UTC()
+		}
+		if _, err := s.store.SaveObservation(ctx, status); err != nil {
+			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "persistence_error", "The refreshed pool status could not be stored.")
+			continue
+		}
+		if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
+			return
+		}
+		current, err = s.store.ManualSession(ctx)
+		if err != nil || current == nil || current.Revision != revision {
+			return
+		}
+		if current.Outcomes[field].State != "pending" {
+			continue
+		}
+		if dependency := unmetManualDependency(field, intended, status); dependency != "" {
+			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "dependency_not_met", dependency)
+			continue
+		}
+		owns, err := s.store.ManualSessionRevisionCurrent(ctx, revision)
+		if err != nil || !owns {
+			return
+		}
+		request := manualSessionCommand(field, intended)
+		request.Source = "manual_session:" + revision
+		if _, err := s.ExecuteCommand(ctx, request); err != nil {
+			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "command_failed", err.Error())
+			continue
+		}
+		resultStatus, ok, err := s.store.LatestStatus(ctx)
+		if err != nil {
+			return
+		}
+		if ok {
+			_ = s.store.ConfirmManualSessionStatus(ctx, revision, resultStatus)
+		}
+	}
+}
+
+func manualReconciliationOrder(intended pool.ControllableState) []string {
+	var fields []string
+	appendIf := func(condition bool, field string) {
+		if condition {
+			fields = append(fields, field)
+		}
+	}
+	appendIf(!intended.Heater, "heater")
+	appendIf(!intended.Jets, "jets")
+	appendIf(!intended.Bubbles, "bubbles")
+	appendIf(intended.Power, "power")
+	appendIf(intended.Filter, "filter")
+	fields = append(fields, "target_temp")
+	appendIf(intended.Heater, "heater")
+	appendIf(intended.Jets, "jets")
+	appendIf(intended.Bubbles, "bubbles")
+	appendIf(!intended.Filter, "filter")
+	appendIf(!intended.Power, "power")
+	return fields
+}
+
+func manualSessionCommand(field string, intended pool.ControllableState) pool.CommandRequest {
+	request := pool.CommandRequest{Capability: field}
+	switch field {
+	case "power":
+		request.State = pool.BoolPtr(intended.Power)
+	case "filter":
+		request.State = pool.BoolPtr(intended.Filter)
+	case "heater":
+		request.State = pool.BoolPtr(intended.Heater)
+	case "jets":
+		request.State = pool.BoolPtr(intended.Jets)
+	case "bubbles":
+		request.State = pool.BoolPtr(intended.Bubbles)
+	case "target_temp":
+		request.Value = json.RawMessage(fmt.Sprintf("%d", intended.TargetTemp))
+	}
+	return request
+}
+
+func unmetManualDependency(field string, intended pool.ControllableState, status pool.Status) string {
+	enabling := false
+	switch field {
+	case "power":
+		enabling = intended.Power
+	case "filter":
+		enabling = intended.Filter
+	case "heater":
+		enabling = intended.Heater
+	case "jets":
+		enabling = intended.Jets
+	case "bubbles":
+		enabling = intended.Bubbles
+	}
+	if enabling && field != "power" && !status.Power {
+		return "Power must be on before enabling " + field + "."
+	}
+	if field == "heater" && intended.Heater && !status.Filter {
+		return "Filter must be on before enabling heater."
+	}
+	return ""
 }
 
 func diffCommands(status pool.Status, desired pool.DesiredState) []commandDiff {

@@ -28,6 +28,33 @@ type Store struct {
 const weatherSnapshotMaxAge = 15 * time.Minute
 const readyByControlKeyPrefix = "ready_by_control:"
 
+var (
+	// ErrControlChanged indicates that optimistic control ownership no longer matches.
+	ErrControlChanged = errors.New("control changed")
+	// ErrIdempotencyKeyReused indicates that a key names a different operation.
+	ErrIdempotencyKeyReused = errors.New("idempotency key reused")
+)
+
+// CreateManualSessionParams contains the complete transaction input.
+type CreateManualSessionParams struct {
+	ExpectedRevision string
+	IdempotencyKey   string
+	Fingerprint      string
+	Duration         string
+	StartedAt        time.Time
+	ExpiresAt        *time.Time
+	Intended         pool.ControllableState
+	Outcomes         map[string]pool.CommandOutcome
+	Observed         *pool.ControlObservation
+}
+
+// CreateManualSessionResult contains either the newly committed or replayed response.
+type CreateManualSessionResult struct {
+	Status         int
+	Representation pool.PoolControlRepresentation
+	Replayed       bool
+}
+
 type pendingObservation struct {
 	id          int64
 	lastFlushAt time.Time
@@ -389,6 +416,270 @@ func (s *Store) ControlRevision(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return revision, nil
+}
+
+// ObservationStatus returns the durable status snapshot identified by id.
+func (s *Store) ObservationStatus(ctx context.Context, id int64) (pool.Status, bool, error) {
+	var body []byte
+	err := s.db.QueryRowContext(ctx, `SELECT status_json FROM observations WHERE id = ?`, id).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return pool.Status{}, false, nil
+	}
+	if err != nil {
+		return pool.Status{}, false, err
+	}
+	var status pool.Status
+	if err := json.Unmarshal(body, &status); err != nil {
+		return pool.Status{}, false, err
+	}
+	return status, true, nil
+}
+
+// ManualSession loads the current durable Manual session, if one owns control.
+func (s *Store) ManualSession(ctx context.Context) (*pool.ManualSession, error) {
+	var (
+		session      pool.ManualSession
+		startedAt    string
+		expiresAt    sql.NullString
+		intendedJSON []byte
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT revision, lifecycle_state, duration, started_at, expires_at, intended_json
+		FROM manual_session
+		WHERE id = 1
+	`).Scan(&session.Revision, &session.State, &session.Duration, &startedAt, &expiresAt, &intendedJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	session.StartedAt = decodeTime(startedAt)
+	if expiresAt.Valid {
+		value := decodeTime(expiresAt.String)
+		session.ExpiresAt = &value
+	}
+	if err := json.Unmarshal(intendedJSON, &session.Intended); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT field, state, COALESCE(code, ''), COALESCE(message, '')
+		FROM manual_session_outcomes
+		WHERE revision = ?
+	`, session.Revision)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	session.Outcomes = make(map[string]pool.CommandOutcome, len(pool.ControllableFields))
+	for rows.Next() {
+		var field string
+		var outcome pool.CommandOutcome
+		if err := rows.Scan(&field, &outcome.State, &outcome.Code, &outcome.Message); err != nil {
+			return nil, err
+		}
+		session.Outcomes[field] = outcome
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// CreateManualSession atomically commits ownership, progress, lifecycle event, and response.
+func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSessionParams) (CreateManualSessionResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	defer tx.Rollback()
+
+	var storedFingerprint string
+	var storedStatus int
+	var storedResponse []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT fingerprint, response_status, response_json
+		FROM idempotency_records
+		WHERE key = ?
+	`, params.IdempotencyKey).Scan(&storedFingerprint, &storedStatus, &storedResponse)
+	if err == nil {
+		if storedFingerprint != params.Fingerprint {
+			return CreateManualSessionResult{}, ErrIdempotencyKeyReused
+		}
+		var representation pool.PoolControlRepresentation
+		if err := json.Unmarshal(storedResponse, &representation); err != nil {
+			return CreateManualSessionResult{}, err
+		}
+		return CreateManualSessionResult{Status: storedStatus, Representation: representation, Replayed: true}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return CreateManualSessionResult{}, err
+	}
+
+	var currentRevision string
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM control_state WHERE id = 1`).Scan(&currentRevision); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	if currentRevision != params.ExpectedRevision {
+		return CreateManualSessionResult{}, ErrControlChanged
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM manual_session`).Scan(&existing); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	if existing != 0 {
+		return CreateManualSessionResult{}, ErrControlChanged
+	}
+
+	revision, err := newRevision()
+	if err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	intendedJSON, err := json.Marshal(params.Intended)
+	if err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	state := lifecycleState(params.Outcomes)
+	var expiresAt any
+	if params.ExpiresAt != nil {
+		expiresAt = encodeTime(*params.ExpiresAt)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO manual_session (
+			id, revision, lifecycle_state, duration, started_at, expires_at, intended_json
+		) VALUES (1, ?, ?, ?, ?, ?, ?)
+	`, revision, state, params.Duration, encodeTime(params.StartedAt), expiresAt, intendedJSON); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	for _, field := range pool.ControllableFields {
+		outcome := params.Outcomes[field]
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO manual_session_outcomes (revision, field, state, code, message)
+			VALUES (?, ?, ?, ?, ?)
+		`, revision, field, outcome.State, nullableString(outcome.Code), nullableString(outcome.Message)); err != nil {
+			return CreateManualSessionResult{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE control_state SET revision = ? WHERE id = 1`, revision); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+
+	session := &pool.ManualSessionRepresentation{
+		State:     state,
+		Duration:  params.Duration,
+		StartedAt: params.StartedAt,
+		ExpiresAt: params.ExpiresAt,
+		Intended:  params.Intended,
+		Outcomes:  params.Outcomes,
+	}
+	representation := pool.PoolControlRepresentation{
+		Control:         pool.ManualControl,
+		ControlRevision: revision,
+		Observed:        params.Observed,
+		Session:         session,
+	}
+	eventData, err := json.Marshal(map[string]any{
+		"control_revision": revision,
+		"duration":         params.Duration,
+		"state":            state,
+	})
+	if err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO events (created_at, type, message, data_json)
+		VALUES (?, 'manual_session.created', 'Manual session created', ?)
+	`, encodeTime(params.StartedAt), eventData); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	responseJSON, err := json.Marshal(representation)
+	if err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO idempotency_records (
+			key, fingerprint, response_status, response_json, created_at
+		) VALUES (?, ?, 202, ?, ?)
+	`, params.IdempotencyKey, params.Fingerprint, responseJSON, encodeTime(params.StartedAt)); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CreateManualSessionResult{}, err
+	}
+	return CreateManualSessionResult{Status: 202, Representation: representation}, nil
+}
+
+// ManualSessionRevisionCurrent reports whether revision still owns the current session.
+func (s *Store) ManualSessionRevisionCurrent(ctx context.Context, revision string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM manual_session
+		WHERE id = 1 AND revision = ?
+	`, revision).Scan(&exists)
+	return exists == 1, err
+}
+
+// ConfirmManualSessionStatus records every satisfied pending field in a full status snapshot.
+func (s *Store) ConfirmManualSessionStatus(ctx context.Context, revision string, status pool.Status) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	session, outcomes, err := manualSessionTx(ctx, tx, revision)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return nil
+	}
+	observed := pool.ControllableStateFromStatus(status)
+	for _, field := range pool.ControllableFields {
+		outcome := outcomes[field]
+		if outcome.State == "pending" && observed.FieldEqual(field, session.Intended) {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE manual_session_outcomes
+				SET state = 'confirmed', code = NULL, message = NULL
+				WHERE revision = ? AND field = ?
+			`, revision, field); err != nil {
+				return err
+			}
+			outcomes[field] = pool.CommandOutcome{State: "confirmed"}
+		}
+	}
+	if err := updateManualLifecycleTx(ctx, tx, revision, session.State, outcomes); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// FailManualSessionOutcome records one stable failure for the owning session.
+func (s *Store) FailManualSessionOutcome(ctx context.Context, revision, field, code, message string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	session, outcomes, err := manualSessionTx(ctx, tx, revision)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE manual_session_outcomes
+		SET state = 'failed', code = ?, message = ?
+		WHERE revision = ? AND field = ?
+	`, code, message, revision, field); err != nil {
+		return err
+	}
+	outcomes[field] = pool.CommandOutcome{State: "failed", Code: code, Message: message}
+	if err := updateManualLifecycleTx(ctx, tx, revision, session.State, outcomes); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ObservationsRange(ctx context.Context, from, to time.Time) ([]pool.Observation, error) {
@@ -1332,6 +1623,33 @@ func (s *Store) migrate(ctx context.Context) error {
 			revision TEXT NOT NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS manual_session (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			revision TEXT NOT NULL UNIQUE,
+			lifecycle_state TEXT NOT NULL,
+			duration TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			expires_at TEXT,
+			intended_json BLOB NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS manual_session_outcomes (
+			revision TEXT NOT NULL,
+			field TEXT NOT NULL,
+			state TEXT NOT NULL,
+			code TEXT,
+			message TEXT,
+			PRIMARY KEY (revision, field)
+		);
+
+		CREATE TABLE IF NOT EXISTS idempotency_records (
+			key TEXT PRIMARY KEY,
+			fingerprint TEXT NOT NULL,
+			response_status INTEGER NOT NULL,
+			response_json BLOB NOT NULL,
+			created_at TEXT NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS plans (
 			id TEXT PRIMARY KEY,
 			updated_at TEXT NOT NULL,
@@ -1363,14 +1681,106 @@ func (s *Store) initializeControlRevision(ctx context.Context) error {
 	if exists != 0 {
 		return nil
 	}
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
+	revision, err := newRevision()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO control_state (id, revision)
 		VALUES (1, ?)
-	`, hex.EncodeToString(bytes))
+	`, revision)
+	return err
+}
+
+func newRevision() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func lifecycleState(outcomes map[string]pool.CommandOutcome) string {
+	state := "active"
+	for _, outcome := range outcomes {
+		if outcome.State == "failed" {
+			return "degraded"
+		}
+		if outcome.State == "pending" {
+			state = "applying"
+		}
+	}
+	return state
+}
+
+func manualSessionTx(ctx context.Context, tx *sql.Tx, revision string) (*pool.ManualSession, map[string]pool.CommandOutcome, error) {
+	var (
+		session      pool.ManualSession
+		intendedJSON []byte
+	)
+	err := tx.QueryRowContext(ctx, `
+		SELECT revision, lifecycle_state, intended_json
+		FROM manual_session
+		WHERE id = 1 AND revision = ?
+	`, revision).Scan(&session.Revision, &session.State, &intendedJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal(intendedJSON, &session.Intended); err != nil {
+		return nil, nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT field, state, COALESCE(code, ''), COALESCE(message, '')
+		FROM manual_session_outcomes
+		WHERE revision = ?
+	`, revision)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	outcomes := make(map[string]pool.CommandOutcome, len(pool.ControllableFields))
+	for rows.Next() {
+		var field string
+		var outcome pool.CommandOutcome
+		if err := rows.Scan(&field, &outcome.State, &outcome.Code, &outcome.Message); err != nil {
+			return nil, nil, err
+		}
+		outcomes[field] = outcome
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return &session, outcomes, nil
+}
+
+func updateManualLifecycleTx(ctx context.Context, tx *sql.Tx, revision, previous string, outcomes map[string]pool.CommandOutcome) error {
+	current := lifecycleState(outcomes)
+	if current == previous {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE manual_session SET lifecycle_state = ? WHERE id = 1 AND revision = ?
+	`, current, revision); err != nil {
+		return err
+	}
+	data, err := json.Marshal(map[string]any{"control_revision": revision, "state": current})
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO events (created_at, type, message, data_json)
+		VALUES (?, ?, ?, ?)
+	`, encodeTime(time.Now().UTC()), "manual_session."+current, "Manual session "+current, data)
 	return err
 }
 
