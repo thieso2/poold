@@ -885,7 +885,16 @@ func (s *Service) EstablishControl(ctx context.Context) error {
 	if err != nil || !recovered {
 		return err
 	}
-	s.logManualSession("manual_session.recovered", session.Revision, "decision", "resume_reconciliation")
+	recoveredSession, err := s.store.ManualSession(ctx)
+	if err != nil {
+		return err
+	}
+	s.logManualSession("manual_session.recovered", session.Revision,
+		"decision", "resume_reconciliation", "state", recoveredSession.State, "outcomes", recoveredSession.Outcomes)
+	if recoveredSession.State == "applying" {
+		s.logManualSession("manual_session.applying", session.Revision,
+			"reason", "recovery", "outcomes", recoveredSession.Outcomes)
+	}
 	return s.reconcileManualSession(ctx, session.Revision, session.Intended)
 }
 

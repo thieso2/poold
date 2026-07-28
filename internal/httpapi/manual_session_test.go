@@ -244,6 +244,13 @@ func TestManualSessionRecoveryUsesSameSQLiteDatabaseBeforeSchedulesRun(t *testin
 	if !hasEventType(events, "manual_session.recovered") {
 		t.Fatalf("events = %+v, want manual_session.recovered", events)
 	}
+	recoveredIndex := lastEventTypeIndex(events, "manual_session.recovered")
+	applyingIndex := lastEventTypeIndex(events, "manual_session.applying")
+	activeIndex := lastEventTypeIndex(events, "manual_session.active")
+	if applyingIndex < 0 || recoveredIndex < 0 || activeIndex < 0 ||
+		!(applyingIndex < recoveredIndex && recoveredIndex < activeIndex) {
+		t.Fatalf("events = %+v, want recovery lifecycle applying, recovered, active", events)
+	}
 }
 
 func TestManualSessionRecoversCrashAfterCommitBeforeFirstCommand(t *testing.T) {
@@ -1421,6 +1428,16 @@ func hasEventType(events []pool.Event, eventType string) bool {
 		}
 	}
 	return false
+}
+
+func lastEventTypeIndex(events []pool.Event, eventType string) int {
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.Type == eventType {
+			return index
+		}
+	}
+	return -1
 }
 
 func putManualSession(t *testing.T, handler http.Handler, key, revision string, observationID int64, duration string, intended pool.ControllableState) *httptest.ResponseRecorder {

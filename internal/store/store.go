@@ -971,8 +971,11 @@ func (s *Store) RecoverManualSession(ctx context.Context, expectedRevision strin
 	`, expectedRevision); err != nil {
 		return false, err
 	}
-	_, outcomes, err := manualSessionTx(ctx, tx, expectedRevision)
+	session, outcomes, err := manualSessionTx(ctx, tx, expectedRevision)
 	if err != nil {
+		return false, err
+	}
+	if err := updateManualLifecycleTx(ctx, tx, expectedRevision, session.State, outcomes); err != nil {
 		return false, err
 	}
 	data, err := json.Marshal(map[string]any{
