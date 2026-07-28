@@ -16,31 +16,33 @@ import (
 )
 
 type Service struct {
-	store                    *store.Store
-	client                   intex.PoolClient
-	scheduler                *scheduler.Scheduler
-	weather                  WeatherProvider
-	startedAt                time.Time
-	observationRetention     time.Duration
-	eventRetention           time.Duration
-	eventHeartbeat           time.Duration
-	observationFlushInterval time.Duration
-	commandConfirmDelay      time.Duration
-	manualControlDuration    time.Duration
-	heatingRateCPerHour      float64
-	coolingRateCPerHour      float64
-	pollIdleInterval         time.Duration
-	pollStableInterval       time.Duration
-	pollActiveInterval       time.Duration
-	refreshRequests          chan time.Duration
-	commandMu                sync.Mutex
-	manualReconcileMu        sync.Mutex
-	weatherMu                sync.Mutex
-	statusEventMu            sync.Mutex
-	lastStatusEventAt        time.Time
-	lastStatusError          string
-	lastStatusErrorAt        time.Time
-	now                      func() time.Time
+	store                     *store.Store
+	client                    intex.PoolClient
+	scheduler                 *scheduler.Scheduler
+	weather                   WeatherProvider
+	startedAt                 time.Time
+	observationRetention      time.Duration
+	eventRetention            time.Duration
+	eventHeartbeat            time.Duration
+	observationFlushInterval  time.Duration
+	commandConfirmDelay       time.Duration
+	manualControlDuration     time.Duration
+	heatingRateCPerHour       float64
+	coolingRateCPerHour       float64
+	pollIdleInterval          time.Duration
+	pollStableInterval        time.Duration
+	pollActiveInterval        time.Duration
+	refreshRequests           chan time.Duration
+	commandMu                 sync.Mutex
+	physicalCommandMu         sync.Mutex
+	manualReconcileMu         sync.Mutex
+	weatherMu                 sync.Mutex
+	statusEventMu             sync.Mutex
+	lastStatusEventAt         time.Time
+	lastStatusError           string
+	lastStatusErrorAt         time.Time
+	manualCommandDispatchHook func()
+	now                       func() time.Time
 }
 
 var ErrWeatherNotConfigured = errors.New("weather is not configured")
@@ -249,7 +251,9 @@ func (s *Service) executeCommandLocked(ctx context.Context, request pool.Command
 	}
 	record.ID = id
 
+	s.physicalCommandMu.Lock()
 	status, err := s.client.Set(ctx, capability, value)
+	s.physicalCommandMu.Unlock()
 	if err != nil {
 		record.Error = err.Error()
 		_ = s.store.FinishCommand(ctx, id, false, nil, err)
@@ -1056,12 +1060,13 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 		if status.ObservedAt.IsZero() {
 			status.ObservedAt = time.Now().UTC()
 		}
-		if _, err := s.store.SaveObservation(ctx, status); err != nil {
+		owned, err := s.persistManualSessionStatus(ctx, revision, status)
+		if err != nil {
 			_ = s.store.FailManualSessionOutcome(ctx, revision, field, "persistence_error", "The refreshed pool status could not be stored.")
 			continue
 		}
-		if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
-			return err
+		if !owned {
+			return nil
 		}
 		current, err = s.store.ManualSession(ctx)
 		if err != nil || current == nil || current.Revision != revision {
@@ -1107,19 +1112,123 @@ func (s *Service) reconcileManualSession(ctx context.Context, revision string, i
 	return nil
 }
 
-func (s *Service) executeManualCommand(ctx context.Context, revision string, request pool.CommandRequest) (executed, expired bool, err error) {
+func (s *Service) persistManualSessionStatus(ctx context.Context, revision string, status pool.Status) (bool, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	current, err := s.store.ManualSession(ctx)
 	if err != nil || current == nil || current.Revision != revision {
+		return false, err
+	}
+	if _, err := s.store.SaveObservation(ctx, status); err != nil {
+		return true, err
+	}
+	if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (s *Service) executeManualCommand(ctx context.Context, revision string, request pool.CommandRequest) (executed, expired bool, err error) {
+	s.commandMu.Lock()
+	current, err := s.store.ManualSession(ctx)
+	if err != nil || current == nil || current.Revision != revision {
+		s.commandMu.Unlock()
 		return false, false, err
 	}
 	if current.ExpiresAt != nil && !current.ExpiresAt.After(s.now().UTC()) {
+		s.commandMu.Unlock()
 		return false, true, nil
 	}
-	if _, err := s.executeCommandLocked(ctx, request); err != nil {
+	record := pool.CommandRecord{
+		IssuedAt:   time.Now().UTC(),
+		Capability: request.NormalizedCapability(),
+		State:      request.State,
+		Value:      request.Value,
+		Source:     request.Source,
+	}
+	id, err := s.store.InsertCommand(ctx, record)
+	s.commandMu.Unlock()
+	if err != nil {
+		return false, false, err
+	}
+
+	value, err := commandValue(record.Capability, request)
+	if err != nil {
+		_ = s.store.FinishCommand(ctx, id, false, nil, err)
 		return true, false, err
 	}
+	if s.manualCommandDispatchHook != nil {
+		s.manualCommandDispatchHook()
+	}
+	s.commandMu.Lock()
+	s.physicalCommandMu.Lock()
+	current, err = s.store.ManualSession(ctx)
+	if err != nil || current == nil || current.Revision != revision {
+		s.physicalCommandMu.Unlock()
+		s.commandMu.Unlock()
+		if err == nil {
+			err = errors.New("manual session ownership changed before command dispatch")
+			_ = s.store.FinishCommand(ctx, id, false, nil, err)
+			_, _ = s.store.AddEvent(ctx, "manual_session.stale_worker_discarded", "Stale Manual session command discarded", map[string]any{
+				"control_revision": revision,
+				"capability":       record.Capability,
+			})
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	if current.ExpiresAt != nil && !current.ExpiresAt.After(s.now().UTC()) {
+		s.physicalCommandMu.Unlock()
+		s.commandMu.Unlock()
+		expiredErr := errors.New("manual session expired before command dispatch")
+		_ = s.store.FinishCommand(ctx, id, false, nil, expiredErr)
+		return false, true, nil
+	}
+	// Releasing the ownership latch immediately before Set defines the command
+	// dispatch boundary: later ownership changes may fence its result, but the
+	// command has already been issued.
+	s.commandMu.Unlock()
+	status, commandErr := s.client.Set(ctx, record.Capability, value)
+	s.physicalCommandMu.Unlock()
+	if commandErr != nil {
+		_ = s.store.FinishCommand(ctx, id, false, nil, commandErr)
+		return true, false, commandErr
+	}
+	status.Connected = true
+	if status.ObservedAt.IsZero() {
+		status.ObservedAt = time.Now().UTC()
+	}
+	_ = s.store.FinishCommand(ctx, id, true, &status, nil)
+
+	// The physical call deliberately runs without commandMu so ownership changes
+	// can commit promptly. Reacquiring it makes the revision check and all
+	// current-state persistence indivisible with create, replace, clear, and
+	// expiry.
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	current, err = s.store.ManualSession(ctx)
+	if err != nil {
+		return true, false, err
+	}
+	if current == nil || current.Revision != revision {
+		_, _ = s.store.AddEvent(ctx, "manual_session.stale_worker_discarded", "Stale Manual session command result discarded", map[string]any{
+			"control_revision": revision,
+			"capability":       record.Capability,
+		})
+		return false, false, nil
+	}
+	if _, err := s.store.SaveObservation(ctx, status); err != nil {
+		return true, false, err
+	}
+	if err := s.store.ConfirmManualSessionStatus(ctx, revision, status); err != nil {
+		return true, false, err
+	}
+	_, _ = s.store.AddEvent(ctx, "command", "command completed", map[string]any{
+		"id":               id,
+		"capability":       record.Capability,
+		"control_revision": revision,
+	})
+	s.requestRefreshAfter(s.commandConfirmDelay)
 	return true, false, nil
 }
 
