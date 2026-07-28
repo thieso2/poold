@@ -34,12 +34,6 @@ type DesiredState struct {
 	TargetTemp *int  `json:"target_temp,omitempty"`
 }
 
-// ControlMode configures whether poold reconciles desired state and schedules.
-type ControlMode struct {
-	ManualControl bool       `json:"manual_control"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-}
-
 // ControlOwnership identifies who currently governs the pool.
 type ControlOwnership string
 
@@ -146,27 +140,6 @@ func (s ControllableState) DependencyViolations() []string {
 	return violations
 }
 
-// Active reports whether manual pool control is active at now.
-func (m ControlMode) Active(now time.Time) bool {
-	if !m.ManualControl {
-		return false
-	}
-	if m.ExpiresAt == nil {
-		return true
-	}
-	return m.ExpiresAt.After(now)
-}
-
-func (d DesiredState) Empty() bool {
-	return d.Power == nil &&
-		d.Filter == nil &&
-		d.Heater == nil &&
-		d.Jets == nil &&
-		d.Bubbles == nil &&
-		d.Sanitizer == nil &&
-		d.TargetTemp == nil
-}
-
 func (d DesiredState) Overlay(base DesiredState) DesiredState {
 	out := base
 	if d.Power != nil {
@@ -242,27 +215,24 @@ func IntPtr(v int) *int {
 type PlanType string
 
 const (
-	PlanTimeWindow     PlanType = "time_window"
-	PlanReadyBy        PlanType = "ready_by"
-	PlanManualOverride PlanType = "manual_override"
+	PlanTimeWindow PlanType = "time_window"
+	PlanReadyBy    PlanType = "ready_by"
 )
 
 type Plan struct {
-	ID           string       `json:"id"`
-	Type         PlanType     `json:"type"`
-	Name         string       `json:"name,omitempty"`
-	Enabled      bool         `json:"enabled"`
-	Capability   string       `json:"capability,omitempty"`
-	From         string       `json:"from,omitempty"`
-	To           string       `json:"to,omitempty"`
-	Days         []string     `json:"days,omitempty"`
-	Cron         string       `json:"cron,omitempty"`
-	TargetTemp   *int         `json:"target_temp,omitempty"`
-	At           *time.Time   `json:"at,omitempty"`
-	DesiredState DesiredState `json:"desired_state,omitempty"`
-	ExpiresAt    *time.Time   `json:"expires_at,omitempty"`
-	CreatedAt    time.Time    `json:"created_at,omitempty"`
-	UpdatedAt    time.Time    `json:"updated_at,omitempty"`
+	ID         string     `json:"id"`
+	Type       PlanType   `json:"type"`
+	Name       string     `json:"name,omitempty"`
+	Enabled    bool       `json:"enabled"`
+	Capability string     `json:"capability,omitempty"`
+	From       string     `json:"from,omitempty"`
+	To         string     `json:"to,omitempty"`
+	Days       []string   `json:"days,omitempty"`
+	Cron       string     `json:"cron,omitempty"`
+	TargetTemp *int       `json:"target_temp,omitempty"`
+	At         *time.Time `json:"at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at,omitempty"`
+	UpdatedAt  time.Time  `json:"updated_at,omitempty"`
 }
 
 // ReadyByControlMode is the persisted control state for one ready-by occurrence.
@@ -321,10 +291,6 @@ func (p Plan) Validate() error {
 			if _, err := ParseCronSpec(p.Cron); err != nil {
 				return fmt.Errorf("invalid ready_by cron: %w", err)
 			}
-		}
-	case PlanManualOverride:
-		if p.DesiredState.Empty() {
-			return fmt.Errorf("manual_override plan requires desired_state")
 		}
 	default:
 		return fmt.Errorf("unknown plan type %q", p.Type)

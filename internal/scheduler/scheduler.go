@@ -74,20 +74,6 @@ func (s *Scheduler) EvaluateWithReadyByControl(now time.Time, status pool.Status
 		}
 	}
 
-	for _, plan := range plans {
-		if !plan.Enabled || plan.Type != pool.PlanManualOverride {
-			continue
-		}
-		if plan.ExpiresAt != nil && !plan.ExpiresAt.After(now) {
-			continue
-		}
-		return Evaluation{
-			Desired: manualOverrideDesired(base, plan.DesiredState),
-			Source:  plan.ID,
-			Reason:  "manual override active",
-		}
-	}
-
 	timeWindowDesired, active, source, reason := s.evaluateTimeWindows(now, base, plans)
 	if active {
 		return Evaluation{
@@ -98,23 +84,6 @@ func (s *Scheduler) EvaluateWithReadyByControl(now time.Time, status pool.Status
 	}
 
 	return Evaluation{Desired: base, Source: "default", Reason: "default desired state"}
-}
-
-func manualOverrideDesired(base, override pool.DesiredState) pool.DesiredState {
-	desired := override.Overlay(base).WithHardwareConstraints()
-	if override.Power != nil && !*override.Power {
-		desired.Power = pool.BoolPtr(false)
-		desired.Filter = pool.BoolPtr(false)
-		desired.Heater = pool.BoolPtr(false)
-		desired.Jets = pool.BoolPtr(false)
-		desired.Bubbles = pool.BoolPtr(false)
-		desired.Sanitizer = pool.BoolPtr(false)
-	}
-	if override.Filter != nil && !*override.Filter {
-		desired.Filter = pool.BoolPtr(false)
-		desired.Heater = pool.BoolPtr(false)
-	}
-	return desired.WithHardwareConstraints()
 }
 
 func (s *Scheduler) NextWake(now time.Time, status pool.Status, plans []pool.Plan) (time.Time, bool) {
@@ -137,10 +106,6 @@ func (s *Scheduler) NextWake(now time.Time, status pool.Status, plans []pool.Pla
 			continue
 		}
 		switch plan.Type {
-		case pool.PlanManualOverride:
-			if plan.ExpiresAt != nil {
-				add(*plan.ExpiresAt)
-			}
 		case pool.PlanReadyBy:
 			if startAt, readyAt, ok := s.readyByTimes(now, status, plan); ok {
 				add(startAt)

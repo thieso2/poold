@@ -47,7 +47,6 @@ func main() {
 		EventHeartbeat:           cfg.EventHeartbeat,
 		ObservationFlushInterval: cfg.ObservationFlushInterval,
 		CommandConfirmDelay:      cfg.CommandConfirmDelay,
-		ManualControlDuration:    cfg.ManualControlDuration,
 		HeatingRateCPerHour:      cfg.HeatingRateCPerHour,
 		CoolingRateCPerHour:      cfg.CoolingRateCPerHour,
 		PollIdleInterval:         cfg.PollIdleInterval,
