@@ -85,6 +85,10 @@ type ClearManualSessionResult struct {
 	Replayed       bool
 }
 
+type rowQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 type pendingObservation struct {
 	id          int64
 	lastFlushAt time.Time
@@ -465,6 +469,34 @@ func (s *Store) ObservationStatus(ctx context.Context, id int64) (pool.Status, b
 	return status, true, nil
 }
 
+// PoolControlRepresentation loads ownership, intent, progress, and observation from one database snapshot.
+func (s *Store) PoolControlRepresentation(ctx context.Context) (pool.PoolControlRepresentation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return pool.PoolControlRepresentation{}, err
+	}
+	defer tx.Rollback()
+
+	var revision string
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM control_state WHERE id = 1`).Scan(&revision); err != nil {
+		return pool.PoolControlRepresentation{}, err
+	}
+	representation, err := poolControlRepresentationTx(ctx, tx, revision)
+	if err != nil {
+		return pool.PoolControlRepresentation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return pool.PoolControlRepresentation{}, err
+	}
+	s.applyPendingControlObservation(&representation)
+	return representation, nil
+}
+
+// ManualSessionMutationReplay returns a previously committed response for the same mutation.
+func (s *Store) ManualSessionMutationReplay(ctx context.Context, key, fingerprint string) (int, pool.PoolControlRepresentation, bool, error) {
+	return manualSessionMutationReplay(ctx, s.db, key, fingerprint)
+}
+
 // ManualSession loads the current durable Manual session, if one owns control.
 func (s *Store) ManualSession(ctx context.Context) (*pool.ManualSession, error) {
 	var (
@@ -524,26 +556,14 @@ func (s *Store) CreateManualSession(ctx context.Context, params CreateManualSess
 	}
 	defer tx.Rollback()
 
-	var storedFingerprint string
-	var storedStatus int
-	var storedResponse []byte
-	err = tx.QueryRowContext(ctx, `
-		SELECT fingerprint, response_status, response_json
-		FROM idempotency_records
-		WHERE key = ?
-	`, params.IdempotencyKey).Scan(&storedFingerprint, &storedStatus, &storedResponse)
-	if err == nil {
-		if storedFingerprint != params.Fingerprint {
-			return CreateManualSessionResult{}, ErrIdempotencyKeyReused
-		}
-		var representation pool.PoolControlRepresentation
-		if err := json.Unmarshal(storedResponse, &representation); err != nil {
-			return CreateManualSessionResult{}, err
-		}
-		return CreateManualSessionResult{Status: storedStatus, Representation: representation, Replayed: true}, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	storedStatus, storedRepresentation, found, err := manualSessionMutationReplay(
+		ctx, tx, params.IdempotencyKey, params.Fingerprint,
+	)
+	if err != nil {
 		return CreateManualSessionResult{}, err
+	}
+	if found {
+		return CreateManualSessionResult{Status: storedStatus, Representation: storedRepresentation, Replayed: true}, nil
 	}
 
 	var currentRevision string
@@ -647,26 +667,14 @@ func (s *Store) ClearManualSession(ctx context.Context, params ClearManualSessio
 	}
 	defer tx.Rollback()
 
-	var storedFingerprint string
-	var storedStatus int
-	var storedResponse []byte
-	err = tx.QueryRowContext(ctx, `
-		SELECT fingerprint, response_status, response_json
-		FROM idempotency_records
-		WHERE key = ?
-	`, params.IdempotencyKey).Scan(&storedFingerprint, &storedStatus, &storedResponse)
-	if err == nil {
-		if storedFingerprint != params.Fingerprint {
-			return ClearManualSessionResult{}, ErrIdempotencyKeyReused
-		}
-		var representation pool.PoolControlRepresentation
-		if err := json.Unmarshal(storedResponse, &representation); err != nil {
-			return ClearManualSessionResult{}, err
-		}
-		return ClearManualSessionResult{Status: storedStatus, Representation: representation, Replayed: true}, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	storedStatus, storedRepresentation, found, err := manualSessionMutationReplay(
+		ctx, tx, params.IdempotencyKey, params.Fingerprint,
+	)
+	if err != nil {
 		return ClearManualSessionResult{}, err
+	}
+	if found {
+		return ClearManualSessionResult{Status: storedStatus, Representation: storedRepresentation, Replayed: true}, nil
 	}
 
 	var currentRevision string
@@ -707,11 +715,17 @@ func (s *Store) ClearManualSession(ctx context.Context, params ClearManualSessio
 	if _, err := tx.ExecContext(ctx, `UPDATE control_state SET revision = ? WHERE id = 1`, revision); err != nil {
 		return ClearManualSessionResult{}, err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM kv WHERE key = 'control_mode'`); err != nil {
+		return ClearManualSessionResult{}, err
+	}
 
-	representation := pool.PoolControlRepresentation{
-		Control:         pool.AutomaticControl,
-		ControlRevision: revision,
-		Observed:        params.Observed,
+	representation, err := poolControlRepresentationTx(ctx, tx, revision)
+	if err != nil {
+		return ClearManualSessionResult{}, err
+	}
+	if params.Observed != nil &&
+		(representation.Observed == nil || params.Observed.ObservedAt.After(representation.Observed.ObservedAt)) {
+		representation.Observed = params.Observed
 	}
 	eventData, err := json.Marshal(map[string]any{
 		"control_revision":  revision,
@@ -741,6 +755,31 @@ func (s *Store) ClearManualSession(ctx context.Context, params ClearManualSessio
 		return ClearManualSessionResult{}, err
 	}
 	return ClearManualSessionResult{Status: 200, Representation: representation}, nil
+}
+
+func manualSessionMutationReplay(ctx context.Context, query rowQuerier, key, fingerprint string) (int, pool.PoolControlRepresentation, bool, error) {
+	var storedFingerprint string
+	var storedStatus int
+	var storedResponse []byte
+	err := query.QueryRowContext(ctx, `
+		SELECT fingerprint, response_status, response_json
+		FROM idempotency_records
+		WHERE key = ?
+	`, key).Scan(&storedFingerprint, &storedStatus, &storedResponse)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, pool.PoolControlRepresentation{}, false, nil
+	}
+	if err != nil {
+		return 0, pool.PoolControlRepresentation{}, false, err
+	}
+	if storedFingerprint != fingerprint {
+		return 0, pool.PoolControlRepresentation{}, false, ErrIdempotencyKeyReused
+	}
+	var representation pool.PoolControlRepresentation
+	if err := json.Unmarshal(storedResponse, &representation); err != nil {
+		return 0, pool.PoolControlRepresentation{}, false, err
+	}
+	return storedStatus, representation, true, nil
 }
 
 func poolControlRepresentationTx(ctx context.Context, tx *sql.Tx, revision string) (pool.PoolControlRepresentation, error) {
@@ -824,6 +863,25 @@ func poolControlRepresentationTx(ctx context.Context, tx *sql.Tx, revision strin
 		State:         pool.ControllableStateFromStatus(status),
 	}
 	return representation, nil
+}
+
+func (s *Store) applyPendingControlObservation(representation *pool.PoolControlRepresentation) {
+	if representation.Observed == nil {
+		return
+	}
+	s.observationMu.Lock()
+	defer s.observationMu.Unlock()
+
+	pending := s.pendingObservation
+	if pending == nil || pending.id != representation.Observed.ObservationID {
+		return
+	}
+	representation.Observed = &pool.ControlObservation{
+		ObservationID: pending.id,
+		ObservedAt:    pending.status.ObservedAt,
+		Connected:     pending.status.Connected,
+		State:         pool.ControllableStateFromStatus(pending.status),
+	}
 }
 
 // ManualSessionRevisionCurrent reports whether revision still owns the current session.

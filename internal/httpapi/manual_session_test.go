@@ -272,6 +272,25 @@ func TestPutManualSessionRejectsStaleControlRevision(t *testing.T) {
 	assertNoManualSession(t, st)
 }
 
+func TestPutManualSessionReplaysCommittedResultBeforeFreshSpaRead(t *testing.T) {
+	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, Filter: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	handler, _, observationID := manualSessionTestAPI(t, spa, base)
+	revision := controlRevision(t, handler)
+
+	first := putManualSession(t, handler, "create-replay", revision, observationID, "30m", controllableState(base))
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first status = %d, body=%s", first.Code, first.Body.String())
+	}
+	_ = waitForManualSessionState(t, handler, "active")
+	spa.statusErr = errors.New("dial timeout")
+
+	replay := putManualSession(t, handler, "create-replay", revision, observationID, "30m", controllableState(base))
+	if replay.Code != first.Code || replay.Body.String() != first.Body.String() {
+		t.Fatalf("replay = (%d, %s), want (%d, %s)", replay.Code, replay.Body.String(), first.Code, first.Body.String())
+	}
+}
+
 func TestManualSessionMutationRequiresBearerToken(t *testing.T) {
 	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}
 	handler, _, observationID := manualSessionTestAPI(t, newControllableSpa(base), base)
@@ -313,6 +332,9 @@ func TestDeleteManualSessionCommitsAutomaticControlBeforeScheduleConvergence(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.SaveControlMode(context.Background(), pool.ControlMode{ManualControl: true}); err != nil {
+		t.Fatal(err)
+	}
 	manual := createActiveManualSession(t, handler, observationID, base)
 	spa.blockCommands = make(chan struct{})
 
@@ -344,6 +366,13 @@ func TestDeleteManualSessionCommitsAutomaticControlBeforeScheduleConvergence(t *
 	}
 	if !foundCleared {
 		t.Fatalf("events = %+v, want atomic manual_session.cleared lifecycle event", events)
+	}
+	mode, err := st.ControlMode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode.ManualControl {
+		t.Fatalf("legacy control mode = %+v, want cleared with Manual session ownership", mode)
 	}
 
 	close(spa.blockCommands)

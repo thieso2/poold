@@ -265,39 +265,7 @@ func (s *Service) DesiredState(ctx context.Context) (pool.DesiredState, error) {
 
 // PoolControl returns the current ownership and latest observed pool state.
 func (s *Service) PoolControl(ctx context.Context) (pool.PoolControlRepresentation, error) {
-	revision, err := s.store.ControlRevision(ctx)
-	if err != nil {
-		return pool.PoolControlRepresentation{}, err
-	}
-	session, err := s.store.ManualSession(ctx)
-	if err != nil {
-		return pool.PoolControlRepresentation{}, err
-	}
-	observations, err := s.store.LatestObservations(ctx, 1)
-	if err != nil {
-		return pool.PoolControlRepresentation{}, err
-	}
-	representation := pool.PoolControlRepresentation{
-		Control:         pool.AutomaticControl,
-		ControlRevision: revision,
-	}
-	if session != nil {
-		representation.Control = pool.ManualControl
-		representation.Session = &pool.ManualSessionRepresentation{
-			State:     session.State,
-			Duration:  session.Duration,
-			StartedAt: session.StartedAt,
-			ExpiresAt: session.ExpiresAt,
-			Intended:  session.Intended,
-			Outcomes:  session.Outcomes,
-		}
-	}
-	if len(observations) == 0 {
-		return representation, nil
-	}
-	observation := observations[0]
-	representation.Observed = controlObservation(observation.ID, observation.Status)
-	return representation, nil
+	return s.store.PoolControlRepresentation(ctx)
 }
 
 func controlObservation(id int64, status pool.Status) *pool.ControlObservation {
@@ -310,6 +278,26 @@ func controlObservation(id int64, status pool.Status) *pool.ControlObservation {
 }
 
 func (s *Service) createManualSession(ctx context.Context, request createManualSessionRequest) (store.CreateManualSessionResult, error) {
+	status, representation, found, err := s.store.ManualSessionMutationReplay(
+		ctx, request.IdempotencyKey, request.Fingerprint,
+	)
+	if errors.Is(err, store.ErrIdempotencyKeyReused) {
+		return store.CreateManualSessionResult{}, &manualSessionFailure{
+			Code:    "idempotency_key_reused",
+			Message: "The idempotency key was already used for a different operation.",
+		}
+	}
+	if err != nil {
+		return store.CreateManualSessionResult{}, err
+	}
+	if found {
+		return store.CreateManualSessionResult{
+			Status:         status,
+			Representation: representation,
+			Replayed:       true,
+		}, nil
+	}
+
 	base, ok, err := s.store.ObservationStatus(ctx, request.BaseObservationID)
 	if err != nil {
 		return store.CreateManualSessionResult{}, err
