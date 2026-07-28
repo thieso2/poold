@@ -416,6 +416,53 @@ def remove_worktree(root: pathlib.Path, worktree: pathlib.Path) -> None:
     )
 
 
+def complete_issue_checklist(
+    root: pathlib.Path, repository: str, number: int
+) -> None:
+    body = command_output(
+        [
+            "gh",
+            "issue",
+            "view",
+            str(number),
+            "--repo",
+            repository,
+            "--json",
+            "body",
+            "--jq",
+            ".body",
+        ],
+        root,
+    )
+    completed = re.sub(
+        r"^(\s*[-*+]\s+)\[ \]",
+        r"\1[x]",
+        body,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    if completed == body:
+        return
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".md"
+    ) as body_file:
+        body_file.write(completed)
+        body_file.flush()
+        run(
+            [
+                "gh",
+                "issue",
+                "edit",
+                str(number),
+                "--repo",
+                repository,
+                "--body-file",
+                body_file.name,
+            ],
+            cwd=root,
+            capture=False,
+        )
+
+
 def finish_batch(
     root: pathlib.Path,
     repository: str,
@@ -431,6 +478,7 @@ def finish_batch(
             raise OrchestrationError("--close requires pushing the merged batch")
         merged_sha = command_output(["git", "rev-parse", "--short=12", "HEAD"], root)
         for ticket in tickets:
+            complete_issue_checklist(root, repository, ticket.number)
             run(
                 [
                     "gh",
