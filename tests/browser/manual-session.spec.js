@@ -43,6 +43,22 @@ async function tabTo(page, selector) {
   throw new Error(`Could not reach ${selector} through keyboard Tab order`);
 }
 
+async function reloadEverything(page) {
+  if ((await page.locator("#settingsToggle").getAttribute("aria-expanded")) !== "true") {
+    await page.locator("#settingsToggle").click();
+  }
+  await page.locator("#refresh").click();
+  await page.locator("#settingsClose").click();
+}
+
+async function reloadEverythingByKeyboard(page) {
+  await tabTo(page, "#settingsToggle");
+  await page.keyboard.press("Enter");
+  await tabTo(page, "#refresh");
+  await page.keyboard.press("Enter");
+  await page.locator("#settingsClose").click();
+}
+
 async function openDashboard(page, initial = representation()) {
   let current = initial;
   let nextPutMode = "";
@@ -234,8 +250,7 @@ test("keyboard-only Manual-session lifecycle", async ({ page }) => {
     control_revision: "revision-2",
     session: session("degraded", { heater: { state: "failed", code: "spa_error", message: "Heater failed" } })
   }));
-  await tabTo(page, "#refresh");
-  await page.keyboard.press("Enter");
+  await reloadEverythingByKeyboard(page);
   await expect(page.locator("#manualSessionStatus")).toContainText("degraded");
   await tabTo(page, '[data-manual-act="retry"]');
   await page.keyboard.press("Enter");
@@ -243,8 +258,7 @@ test("keyboard-only Manual-session lifecycle", async ({ page }) => {
   await expect(page.locator("#manualSessionStatus")).toContainText("Applying");
 
   harness.setCurrent(representation({ control: "manual", control_revision: "revision-2", session: session("active") }));
-  await tabTo(page, "#refresh");
-  await page.keyboard.press("Enter");
+  await reloadEverythingByKeyboard(page);
   await expect(page.locator("#manualSessionStatus")).toContainText("active");
   await tabTo(page, "#automaticControl");
   await page.keyboard.press("Enter");
@@ -297,7 +311,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
     control_revision: "revision-edit",
     session: session("active")
   }));
-  await page.locator("#refresh").click();
+  await reloadEverything(page);
   await page.locator('[data-manual-act="edit"]').click();
   await expect(page.locator(".pc-setwin b")).toHaveText("36°");
   await page.locator('[data-manual-step="1"]').click();
@@ -317,7 +331,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
     session: { ...session("active"), expires_at: new Date(Date.now() - 1000).toISOString() }
   }));
   const expiryRefreshes = harness.requests.filter(request => request.method === "GET").length;
-  await page.locator("#refresh").click();
+  await reloadEverything(page);
   await expect.poll(() => harness.requests.filter(request => request.method === "GET").length)
     .toBeGreaterThan(expiryRefreshes);
   await page.evaluate(() => {
@@ -326,7 +340,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
       .observe(document.querySelector("#toast"), { childList: true, subtree: true });
   });
   harness.setCurrent(representation({ control_revision: "revision-expired" }));
-  await page.locator("#refresh").click();
+  await reloadEverything(page);
   await expect.poll(() => page.evaluate(() => window.__announcements)).toContain(
     "Manual session ended. Automatic control resumed."
   );
@@ -339,7 +353,7 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
       state: observedState
     }
   }));
-  await page.locator("#refresh").click();
+  await reloadEverything(page);
   await expect(page.locator("#manualControl")).toBeDisabled();
   await expect(page.locator("#manualSessionStatus")).toContainText("stale");
 
@@ -351,7 +365,27 @@ test("draft, conflict, offline, stale, discard, expiry, and lost-response flows"
       state: observedState
     }
   }));
-  await page.locator("#refresh").click();
+  await reloadEverything(page);
   await expect(page.locator("#manualControl")).toBeDisabled();
   await expect(page.locator("#manualSessionStatus")).toContainText("offline");
+});
+
+test("long unbreakable strings never widen the page", async ({ page }) => {
+  await openDashboard(page);
+  // Real activity carries control revisions, idempotency keys and raw spa frames.
+  await page.evaluate(() => {
+    const host = document.getElementById("activity") || document.body;
+    [
+      "manual_session.created control_revision=f5f5d9532d96ddd4e8fc9e011be401d4",
+      "Idempotency-Key: 8c1f0b7a-24d9-4a11-9f6e-2b7c5d3e91aa",
+      "raw_data FFFF110F010300210000000081808024000014"
+    ].forEach(text => {
+      const row = document.createElement("div");
+      row.className = "activity-item";
+      row.textContent = text;
+      host.appendChild(row);
+    });
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth));
 });

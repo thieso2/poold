@@ -121,8 +121,8 @@ func TestHistoryUIIsPublic(t *testing.T) {
 	if !strings.Contains(body, `data-page="history"`) {
 		t.Fatal("history page mode missing")
 	}
-	if !strings.Contains(body, `href="/"`) || !strings.Contains(body, "Dashboard") {
-		t.Fatal("history dashboard back link missing")
+	if !strings.Contains(body, `href="/"`) || !strings.Contains(body, "Back to the pool") {
+		t.Fatal("history back link missing")
 	}
 	if !strings.Contains(body, eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")

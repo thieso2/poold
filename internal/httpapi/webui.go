@@ -97,7 +97,15 @@ const webUIHTMLTemplate = `<!doctype html>
   --shadow-soft: 0 6px 18px rgba(0, 0, 0, .3);
 }
 * { box-sizing: border-box; }
+/* Real data carries unbreakable strings — control revisions, idempotency keys,
+   raw spa frames — which would otherwise push the page wider than the phone. */
+html { overflow-x: clip; }
+.panel, .panel-head, .pc, .pc-window, .pc-next-row, .pc-next-row > *, .line, .say,
+.settings-group, .plans-add, .plan, .plan-main, .activity-item, .activity-list > * {
+  min-width: 0;
+}
 body {
+  overflow-wrap: break-word;
   margin: 0;
   background: var(--bg);
   color: var(--text);
@@ -217,10 +225,121 @@ body[data-page="history"] .app {
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0 16px;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 2px 0 12px;
 }
+.topbar button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.topbar button:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: none;
+}
+.topbar button[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--panel);
+}
+.topbar svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* ---- plans as sentences ---- */
+.line { position: relative; padding: 16px 2px 14px 22px; border-bottom: 1px solid var(--line); }
+.line:last-of-type { border-bottom: 0; }
+.line .lamp {
+  position: absolute; left: 2px; top: 22px; width: 8px; height: 8px; min-height: 0;
+  padding: 0; border: 0; border-radius: 50%; background: #2b3a41;
+}
+.line.on .lamp { background: var(--accent); box-shadow: 0 0 8px rgba(63, 227, 208, .7); }
+.line.on.kind-heater .lamp { background: var(--warn); box-shadow: 0 0 8px rgba(255, 154, 60, .7); }
+.line.on.kind-jets .lamp { background: #8f9dff; box-shadow: 0 0 8px rgba(143, 157, 255, .7); }
+.line.on.kind-bubbles .lamp { background: var(--ok); box-shadow: 0 0 8px rgba(79, 211, 154, .7); }
+.say { margin: 0; font-size: 17px; line-height: 1.85; font-weight: 300; color: var(--muted); text-wrap: pretty; }
+.line.on .say { color: var(--text); }
+.line:not(.on) .say { opacity: .62; }
+.slot {
+  display: inline-block; min-height: 0; margin: 0; padding: 2px 7px 3px;
+  border: 0; border-bottom: 1.5px dashed rgba(139, 160, 168, .45); border-radius: 3px;
+  background: rgba(255, 255, 255, .05); color: inherit;
+  font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 15px; font-weight: 600;
+}
+.slot:hover:not(:disabled) { background: rgba(255, 255, 255, .1); border-bottom-color: var(--text); box-shadow: none; }
+.slot-filter { color: var(--accent); }
+.slot-heater { color: var(--warn); }
+.slot-jets { color: #8f9dff; }
+.slot-bubbles { color: var(--ok); }
+.line-foot { display: flex; gap: 14px; margin-top: 6px; }
+.line-foot button {
+  min-height: 0; padding: 0; border: 0; background: none; color: var(--muted);
+  font-size: 11.5px; font-weight: 600;
+}
+.line-foot button:hover:not(:disabled) { color: var(--text); background: none; box-shadow: none; }
+.line-foot button.danger:hover:not(:disabled) { color: var(--bad); }
+.plans-empty { margin: 4px 0 14px; font-size: 15px; font-weight: 300; color: var(--muted); line-height: 1.6; }
+.plans-add { display: grid; gap: 7px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+.plans-add button {
+  padding: 13px 14px; border-radius: 8px; background: var(--field); color: var(--text);
+  text-align: left; font-size: 15px; font-weight: 300; line-height: 1.5;
+}
+.plans-add b { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 13.5px; font-weight: 600; color: var(--accent); }
+.plans-add button:last-child b { color: var(--warn); }
+.plan-pop {
+  position: absolute; z-index: 40; min-width: 196px; padding: 9px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel-hi);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .6);
+}
+.pop-label {
+  display: block; margin: 0 2px 7px;
+  font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--muted);
+}
+.pop-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.pop-grid + .pop-grid { margin-top: 6px; }
+.pop-grid.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pop-grid button { min-height: 38px; padding: 8px 6px; font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12.5px; }
+.pop-grid button[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
+.plan-pop input { font-family: var(--mono, ui-monospace, Menlo, monospace); font-weight: 600; }
+@media (max-width: 420px) { .say { font-size: 16px; line-height: 1.9; } .slot { font-size: 14px; } }
+
+.settings-sub {
+  margin: -4px 0 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.settings-group {
+  display: grid;
+  gap: 9px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.settings-group:first-of-type { padding-top: 0; border-top: 0; }
+.settings-label {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 480px) { .settings-acts { grid-template-columns: 1fr; } }
 .brand {
   display: flex;
   align-items: center;
@@ -837,39 +956,40 @@ body[data-page="history"] .timeline-canvas {
 </head>
 <body data-page="__POOLD_PAGE__">
 <main class="app">
-  <header class="topbar">
-    <div class="brand">
-      <div class="mark"><img src="/favicon.svg" alt=""></div>
-      <div>
-        <h1>Pooly Control</h1>
-        <p class="muted" id="subline">Pool daemon</p>
-      </div>
-    </div>
-    <div class="top-actions">
-      <a class="button-link primary history-only" href="/">Dashboard</a>
-      <button id="editToken">Token</button>
-      <button class="dashboard-only" id="settingsToggle">Settings</button>
-      <button id="refresh">Refresh</button>
-    </div>
-  </header>
+  <div class="topbar">
+    <a class="button-link history-only" href="/">Back to the pool</a>
+    <button id="settingsToggle" aria-label="Settings" aria-expanded="false" title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>
+    </button>
+  </div>
 
   <section class="tokenbar" id="tokenbar">
     <input id="token" type="password" autocomplete="current-password" placeholder="Bearer token">
     <button class="primary" id="saveToken">Save</button>
   </section>
 
-  <section class="panel settings-panel dashboard-only" id="settingsPanel">
+  <section class="panel settings-panel" id="settingsPanel">
     <div class="panel-head">
       <h2>Settings</h2>
       <button id="settingsClose">Close</button>
     </div>
-    <div class="row two">
-      <label>OpenWeatherMap API Key <input id="weatherApiKey" type="password" autocomplete="off" placeholder="Leave blank to keep saved key"></label>
-      <label>Pool Location <input id="weatherLocation" type="text" autocomplete="address-level2" placeholder="Berlin,DE"></label>
-    </div>
-    <div style="display:grid; gap:8px; margin-top:10px">
-      <button class="primary" id="saveWeatherSettings">Save Weather</button>
+    <p class="settings-sub" id="subline">Pool daemon</p>
+    <div class="settings-group">
+      <span class="settings-label">Weather</span>
+      <div class="row two">
+        <label>OpenWeatherMap API key <input id="weatherApiKey" type="password" autocomplete="off" placeholder="Leave blank to keep saved key"></label>
+        <label>Where the pool is <input id="weatherLocation" type="text" autocomplete="address-level2" placeholder="Berlin,DE"></label>
+      </div>
+      <button class="primary" id="saveWeatherSettings">Save weather settings</button>
       <p class="muted" id="weatherSettingsDetail">Weather is not configured.</p>
+    </div>
+    <div class="settings-group">
+      <span class="settings-label">This device</span>
+      <div class="settings-acts">
+        <button id="refresh">Reload everything</button>
+        <button id="editToken">Forget the access token</button>
+      </div>
+      <p class="muted">Reloading pulls fresh status, plans and history. Forgetting the token signs this browser out.</p>
     </div>
   </section>
 
@@ -886,14 +1006,14 @@ body[data-page="history"] .timeline-canvas {
     <section class="panel dashboard-only">
       <div class="panel-head">
         <h2>Plans</h2>
-        <button id="reloadPlans">Reload</button>
+        <span class="badge" id="plansCount">0 running</span>
       </div>
-      <div class="tabs">
-        <button class="active" data-view="plans">List</button>
-        <button data-view="ready">Ready</button>
-        <button data-view="window">Window</button>
+      <div id="plansView"></div>
+      <div class="plans-add">
+        <span class="settings-label">Add another</span>
+        <button data-add-plan="window">Run <b>filter</b> from <b>06:00</b> until <b>08:00</b>, every day.</button>
+        <button data-add-plan="ready">Have the water at <b>36°</b> by <b>18:30</b>, every day.</button>
       </div>
-      <div id="plansView" class="forms" style="margin-top:12px"></div>
     </section>
 
     <section class="panel span-2 timeline-panel">
@@ -975,8 +1095,6 @@ var state = {
   },
   activityHasOlder: {},
   settingsOpen: false,
-  planView: "plans",
-  editPlanId: null,
   activityView: "events",
   pending: false,
   pendingCount: 0
@@ -1532,6 +1650,7 @@ function renderWeather() {
 
 function renderSettings() {
   $("settingsPanel").classList.toggle("show", state.settingsOpen);
+  $("settingsToggle").setAttribute("aria-expanded", String(state.settingsOpen));
   var settings = state.weather && state.weather.settings ? state.weather.settings : {};
   var location = settings.location || {};
   if (document.activeElement !== $("weatherLocation")) {
@@ -2116,264 +2235,257 @@ function manualSessionRemaining(expiresAt) {
   return hours + "h" + (remainder ? " " + remainder + "m" : "") + " remaining.";
 }
 
-function renderPlans() {
-  qsa("[data-view]").forEach(function(button) {
-    button.classList.toggle("active", button.dataset.view === state.planView);
-  });
-  var view = $("plansView");
-  view.innerHTML = "";
-  if (state.planView === "edit") {
-    var plan = state.plans.find(function(p) { return p.id === state.editPlanId; });
-    if (plan) return renderEditForm(view, plan);
-    state.planView = "plans";
-  }
-  if (state.planView === "plans") return renderPlanList(view);
-  if (state.planView === "ready") return renderReadyForm(view);
-  renderWindowForm(view);
+/* ---- Plans read as sentences; every value is a slot you tap ---- */
+var CAP_PHRASE = {filter: "filter", heater: "the heater", jets: "the jets", bubbles: "the air"};
+var DAY_FULL = {mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday",
+  fri: "Friday", sat: "Saturday", sun: "Sunday"};
+var DAY_SHORT = {mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun"};
+var WEEKDAYS = ["mon", "tue", "wed", "thu", "fri"];
+var WEEKEND = ["sat", "sun"];
+var planPop = null;
+
+function planDays(plan) {
+  if (plan.type === "time_window") return plan.days && plan.days.length ? plan.days : days.slice();
+  var fields = String(plan.cron || "").trim().split(/\s+/);
+  if (fields.length !== 5 || fields[4] === "*") return days.slice();
+  var byNumber = {0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat"};
+  return fields[4].split(",").map(function(n) { return byNumber[Number(n)]; }).filter(Boolean);
 }
 
-function renderPlanList(view) {
-  var visiblePlans = state.plans;
-  if (!visiblePlans.length) {
-    view.innerHTML = "<p class=\"muted\">No plans</p>";
-    return;
+function planTime(plan) {
+  if (plan.type === "time_window") return plan.from || "00:00";
+  var fields = String(plan.cron || "").trim().split(/\s+/);
+  if (fields.length >= 2 && /^\d+$/.test(fields[0]) && /^\d+$/.test(fields[1])) {
+    return pad2(Number(fields[1])) + ":" + pad2(Number(fields[0]));
   }
-  var list = document.createElement("div");
-  list.className = "plan-list";
-  visiblePlans.forEach(function(plan) {
-    var item = document.createElement("div");
-    item.className = "plan";
-    item.innerHTML = "<div class=\"plan-main\"><div><h3>" + escapeHTML(plan.name || plan.id) + "</h3><p class=\"muted\">" + escapeHTML(describePlan(plan)) + "</p></div><span class=\"badge " + (plan.enabled ? "ok" : "") + "\">" + (plan.enabled ? "Active" : "Paused") + "</span></div><div class=\"plan-actions\"><label>Active <select data-active=\"" + escapeHTML(plan.id) + "\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label><button data-edit=\"" + escapeHTML(plan.id) + "\">Edit</button></div>";
-    list.appendChild(item);
-  });
-  view.appendChild(list);
-  qsa("[data-active]").forEach(function(select) {
-    select.onchange = function() {
-      var enabled = select.value === "true";
+  return plan.at ? pad2(new Date(plan.at).getHours()) + ":" + pad2(new Date(plan.at).getMinutes()) : "08:30";
+}
+
+function cronFor(time, dayList) {
+  var parts = time.split(":");
+  var toNumber = {sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6};
+  var dow = dayList.length === 7 ? "*" : dayList.map(function(d) { return toNumber[d]; }).sort().join(",");
+  return Number(parts[1]) + " " + Number(parts[0]) + " * * " + (dow || "*");
+}
+
+function daysPhrase(list) {
+  if (!list.length) return "no days";
+  if (list.length === 7) return "every day";
+  var covers = function(set) { return set.every(function(d) { return list.indexOf(d) >= 0; }); };
+  if (list.length === 5 && covers(WEEKDAYS)) return "on weekdays";
+  if (list.length === 2 && covers(WEEKEND)) return "at the weekend";
+  if (list.length === 1) return "on " + DAY_FULL[list[0]] + "s";
+  var ordered = days.filter(function(d) { return list.indexOf(d) >= 0; })
+    .map(function(d) { return DAY_SHORT[d]; });
+  return "on " + ordered.slice(0, -1).join(", ") + " and " + ordered[ordered.length - 1];
+}
+
+function planSlot(plan, field, text, cls) {
+  return '<button class="slot ' + (cls || "") + '" data-plan-slot="' + escapeHTML(plan.id) +
+    '" data-field="' + field + '">' + escapeHTML(text) + "</button>";
+}
+
+function planSentence(plan) {
+  if (plan.type === "time_window") {
+    var cap = normalizePlanCap(plan.capability);
+    return "Run " + planSlot(plan, "capability", CAP_PHRASE[cap] || cap, "slot-" + cap) +
+      " from " + planSlot(plan, "from", plan.from || "00:00") +
+      " until " + planSlot(plan, "to", plan.to || "00:00") + ", " +
+      planSlot(plan, "days", daysPhrase(planDays(plan))) + ".";
+  }
+  if (plan.type === "ready_by") {
+    var once = !plan.cron && plan.at;
+    if (once) {
+      return "Have the water at " + planSlot(plan, "target_temp", (plan.target_temp || 36) + "°", "slot-heater") +
+        " by " + planSlot(plan, "at", formatDateTime(plan.at)) + ", once.";
+    }
+    return "Have the water at " + planSlot(plan, "target_temp", (plan.target_temp || 36) + "°", "slot-heater") +
+      " by " + planSlot(plan, "time", planTime(plan)) + ", " +
+      planSlot(plan, "days", daysPhrase(planDays(plan))) + ".";
+  }
+  return escapeHTML(describePlan(plan));
+}
+
+function normalizePlanCap(capability) {
+  var cap = String(capability || "filter").toLowerCase();
+  return CAP_PHRASE[cap] ? cap : "filter";
+}
+
+function renderPlans() {
+  var view = $("plansView");
+  if (!state.plans.length) {
+    view.innerHTML = '<p class="plans-empty">No plans yet, so the pool only does what you tell it by hand. ' +
+      "Add one below and it will look after itself.</p>";
+  } else {
+    view.innerHTML = state.plans.map(function(plan) {
+      var kind = plan.type === "ready_by" ? "heater" : normalizePlanCap(plan.capability);
+      return '<div class="line ' + (plan.enabled ? "on " : "") + "kind-" + kind +
+        '" data-plan-line="' + escapeHTML(plan.id) + '">' +
+        '<button class="lamp" data-plan-toggle="' + escapeHTML(plan.id) + '" aria-label="' +
+        (plan.enabled ? "Pause" : "Turn on") + " " + escapeHTML(plan.name || plan.id) + '"></button>' +
+        '<p class="say">' + planSentence(plan) + "</p>" +
+        '<div class="line-foot"><button data-plan-toggle="' + escapeHTML(plan.id) + '">' +
+        (plan.enabled ? "Pause" : "Turn on") + "</button>" +
+        '<button class="danger" data-plan-delete="' + escapeHTML(plan.id) + '">Delete</button></div></div>';
+    }).join("");
+  }
+  var running = state.plans.filter(function(p) { return p.enabled; }).length;
+  $("plansCount").textContent = running + " running · " + state.plans.length + " total";
+  bindPlans();
+}
+
+function bindPlans() {
+  qsa("[data-plan-toggle]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      closePlanPop();
       updatePlans(state.plans.map(function(plan) {
-        if (plan.id === select.dataset.active) return Object.assign({}, plan, {enabled: enabled});
-        return plan;
+        return plan.id === button.dataset.planToggle ? Object.assign({}, plan, {enabled: !plan.enabled}) : plan;
       }));
     };
   });
-  qsa("[data-edit]").forEach(function(button) {
+  qsa("[data-plan-delete]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      closePlanPop();
+      updatePlans(state.plans.filter(function(plan) { return plan.id !== button.dataset.planDelete; }));
+    };
+  });
+  qsa("[data-plan-slot]").forEach(function(slot) {
+    slot.onclick = function(event) { event.stopPropagation(); openPlanPop(slot); };
+  });
+}
+
+function planById(id) {
+  return state.plans.filter(function(plan) { return plan.id === id; })[0];
+}
+
+function savePlan(id, changes) {
+  updatePlans(state.plans.map(function(plan) {
+    return plan.id === id ? Object.assign({}, plan, changes) : plan;
+  }));
+}
+
+function closePlanPop() {
+  if (planPop) { planPop.remove(); planPop = null; }
+}
+
+function openPlanPop(anchor) {
+  closePlanPop();
+  var plan = planById(anchor.dataset.planSlot);
+  if (!plan) return;
+  var field = anchor.dataset.field;
+  var box = document.createElement("div");
+  box.className = "plan-pop";
+
+  if (field === "capability") {
+    box.innerHTML = '<span class="pop-label">Run what</span><div class="pop-grid">' +
+      Object.keys(CAP_PHRASE).map(function(cap) {
+        return '<button data-pick="' + cap + '" aria-pressed="' +
+          (normalizePlanCap(plan.capability) === cap) + '">' + CAP_PHRASE[cap] + "</button>";
+      }).join("") + "</div>";
+  } else if (field === "days") {
+    var current = planDays(plan);
+    box.innerHTML = '<span class="pop-label">Which days</span><div class="pop-grid">' +
+      '<button data-preset="all">every day</button><button data-preset="wd">weekdays</button>' +
+      '<button data-preset="we">weekend</button><button data-preset="none">clear</button></div>' +
+      '<div class="pop-grid wide">' + days.map(function(day) {
+        return '<button data-day="' + day + '" aria-pressed="' + (current.indexOf(day) >= 0) + '">' +
+          DAY_SHORT[day].slice(0, 2) + "</button>";
+      }).join("") + "</div>";
+  } else if (field === "target_temp") {
+    box.innerHTML = '<span class="pop-label">How warm</span><div class="pop-grid wide">' +
+      [30, 32, 34, 35, 36, 37, 38, 39, 40].map(function(temp) {
+        return '<button data-temp="' + temp + '" aria-pressed="' +
+          ((plan.target_temp || 36) === temp) + '">' + temp + "°</button>";
+      }).join("") + "</div>";
+  } else if (field === "at") {
+    box.innerHTML = '<span class="pop-label">By when</span>' +
+      '<input type="datetime-local" value="' + escapeHTML(localDateTime(new Date(plan.at))) + '">';
+  } else {
+    box.innerHTML = '<span class="pop-label">' +
+      (field === "from" ? "Starting" : field === "to" ? "Ending" : "By when") + "</span>" +
+      '<input type="time" value="' + escapeHTML(field === "time" ? planTime(plan) : (plan[field] || "00:00")) + '">';
+  }
+
+  document.body.appendChild(box);
+  var rect = anchor.getBoundingClientRect();
+  box.style.left = Math.min(Math.max(8, rect.left + window.scrollX),
+    window.innerWidth - box.offsetWidth - 8) + "px";
+  box.style.top = (rect.bottom + window.scrollY + 6) + "px";
+  planPop = box;
+  box.onclick = function(event) { event.stopPropagation(); };
+
+  qsa(".plan-pop [data-pick]").forEach(function(button) {
+    button.onclick = function() { closePlanPop(); savePlan(plan.id, {capability: button.dataset.pick}); };
+  });
+  qsa(".plan-pop [data-temp]").forEach(function(button) {
+    button.onclick = function() { closePlanPop(); savePlan(plan.id, {target_temp: Number(button.dataset.temp)}); };
+  });
+  qsa(".plan-pop [data-preset]").forEach(function(button) {
     button.onclick = function() {
-      state.editPlanId = button.dataset.edit;
-      state.planView = "edit";
-      renderPlans();
+      var key = button.dataset.preset;
+      var next = key === "all" ? days.slice() : key === "wd" ? WEEKDAYS.slice() :
+        key === "we" ? WEEKEND.slice() : [];
+      closePlanPop();
+      applyPlanDays(plan, next);
     };
   });
-}
-
-function renderReadyForm(view) {
-  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"readyName\" value=\"Ready by\"></label><label>Target <input id=\"readyTemp\" type=\"number\" min=\"10\" max=\"40\" step=\"1\" value=\"36\"></label><label>Active <select id=\"readyEnabled\"><option value=\"true\">Yes</option><option value=\"false\">No</option></select></label></div><div class=\"row two\"><label>Mode <select id=\"readyMode\"><option value=\"once\">Once</option><option value=\"cron\">Repeating</option></select></label><label id=\"readyAtWrap\">At <input id=\"readyAt\" type=\"datetime-local\"></label><label id=\"readyTimeWrap\" class=\"hidden\">At <input id=\"readyTime\" type=\"time\" value=\"08:30\"></label></div><div class=\"days hidden\" id=\"readyDays\"></div><button class=\"primary\" id=\"addReady\">Add Ready Plan</button>";
-  $("readyAt").value = localDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
-  var dayWrap = $("readyDays");
-  days.forEach(function(day) {
-    var button = document.createElement("button");
-    button.className = "day active";
-    button.textContent = day.slice(0, 1).toUpperCase();
-    button.dataset.day = day;
-    button.onclick = function() { button.classList.toggle("active"); };
-    dayWrap.appendChild(button);
-  });
-  $("readyMode").onchange = updateReadyMode;
-  updateReadyMode();
-  $("addReady").onclick = function() {
-    var plan = {
-      id: "ready-by-" + Date.now(),
-      type: "ready_by",
-      name: $("readyName").value || "Ready by",
-      enabled: $("readyEnabled").value === "true",
-      target_temp: Number($("readyTemp").value || 36)
+  qsa(".plan-pop [data-day]").forEach(function(button) {
+    button.onclick = function() {
+      var current = planDays(plan);
+      var day = button.dataset.day;
+      var index = current.indexOf(day);
+      if (index >= 0) current.splice(index, 1); else current.push(day);
+      button.setAttribute("aria-pressed", String(current.indexOf(day) >= 0));
+      applyPlanDays(plan, current, true);
     };
-    if ($("readyMode").value === "cron") {
-      var cron = readyCron();
-      if (!cron) return toast("Ready time is required", "bad");
-      plan.cron = cron;
-    } else {
-      var at = $("readyAt").value;
-      if (!at) return toast("Ready time is required", "bad");
-      plan.at = new Date(at).toISOString();
-    }
-    updatePlans(state.plans.concat([plan]));
-  };
-}
-
-function updateReadyMode() {
-  var repeating = $("readyMode").value === "cron";
-  $("readyAtWrap").classList.toggle("hidden", repeating);
-  $("readyTimeWrap").classList.toggle("hidden", !repeating);
-  $("readyDays").classList.toggle("hidden", !repeating);
-}
-
-function readyCron() {
-  var time = $("readyTime").value;
-  if (!time || time.indexOf(":") < 0) return "";
-  var parts = time.split(":");
-  var selectedDays = qsa("#readyDays .day.active").map(function(button) { return button.dataset.day; });
-  var dayField = "*";
-  if (selectedDays.length > 0 && selectedDays.length < days.length) {
-    dayField = selectedDays.map(cronDay).join(",");
+  });
+  var input = box.querySelector("input");
+  if (input) {
+    input.onchange = function() {
+      closePlanPop();
+      if (field === "at") savePlan(plan.id, {at: new Date(input.value).toISOString()});
+      else if (field === "time") savePlan(plan.id, {cron: cronFor(input.value, planDays(plan)), at: null});
+      else savePlan(plan.id, planFieldPatch(field, input.value));
+    };
+    input.focus();
   }
-  return Number(parts[1]) + " " + Number(parts[0]) + " * * " + dayField;
 }
 
-function cronDay(day) {
-  return {sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6}[day];
+function planFieldPatch(field, value) {
+  var patch = {};
+  patch[field] = value;
+  return patch;
 }
 
-function renderWindowForm(view) {
-  view.innerHTML = "<div class=\"row three\"><label>Name <input id=\"windowName\" value=\"Filter window\"></label><label>Capability <select id=\"windowCap\"><option value=\"filter\">Filter</option><option value=\"heater\">Heater</option><option value=\"jets\">Jets</option><option value=\"bubbles\">Bubbles</option><option value=\"sanitizer\">Sanitizer</option></select></label><label>Active <select id=\"windowEnabled\"><option value=\"true\">Yes</option><option value=\"false\">No</option></select></label></div><div class=\"row two\"><label>From <input id=\"windowFrom\" type=\"time\" value=\"02:00\"></label><label>To <input id=\"windowTo\" type=\"time\" value=\"04:00\"></label></div><div class=\"days\" id=\"windowDays\"></div><button class=\"primary\" id=\"addWindow\">Add Window</button>";
-  var dayWrap = $("windowDays");
-  days.forEach(function(day) {
-    var button = document.createElement("button");
-    button.className = "day";
-    button.textContent = day.slice(0, 1).toUpperCase();
-    button.dataset.day = day;
-    button.onclick = function() { button.classList.toggle("active"); };
-    dayWrap.appendChild(button);
-  });
-  $("addWindow").onclick = function() {
-    var plan = {
-      id: "window-" + Date.now(),
-      type: "time_window",
-      name: $("windowName").value || title($("windowCap").value) + " window",
-      enabled: $("windowEnabled").value === "true",
-      capability: $("windowCap").value,
-      from: $("windowFrom").value,
-      to: $("windowTo").value,
-      days: qsa("#windowDays .day.active").map(function(button) { return button.dataset.day; })
-    };
-    updatePlans(state.plans.concat([plan]));
-  };
-}
-
-function renderEditForm(view, plan) {
-  if (plan.type === "ready_by") return renderEditReadyForm(view, plan);
-  if (plan.type === "time_window") return renderEditWindowForm(view, plan);
-  view.innerHTML = "<p class=\"muted\">This plan type cannot be edited here.</p><button id=\"editBack\">Back</button>";
-  $("editBack").onclick = function() { state.planView = "plans"; renderPlans(); };
-}
-
-function renderEditReadyForm(view, plan) {
-  var isRepeating = !!plan.cron;
-  var atValue = "";
-  var timeValue = "08:30";
-  var allDaysSelected = true;
-  var selectedDayNames = [];
-  if (!isRepeating && plan.at) {
-    atValue = localDateTime(new Date(plan.at));
+function applyPlanDays(plan, dayList, keepOpen) {
+  var changes = plan.type === "time_window"
+    ? {days: dayList}
+    : {cron: cronFor(planTime(plan), dayList), at: null};
+  if (keepOpen) {
+    // Keep the picker open while several days are tapped; the list still saves.
+    state.plans = state.plans.map(function(p) {
+      return p.id === plan.id ? Object.assign({}, p, changes) : p;
+    });
+    var line = document.querySelector('[data-plan-line="' + plan.id + '"] .say');
+    if (line) line.innerHTML = planSentence(planById(plan.id));
+    bindPlans();
+    clearTimeout(applyPlanDays.timer);
+    applyPlanDays.timer = setTimeout(function() { updatePlans(state.plans); }, 700);
+    return;
   }
-  if (isRepeating && plan.cron) {
-    var cronFields = plan.cron.trim().split(/\s+/);
-    if (cronFields.length >= 2) {
-      timeValue = pad2(Number(cronFields[1])) + ":" + pad2(Number(cronFields[0]));
-    }
-    if (cronFields.length === 5 && cronFields[4] !== "*") {
-      allDaysSelected = false;
-      var numToDay = {0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat"};
-      selectedDayNames = cronFields[4].split(",").map(function(n) { return numToDay[Number(n)]; }).filter(Boolean);
-    }
-  }
-  view.innerHTML =
-    "<button id=\"editBack\" style=\"margin-bottom:10px\">← Back</button>" +
-    "<div class=\"row three\"><label>Name <input id=\"editName\" value=\"" + escapeHTML(plan.name || "") + "\"></label>" +
-    "<label>Target <input id=\"editTemp\" type=\"number\" min=\"10\" max=\"40\" step=\"1\" value=\"" + (plan.target_temp || 36) + "\"></label>" +
-    "<label>Active <select id=\"editEnabled\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label></div>" +
-    "<div class=\"row two\"><label>Mode <select id=\"editMode\"><option value=\"once\"" + (!isRepeating ? " selected" : "") + ">Once</option><option value=\"cron\"" + (isRepeating ? " selected" : "") + ">Repeating</option></select></label>" +
-    "<label id=\"editAtWrap\"" + (isRepeating ? " class=\"hidden\"" : "") + ">At <input id=\"editAt\" type=\"datetime-local\" value=\"" + escapeHTML(atValue) + "\"></label>" +
-    "<label id=\"editTimeWrap\"" + (!isRepeating ? " class=\"hidden\"" : "") + ">At <input id=\"editTime\" type=\"time\" value=\"" + escapeHTML(timeValue) + "\"></label></div>" +
-    "<div class=\"days" + (!isRepeating ? " hidden" : "") + "\" id=\"editDays\"></div>" +
-    "<div class=\"row two\" style=\"margin-top:12px\"><button class=\"primary\" id=\"editSave\">Save</button><button class=\"danger\" id=\"editDelete\">Delete</button></div>";
-  var dayWrap = $("editDays");
-  days.forEach(function(day) {
-    var btn = document.createElement("button");
-    btn.className = "day" + (allDaysSelected || selectedDayNames.indexOf(day) >= 0 ? " active" : "");
-    btn.textContent = day.slice(0, 1).toUpperCase();
-    btn.dataset.day = day;
-    btn.onclick = function() { btn.classList.toggle("active"); };
-    dayWrap.appendChild(btn);
-  });
-  $("editMode").onchange = function() {
-    var repeating = $("editMode").value === "cron";
-    $("editAtWrap").classList.toggle("hidden", repeating);
-    $("editTimeWrap").classList.toggle("hidden", !repeating);
-    $("editDays").classList.toggle("hidden", !repeating);
-  };
-  $("editBack").onclick = function() { state.planView = "plans"; renderPlans(); };
-  $("editDelete").onclick = function() {
-    var planId = plan.id;
-    state.planView = "plans";
-    updatePlans(state.plans.filter(function(p) { return p.id !== planId; }));
-  };
-  $("editSave").onclick = function() {
-    var updated = {id: plan.id, type: plan.type, created_at: plan.created_at,
-      name: $("editName").value || plan.name,
-      enabled: $("editEnabled").value === "true",
-      target_temp: Number($("editTemp").value || 36)
-    };
-    if ($("editMode").value === "cron") {
-      var t = $("editTime").value;
-      if (!t || t.indexOf(":") < 0) return toast("Ready time is required", "bad");
-      var parts = t.split(":");
-      var selDays = qsa("#editDays .day.active").map(function(b) { return b.dataset.day; });
-      var dayField = "*";
-      if (selDays.length > 0 && selDays.length < days.length) dayField = selDays.map(cronDay).join(",");
-      updated.cron = Number(parts[1]) + " " + Number(parts[0]) + " * * " + dayField;
-    } else {
-      var at = $("editAt").value;
-      if (!at) return toast("Ready time is required", "bad");
-      updated.at = new Date(at).toISOString();
-    }
-    state.planView = "plans";
-    updatePlans(state.plans.map(function(p) { return p.id === plan.id ? updated : p; }));
-  };
+  savePlan(plan.id, changes);
 }
 
-function renderEditWindowForm(view, plan) {
-  var windowCaps = ["filter", "heater", "jets", "bubbles", "sanitizer"];
-  view.innerHTML =
-    "<button id=\"editBack\" style=\"margin-bottom:10px\">← Back</button>" +
-    "<div class=\"row three\">" +
-    "<label>Name <input id=\"editName\" value=\"" + escapeHTML(plan.name || "") + "\"></label>" +
-    "<label>Capability <select id=\"editCap\">" +
-    windowCaps.map(function(c) { return "<option value=\"" + c + "\"" + (plan.capability === c ? " selected" : "") + ">" + title(c) + "</option>"; }).join("") +
-    "</select></label>" +
-    "<label>Active <select id=\"editEnabled\"><option value=\"true\"" + (plan.enabled ? " selected" : "") + ">Yes</option><option value=\"false\"" + (!plan.enabled ? " selected" : "") + ">No</option></select></label>" +
-    "</div>" +
-    "<div class=\"row two\"><label>From <input id=\"editFrom\" type=\"time\" value=\"" + escapeHTML(plan.from || "02:00") + "\"></label>" +
-    "<label>To <input id=\"editTo\" type=\"time\" value=\"" + escapeHTML(plan.to || "04:00") + "\"></label></div>" +
-    "<div class=\"days\" id=\"editDays\"></div>" +
-    "<div class=\"row two\" style=\"margin-top:12px\"><button class=\"primary\" id=\"editSave\">Save</button><button class=\"danger\" id=\"editDelete\">Delete</button></div>";
-  var planDays = plan.days || [];
-  var dayWrap = $("editDays");
-  days.forEach(function(day) {
-    var btn = document.createElement("button");
-    btn.className = "day" + (planDays.indexOf(day) >= 0 ? " active" : "");
-    btn.textContent = day.slice(0, 1).toUpperCase();
-    btn.dataset.day = day;
-    btn.onclick = function() { btn.classList.toggle("active"); };
-    dayWrap.appendChild(btn);
-  });
-  $("editBack").onclick = function() { state.planView = "plans"; renderPlans(); };
-  $("editDelete").onclick = function() {
-    var planId = plan.id;
-    state.planView = "plans";
-    updatePlans(state.plans.filter(function(p) { return p.id !== planId; }));
-  };
-  $("editSave").onclick = function() {
-    var updated = {id: plan.id, type: plan.type, created_at: plan.created_at,
-      name: $("editName").value || plan.name,
-      enabled: $("editEnabled").value === "true",
-      capability: $("editCap").value,
-      from: $("editFrom").value,
-      to: $("editTo").value,
-      days: qsa("#editDays .day.active").map(function(b) { return b.dataset.day; })
-    };
-    state.planView = "plans";
-    updatePlans(state.plans.map(function(p) { return p.id === plan.id ? updated : p; }));
-  };
+function addPlan(kind) {
+  closePlanPop();
+  var plan = kind === "window"
+    ? {id: "window-" + Date.now(), type: "time_window", name: "Filter window", enabled: true,
+       capability: "filter", from: "06:00", to: "08:00", days: days.slice()}
+    : {id: "ready-" + Date.now(), type: "ready_by", name: "Ready by", enabled: true,
+       target_temp: 36, cron: cronFor("18:30", days.slice())};
+  updatePlans(state.plans.concat([plan]));
 }
 
 var timelineChartInstance = null;
@@ -3129,15 +3241,13 @@ $("settingsClose").onclick = function() {
   renderSettings();
 };
 $("refresh").onclick = loadAll;
-$("reloadPlans").onclick = function() {
-  loadPlans().then(renderPlans);
-};
+document.addEventListener("click", function(event) {
+  if (planPop && !event.target.closest(".plan-pop")) closePlanPop();
+});
+window.addEventListener("resize", closePlanPop);
 $("saveWeatherSettings").onclick = saveWeatherSettings;
-qsa("[data-view]").forEach(function(button) {
-  button.onclick = function() {
-    state.planView = button.dataset.view;
-    renderPlans();
-  };
+qsa("[data-add-plan]").forEach(function(button) {
+  button.onclick = function() { addPlan(button.dataset.addPlan); };
 });
 qsa("[data-activity]").forEach(function(button) {
   button.onclick = function() {
