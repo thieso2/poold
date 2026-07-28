@@ -854,6 +854,7 @@ body[data-page="history"] .timeline-canvas {
       </div>
       <div class="manual-session-actions">
         <button id="cancelManualSession" disabled>Cancel</button>
+        <button id="retryManualSession" class="hidden">Retry failed fields</button>
         <button class="primary" id="manualSessionApply" disabled>Apply manual session</button>
       </div>
     </section>
@@ -989,17 +990,20 @@ function manualSessionObserved() {
 
 function startManualSessionDraft() {
   var observed = manualSessionObserved();
-  if (!observed || !observed.connected) return;
+  var session = state.poolControlRepresentation && state.poolControlRepresentation.session;
+  if (!session && (!observed || !observed.connected)) return;
+  var base = session ? session.intended : observed.state;
   state.manualSessionDraft = {
     duration: "30m",
-    base: Object.assign({}, observed.state),
-    intended: Object.assign({}, observed.state),
+    base: Object.assign({}, base),
+    intended: Object.assign({}, base),
     expected_control_revision: state.poolControlRepresentation.control_revision,
-    base_observation_id: observed.observation_id,
     explicit: {},
     dependencies: {},
     dirty: false
   };
+  if (session) state.manualSessionDraft.duration = session.duration;
+  if (!session) state.manualSessionDraft.base_observation_id = observed.observation_id;
   saveManualSessionDraft();
   renderControlMode();
   renderControls();
@@ -1177,7 +1181,7 @@ function loadPoolControl() {
         new Date(previous.session.expires_at).getTime() <= Date.now()) {
       toast("Manual session ended. Automatic control resumed.", "ok");
     }
-    if (state.manualSessionDraft && representation && representation.observed &&
+    if (state.manualSessionDraft && representation && !representation.session && representation.observed &&
         (!state.manualSessionDraft.expected_control_revision || !state.manualSessionDraft.base_observation_id)) {
       state.manualSessionDraft.expected_control_revision = representation.control_revision;
       state.manualSessionDraft.base_observation_id = representation.observed.observation_id;
@@ -1239,6 +1243,21 @@ function manualSessionClearAttempt(revision) {
   return attempt;
 }
 
+function manualSessionRetryAttempt(revision) {
+  var attempt = null;
+  try {
+    attempt = JSON.parse(sessionStorage.getItem("poold.manualSessionRetry") || "null");
+  } catch (_) {}
+  if (!attempt || attempt.expected_control_revision !== revision || !attempt.idempotency_key) {
+    attempt = {
+      expected_control_revision: revision,
+      idempotency_key: manualSessionIdempotencyKey()
+    };
+    sessionStorage.setItem("poold.manualSessionRetry", JSON.stringify(attempt));
+  }
+  return attempt;
+}
+
 function applyManualSessionDraft() {
   var draft = state.manualSessionDraft;
   if (!draft || state.pending) return;
@@ -1295,6 +1314,29 @@ function endManualSession() {
     scheduleManualSessionRefresh();
   }).catch(function(err) {
     toast("Manual session: " + err.message, "bad");
+  }).finally(function() {
+    setBusy(false);
+    renderControlMode();
+    renderControls();
+  });
+}
+
+function retryManualSession() {
+  var representation = state.poolControlRepresentation;
+  if (!representation || !representation.session || state.pending) return;
+  var attempt = manualSessionRetryAttempt(representation.control_revision);
+  setBusy(true, "Retrying failed Manual session fields");
+  api("/manual-session/retry", {
+    method: "POST",
+    headers: {"Idempotency-Key": attempt.idempotency_key},
+    body: JSON.stringify({expected_control_revision: attempt.expected_control_revision})
+  }).then(function(current) {
+    sessionStorage.removeItem("poold.manualSessionRetry");
+    state.poolControlRepresentation = current;
+    toast("Manual session retry started.", "ok");
+    scheduleManualSessionRefresh();
+  }).catch(function(err) {
+    toast("Manual session retry: " + err.message, "bad");
   }).finally(function() {
     setBusy(false);
     renderControlMode();
@@ -1487,7 +1529,7 @@ function renderControlMode() {
   $("automaticControl").setAttribute("aria-pressed", manual ? "false" : "true");
   $("manualControl").setAttribute("aria-pressed", manual ? "true" : "false");
   $("automaticControl").disabled = state.pending;
-  $("manualControl").disabled = !!session || (!draft && (!observed || !observed.connected));
+  $("manualControl").disabled = !!draft || (!session && (!observed || !observed.connected));
   $("cancelManualSession").disabled = !draft;
   if (draft) {
     $("manualSessionHint").textContent = "Draft saved in this tab. Apply commits the complete intended state.";
@@ -1499,6 +1541,11 @@ function renderControlMode() {
   } else if (session && session.state === "active") {
     $("manualSessionHint").textContent = "Manual session active · " +
       (session.expires_at ? manualSessionRemaining(session.expires_at) : "Until turned off.");
+  } else if (session && session.state === "degraded") {
+    var failed = Object.keys(session.outcomes || {}).filter(function(field) {
+      return session.outcomes[field].state === "failed";
+    }).map(function(field) { return capLabels[field] || "Target temperature"; });
+    $("manualSessionHint").textContent = "Manual session degraded. Failed: " + failed.join(", ") + ".";
   } else {
     $("manualSessionHint").textContent = "Schedules and reconciliation govern the pool.";
   }
@@ -1524,6 +1571,8 @@ function renderControls() {
   $("manualSessionTarget").value = displayed.target_temp == null ? "" : displayed.target_temp;
   $("manualSessionDuration").value = draft ? draft.duration : session ? session.duration : "30m";
   $("manualSessionApply").disabled = !draft || state.pending;
+  $("retryManualSession").classList.toggle("hidden", !session || session.state !== "degraded");
+  $("retryManualSession").disabled = state.pending;
   var explicit = draft && draft.explicit ? Object.keys(draft.explicit).map(function(field) {
     return capLabels[field] || "Target temperature";
   }) : [];
@@ -1537,7 +1586,8 @@ function renderControls() {
     provenance.push(["power", "filter", "heater", "jets", "bubbles", "target_temp"].map(function(field) {
       var label = capLabels[field] || "Target temperature";
       var outcome = session.outcomes[field] || {state: "pending"};
-      return label + ": " + outcome.state;
+      var failure = outcome.state === "failed" ? " — " + (outcome.message || outcome.code || "Failed") : "";
+      return label + ": " + outcome.state + failure;
     }).join(" · "));
   }
   $("manualSessionProvenance").textContent = provenance.join(" · ");
@@ -2613,6 +2663,7 @@ $("manualSessionDuration").onchange = function() {
   saveManualSessionDraft();
 };
 $("manualSessionApply").onclick = applyManualSessionDraft;
+$("retryManualSession").onclick = retryManualSession;
 $("reloadPlans").onclick = function() {
   loadPlans().then(renderPlans);
 };
