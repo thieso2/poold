@@ -1044,6 +1044,7 @@ function stageManualSessionCapability(cap) {
   }
   reconcileManualSessionProvenance(draft);
   draft.dirty = true;
+  delete draft.idempotency_key;
   saveManualSessionDraft();
   renderControls();
 }
@@ -1084,6 +1085,52 @@ function reconcileManualSessionProvenance(draft) {
       delete draft.dependencies[field];
     }
   });
+}
+
+function rebaseManualSessionDraft(current) {
+  var draft = state.manualSessionDraft;
+  if (!draft || !current) return;
+  var currentBase = current.session ? current.session.intended :
+    current.observed ? current.observed.state : null;
+  if (!currentBase) return;
+  var edited = {};
+  Object.keys(draft.explicit || {}).forEach(function(field) {
+    edited[field] = draft.intended[field];
+  });
+  draft.base = Object.assign({}, currentBase);
+  draft.intended = Object.assign({}, currentBase, edited);
+  draft.expected_control_revision = current.control_revision;
+  if (current.session) {
+    delete draft.base_observation_id;
+  } else if (current.observed) {
+    draft.base_observation_id = current.observed.observation_id;
+  }
+  draft.dependencies = {};
+  if (draft.explicit.power && !draft.intended.power) {
+    ["filter", "heater", "jets", "bubbles"].forEach(function(field) {
+      if (draft.intended[field]) {
+        draft.intended[field] = false;
+        if (!draft.explicit[field]) draft.dependencies[field] = "power_off";
+      }
+    });
+  }
+  if (draft.explicit.filter && !draft.intended.filter && draft.intended.heater) {
+    draft.intended.heater = false;
+    if (!draft.explicit.heater) draft.dependencies.heater = "filter_off";
+  }
+  if ((draft.intended.filter || draft.intended.heater || draft.intended.jets || draft.intended.bubbles) &&
+      !draft.intended.power) {
+    draft.intended.power = true;
+    if (!draft.explicit.power) draft.dependencies.power = "feature_power";
+  }
+  if (draft.intended.heater && !draft.intended.filter) {
+    draft.intended.filter = true;
+    if (!draft.explicit.filter) draft.dependencies.filter = "heater_filter";
+  }
+  draft.review_required = true;
+  draft.dirty = true;
+  delete draft.idempotency_key;
+  saveManualSessionDraft();
 }
 
 function setBusy(value, message) {
@@ -1283,7 +1330,14 @@ function applyManualSessionDraft() {
     toast("Manual session committed and applying.", "ok");
     scheduleManualSessionRefresh();
   }).catch(function(err) {
-    toast("Manual session: " + err.message, "bad");
+    if (err.detail && (err.detail.code === "control_changed" ||
+        err.detail.code === "observed_state_changed") && err.detail.current) {
+      state.poolControlRepresentation = err.detail.current;
+      rebaseManualSessionDraft(err.detail.current);
+      toast("Control changed. Your edits were rebased; review and Apply again.", "bad");
+    } else {
+      toast("Manual session: " + err.message, "bad");
+    }
   }).finally(function() {
     setBusy(false);
     renderControlMode();
@@ -1532,7 +1586,9 @@ function renderControlMode() {
   $("manualControl").disabled = !!draft || (!session && (!observed || !observed.connected));
   $("cancelManualSession").disabled = !draft;
   if (draft) {
-    $("manualSessionHint").textContent = "Draft saved in this tab. Apply commits the complete intended state.";
+    $("manualSessionHint").textContent = draft.review_required ?
+      "Control changed. Review this rebased draft, then Apply again." :
+      "Draft saved in this tab. Apply commits the complete intended state.";
   } else if (session && session.state === "applying") {
     var confirmed = Object.keys(session.outcomes || {}).filter(function(field) {
       return session.outcomes[field].state === "confirmed";
@@ -1580,6 +1636,7 @@ function renderControls() {
     return capLabels[field];
   }) : [];
   var provenance = [];
+  if (draft && draft.review_required) provenance.push("Review required after control changed.");
   if (explicit.length) provenance.push("Edited: " + explicit.join(", "));
   if (dependencies.length) provenance.push("Added automatically: " + dependencies.join(", "));
   if (session && session.outcomes) {
@@ -2653,6 +2710,7 @@ $("manualSessionTarget").onchange = function() {
   state.manualSessionDraft.explicit.target_temp = true;
   reconcileManualSessionProvenance(state.manualSessionDraft);
   state.manualSessionDraft.dirty = true;
+  delete state.manualSessionDraft.idempotency_key;
   saveManualSessionDraft();
   renderControls();
 };
@@ -2660,6 +2718,7 @@ $("manualSessionDuration").onchange = function() {
   if (!state.manualSessionDraft) return;
   state.manualSessionDraft.duration = $("manualSessionDuration").value;
   state.manualSessionDraft.dirty = true;
+  delete state.manualSessionDraft.idempotency_key;
   saveManualSessionDraft();
 };
 $("manualSessionApply").onclick = applyManualSessionDraft;

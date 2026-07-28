@@ -659,6 +659,51 @@ func TestPutManualSessionReplaysCommittedResultBeforeFreshSpaRead(t *testing.T) 
 	}
 }
 
+func TestRetryManualSessionReplaysCommittedResultAfterSessionExpires(t *testing.T) {
+	now := time.Now().UTC()
+	base := pool.Status{ObservedAt: now, Connected: true, Power: true, Filter: true, Heater: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	databasePath := t.TempDir() + "/poold.db"
+	st, err := store.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationID, err := st.SaveObservation(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	handler := New(service, "secret")
+	create := putManualSession(t, handler, "expiring-retry-create", controlRevision(t, handler), observationID, "30m",
+		pool.ControllableState{Power: true, Filter: true, Heater: false, TargetTemp: 36})
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, body=%s", create.Code, create.Body.String())
+	}
+	degraded := waitForManualSessionState(t, handler, "active")
+	first := retryManualSession(t, handler, "expiring-retry", degraded.ControlRevision)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body=%s", first.Code, first.Body.String())
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(31 * time.Minute)
+	restarted, err := store.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	handler = New(
+		NewService(restarted, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }}),
+		"secret",
+	)
+	replay := retryManualSession(t, handler, "expiring-retry", degraded.ControlRevision)
+	if replay.Code != first.Code || replay.Body.String() != first.Body.String() {
+		t.Fatalf("replay = (%d, %s), want original (%d, %s)", replay.Code, replay.Body.String(), first.Code, first.Body.String())
+	}
+}
+
 func TestManualSessionMutationRequiresBearerToken(t *testing.T) {
 	base := pool.Status{ObservedAt: time.Now().UTC(), Connected: true, Power: true, TargetTemp: 36}
 	handler, _, observationID := manualSessionTestAPI(t, newControllableSpa(base), base)
