@@ -41,11 +41,24 @@ func TestWebUIIsPublic(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Pooly Control") {
 		t.Fatal("web UI title missing")
 	}
-	if !strings.Contains(rec.Body.String(), "webui-manual") {
-		t.Fatal("manual control plan id missing")
+	if !strings.Contains(rec.Body.String(), `class="manual-session-orbit"`) ||
+		!strings.Contains(rec.Body.String(), `class="manual-session-control orbit-power"`) {
+		t.Fatal("Variant C manual-session controls missing")
 	}
-	if !strings.Contains(rec.Body.String(), "Make permanent") {
-		t.Fatal("manual permanent action missing")
+	if !strings.Contains(rec.Body.String(), `data-manual-cap="heater"`) ||
+		!strings.Contains(rec.Body.String(), `aria-label="Heater off"`) {
+		t.Fatal("accessible Manual-session feature control missing")
+	}
+	if !strings.Contains(rec.Body.String(), `id="manualSessionTarget" type="number" min="10" max="40" step="1" disabled`) {
+		t.Fatal("Automatic target-temperature control is not natively disabled")
+	}
+	if !strings.Contains(rec.Body.String(), `sessionStorage.setItem("poold.manualSessionDraft"`) ||
+		!strings.Contains(rec.Body.String(), `duration: "30m"`) {
+		t.Fatal("per-tab 30-minute Manual-session draft behavior missing")
+	}
+	if !strings.Contains(rec.Body.String(), `api("/manual-session")`) ||
+		strings.Contains(rec.Body.String(), `api("/manual-session",`) {
+		t.Fatal("Manual-session baseline must only read the mutation endpoint")
 	}
 	if !strings.Contains(rec.Body.String(), eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")
@@ -125,6 +138,83 @@ func TestStatusEndpointRefreshesHardware(t *testing.T) {
 	}
 	if status.CurrentTemp == nil || *status.CurrentTemp != 32 {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestAutomaticManualSessionRepresentationSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	databasePath := t.TempDir() + "/poold.db"
+	observedAt := time.Date(2026, 7, 28, 14, 20, 0, 0, time.UTC)
+	status := pool.Status{
+		ObservedAt: observedAt,
+		Connected:  true,
+		Power:      true,
+		Filter:     true,
+		TargetTemp: 38,
+	}
+
+	st, err := store.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationID, err := st.SaveObservation(ctx, status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		NewService(st, &fakePoolClient{status: status}, scheduler.New(scheduler.Config{}), ServiceConfig{}),
+		"secret",
+	)
+
+	first := authed(handler, http.MethodGet, "/manual-session", nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body=%s", first.Code, first.Body.String())
+	}
+	if got := first.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	var initial pool.ManualControlRepresentation
+	if err := json.Unmarshal(first.Body.Bytes(), &initial); err != nil {
+		t.Fatal(err)
+	}
+	if initial.Control != pool.AutomaticControl || initial.Session != nil {
+		t.Fatalf("initial representation = %+v", initial)
+	}
+	if initial.ControlRevision == "" {
+		t.Fatal("control revision is empty")
+	}
+	if initial.Observed == nil || initial.Observed.ObservationID != observationID {
+		t.Fatalf("observed = %+v, want observation %d", initial.Observed, observationID)
+	}
+	if initial.Observed.State.Filter != true || initial.Observed.State.TargetTemp != 38 {
+		t.Fatalf("observed state = %+v", initial.Observed.State)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	reopenedHandler := New(
+		NewService(reopened, &fakePoolClient{status: status}, scheduler.New(scheduler.Config{}), ServiceConfig{}),
+		"secret",
+	)
+	second := authed(reopenedHandler, http.MethodGet, "/manual-session", nil)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body=%s", second.Code, second.Body.String())
+	}
+	var restored pool.ManualControlRepresentation
+	if err := json.Unmarshal(second.Body.Bytes(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.ControlRevision != initial.ControlRevision {
+		t.Fatalf("control revision changed across restart: %q != %q", restored.ControlRevision, initial.ControlRevision)
+	}
+	if restored.Observed == nil || restored.Observed.ObservationID != observationID {
+		t.Fatalf("restored observed = %+v, want observation %d", restored.Observed, observationID)
 	}
 }
 

@@ -40,6 +40,59 @@ type ControlMode struct {
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 }
 
+// ControlOwnership identifies who currently governs the pool.
+type ControlOwnership string
+
+const (
+	// AutomaticControl means schedules and reconciliation govern the pool.
+	AutomaticControl ControlOwnership = "automatic"
+	// ManualControl means a Manual session governs the pool.
+	ManualControl ControlOwnership = "manual"
+)
+
+// ControllableState is the complete set of pool settings governed by control ownership.
+type ControllableState struct {
+	Power      bool `json:"power"`
+	Filter     bool `json:"filter"`
+	Heater     bool `json:"heater"`
+	Jets       bool `json:"jets"`
+	Bubbles    bool `json:"bubbles"`
+	TargetTemp int  `json:"target_temp"`
+}
+
+// ControlObservation is the latest complete pool state exposed with control ownership.
+type ControlObservation struct {
+	ObservationID int64             `json:"observation_id"`
+	ObservedAt    time.Time         `json:"observed_at"`
+	Connected     bool              `json:"connected"`
+	State         ControllableState `json:"state"`
+}
+
+// ManualControlRepresentation is the authoritative pool-control representation.
+type ManualControlRepresentation struct {
+	Control         ControlOwnership             `json:"control"`
+	ControlRevision string                       `json:"control_revision"`
+	Observed        *ControlObservation          `json:"observed"`
+	Session         *ManualSessionRepresentation `json:"session"`
+}
+
+// ManualSessionRepresentation describes the complete durable Manual-session intent and progress.
+type ManualSessionRepresentation struct {
+	State     string                    `json:"state"`
+	Duration  string                    `json:"duration"`
+	StartedAt time.Time                 `json:"started_at"`
+	ExpiresAt *time.Time                `json:"expires_at"`
+	Intended  ControllableState         `json:"intended"`
+	Outcomes  map[string]CommandOutcome `json:"outcomes"`
+}
+
+// CommandOutcome reports reconciliation progress for one intended field.
+type CommandOutcome struct {
+	State   string `json:"state"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 // Active reports whether manual pool control is active at now.
 func (m ControlMode) Active(now time.Time) bool {
 	if !m.ManualControl {

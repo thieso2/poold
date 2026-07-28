@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,6 +90,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 
 	s := &Store{db: db}
 	if err := s.migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.initializeControlRevision(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -367,7 +373,22 @@ func (s *Store) LatestObservationsPage(ctx context.Context, limit, offset int) (
 	}
 	defer rows.Close()
 
-	return scanObservations(rows)
+	observations, err := scanObservations(rows)
+	if err != nil {
+		return nil, err
+	}
+	s.applyPendingObservation(observations)
+	return observations, nil
+}
+
+// ControlRevision returns the durable token for the current control intent.
+func (s *Store) ControlRevision(ctx context.Context) (string, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT revision FROM control_state WHERE id = 1`)
+	var revision string
+	if err := row.Scan(&revision); err != nil {
+		return "", err
+	}
+	return revision, nil
 }
 
 func (s *Store) ObservationsRange(ctx context.Context, from, to time.Time) ([]pool.Observation, error) {
@@ -1306,6 +1327,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS control_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			revision TEXT NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS plans (
 			id TEXT PRIMARY KEY,
 			updated_at TEXT NOT NULL,
@@ -1327,6 +1353,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	return s.compactObservationSpans(ctx)
+}
+
+func (s *Store) initializeControlRevision(ctx context.Context) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_state WHERE id = 1`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return nil
+	}
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO control_state (id, revision)
+		VALUES (1, ?)
+	`, hex.EncodeToString(bytes))
+	return err
 }
 
 func (s *Store) migrateObservationSpans(ctx context.Context) error {

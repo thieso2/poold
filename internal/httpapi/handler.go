@@ -33,6 +33,7 @@ func New(service *Service, token string) http.Handler {
 	mux.HandleFunc("GET /observations/stream", api.handleObservationStream)
 	mux.HandleFunc("GET /events", api.handleEvents)
 	mux.HandleFunc("GET /events/stream", api.handleEventStream)
+	mux.HandleFunc("GET /manual-session", api.handleGetManualSession)
 	mux.HandleFunc("GET /desired-state", api.handleGetDesiredState)
 	mux.HandleFunc("PUT /desired-state", api.handlePutDesiredState)
 	mux.HandleFunc("GET /control-mode", api.handleGetControlMode)
@@ -246,6 +247,16 @@ func (a *API) handleGetDesiredState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, desired)
+}
+
+func (a *API) handleGetManualSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	representation, err := a.service.ManualControl(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, representation)
 }
 
 func (a *API) handlePutDesiredState(w http.ResponseWriter, r *http.Request) {

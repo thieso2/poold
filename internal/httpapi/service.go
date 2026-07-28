@@ -236,6 +236,40 @@ func (s *Service) DesiredState(ctx context.Context) (pool.DesiredState, error) {
 	return s.store.DesiredState(ctx)
 }
 
+func (s *Service) ManualControl(ctx context.Context) (pool.ManualControlRepresentation, error) {
+	revision, err := s.store.ControlRevision(ctx)
+	if err != nil {
+		return pool.ManualControlRepresentation{}, err
+	}
+	observations, err := s.store.LatestObservations(ctx, 1)
+	if err != nil {
+		return pool.ManualControlRepresentation{}, err
+	}
+	representation := pool.ManualControlRepresentation{
+		Control:         pool.AutomaticControl,
+		ControlRevision: revision,
+	}
+	if len(observations) == 0 {
+		return representation, nil
+	}
+	observation := observations[0]
+	status := observation.Status
+	representation.Observed = &pool.ControlObservation{
+		ObservationID: observation.ID,
+		ObservedAt:    status.ObservedAt,
+		Connected:     status.Connected,
+		State: pool.ControllableState{
+			Power:      status.Power,
+			Filter:     status.Filter,
+			Heater:     status.Heater,
+			Jets:       status.Jets,
+			Bubbles:    status.Bubbles,
+			TargetTemp: status.TargetTemp,
+		},
+	}
+	return representation, nil
+}
+
 func (s *Service) SaveDesiredState(ctx context.Context, desired pool.DesiredState) error {
 	if err := s.store.SaveDesiredState(ctx, desired); err != nil {
 		return err

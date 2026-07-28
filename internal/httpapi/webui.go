@@ -338,72 +338,66 @@ h3 {
   color: var(--muted);
   font-size: 13px;
 }
-.controls {
+.manual-session-modes {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 11px;
+  background: #edf2f4;
 }
-.manual-strip,
-.mode-strip {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding: 11px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8fbfc;
+.manual-session-modes button[aria-pressed="true"] {
+  border-color: #b9dfca;
+  background: #fff;
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-soft);
 }
-.mode-strip {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-}
-.manual-strip.active,
-.mode-strip.manual {
+.manual-session-modes button.manual[aria-pressed="true"] {
   border-color: #f1c27d;
   background: #fff6e8;
+  color: #7a4500;
 }
-.mode-strip.automatic {
-  border-color: #b9dfca;
-  background: #f0faf4;
-}
-.manual-strip strong,
-.mode-strip strong,
-.manual-strip span {
-  display: block;
-}
-.manual-strip span,
-.mode-strip span {
+.manual-session-hint {
+  min-height: 20px;
+  margin: 10px 0 4px;
   color: var(--muted);
   font-size: 13px;
 }
-.manual-actions {
-  display: none;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.manual-strip.active .manual-actions {
-  display: grid;
-}
-.manual-actions.permanent {
-  grid-template-columns: 1fr;
-}
-.control {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 54px;
-  padding: 10px;
+.manual-session-orbit {
+  position: relative;
+  width: min(300px, 100%);
+  height: 214px;
+  margin: 8px auto 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  text-align: left;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 34%, #edf6f8 35% 36%, #f8fbfc 37%);
 }
-.control.on {
+.manual-session-control {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  min-height: 54px;
+  padding: 6px;
+  border-radius: 12px;
+  font-size: 22px;
+}
+.manual-session-control[aria-pressed="true"] {
   border-color: rgba(0, 124, 137, .45);
   background: #e9f6f7;
   color: var(--accent-strong);
 }
+.orbit-power {
+  left: 50%;
+  top: 50%;
+  width: 62px;
+  min-height: 62px;
+  transform: translate(-50%, -50%);
+}
+.orbit-filter { left: 50%; top: 7px; transform: translateX(-50%); }
+.orbit-heater { right: 26px; top: 50%; transform: translateY(-50%); }
+.orbit-jets { left: 50%; bottom: 7px; transform: translateX(-50%); }
+.orbit-bubbles { left: 26px; top: 50%; transform: translateY(-50%); }
 .dot {
   width: 10px;
   height: 10px;
@@ -411,23 +405,21 @@ h3 {
   background: #a7b2b8;
   flex: 0 0 auto;
 }
-.control.on .dot {
-  background: var(--accent);
-}
-.control.manual {
-  box-shadow: inset 0 0 0 2px rgba(241, 194, 125, .65);
-}
-.temp-row {
+.manual-session-fields {
   display: grid;
-  grid-template-columns: 42px 1fr 42px;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   align-items: end;
   margin: 12px 0;
 }
-.temp-row input {
+.manual-session-fields input {
   text-align: center;
   font-weight: 800;
-  font-size: 22px;
+}
+.manual-session-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 8px;
 }
 .forms {
   display: grid;
@@ -810,30 +802,32 @@ body[data-page="history"] .timeline-canvas {
         <h2>Controls</h2>
         <span class="badge" id="busy">Ready</span>
       </div>
-      <div class="mode-strip automatic" id="modeStrip">
-        <div>
-          <strong id="modeTitle">Automatic control</strong>
-          <span id="modeDetail">Schedules and reconciliation active</span>
-        </div>
-        <button id="controlModeToggle">Manual</button>
+      <div class="manual-session-modes" aria-label="Pool control">
+        <button id="automaticControl" aria-pressed="true">Automatic</button>
+        <button class="manual" id="manualControl" aria-pressed="false" disabled>Manual</button>
       </div>
-      <div class="manual-strip" id="manualStrip">
-        <div>
-          <strong id="manualTitle">Manual control</strong>
-          <span id="manualDetail">No override active</span>
-        </div>
-        <div class="manual-actions" id="manualActions">
-          <button id="manualMinus">-30m</button>
-          <button id="manualPlus">+30m</button>
-          <button class="primary" id="manualPermanent">Make permanent</button>
-          <button class="danger" id="manualClear">Clear</button>
-        </div>
+      <p class="manual-session-hint" id="manualSessionHint">Schedules and reconciliation govern the pool.</p>
+      <div class="manual-session-orbit">
+        <button class="manual-session-control orbit-power" data-manual-cap="power" aria-label="Power off" aria-pressed="false" title="Power" disabled>⏻</button>
+        <button class="manual-session-control orbit-filter" data-manual-cap="filter" aria-label="Filter off" aria-pressed="false" title="Filter" disabled>◫</button>
+        <button class="manual-session-control orbit-heater" data-manual-cap="heater" aria-label="Heater off" aria-pressed="false" title="Heater" disabled>♨</button>
+        <button class="manual-session-control orbit-jets" data-manual-cap="jets" aria-label="Jets off" aria-pressed="false" title="Jets" disabled>≋</button>
+        <button class="manual-session-control orbit-bubbles" data-manual-cap="bubbles" aria-label="Bubbles off" aria-pressed="false" title="Bubbles" disabled>◌</button>
       </div>
-      <div class="controls" id="controls"></div>
-      <div class="temp-row">
-        <button id="tempDown">-</button>
-        <label>Target <input id="tempInput" type="number" min="10" max="40" step="1"></label>
-        <button id="tempUp">+</button>
+      <div class="manual-session-fields">
+        <label>Target temperature <input id="manualSessionTarget" type="number" min="10" max="40" step="1" disabled></label>
+        <label>Duration
+          <select id="manualSessionDuration" disabled>
+            <option value="30m">30 minutes</option>
+            <option value="60m">60 minutes</option>
+            <option value="2h">2 hours</option>
+            <option value="until_off">Until turned off</option>
+          </select>
+        </label>
+      </div>
+      <div class="manual-session-actions">
+        <button id="cancelManualSession" disabled>Cancel</button>
+        <button class="primary" id="manualSessionApply" disabled>Apply manual session</button>
       </div>
     </section>
 
@@ -912,6 +906,8 @@ var state = {
   token: localStorage.getItem("poold.token") || "",
   status: null,
   controlMode: {manual_control: false},
+  manualControlRepresentation: null,
+  manualSessionDraft: readManualSessionDraft(),
   weather: null,
   timeline: null,
   timelineRange: "24h",
@@ -944,6 +940,70 @@ function $(id) { return document.getElementById(id); }
 function qsa(selector) { return Array.prototype.slice.call(document.querySelectorAll(selector)); }
 function boolText(value) { return value ? "On" : "Off"; }
 function title(value) { return (value || "").replace(/_/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); }); }
+
+function readManualSessionDraft() {
+  try {
+    var draft = JSON.parse(sessionStorage.getItem("poold.manualSessionDraft") || "null");
+    return draft && draft.intended ? draft : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveManualSessionDraft() {
+  if (state.manualSessionDraft) {
+    sessionStorage.setItem("poold.manualSessionDraft", JSON.stringify(state.manualSessionDraft));
+  } else {
+    sessionStorage.removeItem("poold.manualSessionDraft");
+  }
+}
+
+function manualSessionObserved() {
+  var representation = state.manualControlRepresentation;
+  return representation && representation.observed ? representation.observed : null;
+}
+
+function startManualSessionDraft() {
+  var observed = manualSessionObserved();
+  if (!observed || !observed.connected) return;
+  state.manualSessionDraft = {
+    duration: "30m",
+    intended: Object.assign({}, observed.state),
+    dirty: false
+  };
+  saveManualSessionDraft();
+  renderControlMode();
+  renderControls();
+}
+
+function discardManualSessionDraft() {
+  if (state.manualSessionDraft && state.manualSessionDraft.dirty &&
+      !confirm("Discard the unsubmitted Manual session draft?")) return;
+  state.manualSessionDraft = null;
+  saveManualSessionDraft();
+  renderControlMode();
+  renderControls();
+}
+
+function stageManualSessionCapability(cap) {
+  var draft = state.manualSessionDraft;
+  if (!draft) return;
+  var intended = draft.intended;
+  var value = !intended[cap];
+  intended[cap] = value;
+  if (cap !== "power" && value) intended.power = true;
+  if (cap === "heater" && value) intended.filter = true;
+  if (cap === "power" && !value) {
+    intended.filter = false;
+    intended.heater = false;
+    intended.jets = false;
+    intended.bubbles = false;
+  }
+  if (cap === "filter" && !value) intended.heater = false;
+  draft.dirty = true;
+  saveManualSessionDraft();
+  renderControls();
+}
 
 function setBusy(value, message) {
   state.pendingCount = Math.max(0, state.pendingCount + (value ? 1 : -1));
@@ -1004,7 +1064,7 @@ function loadAll() {
   }
   setBusy(true);
   Promise.all([
-    loadStatus(),
+    loadStatus().then(loadManualControl),
     loadControlMode(),
     loadWeather(),
     loadTimeline(),
@@ -1026,6 +1086,15 @@ function loadStatus() {
       updateTokenUI();
     }
     toast("Status: " + err.message, "bad");
+  });
+}
+
+function loadManualControl() {
+  return api("/manual-session").then(function(representation) {
+    state.manualControlRepresentation = representation;
+  }).catch(function(err) {
+    state.manualControlRepresentation = null;
+    toast("Pool control: " + err.message, "bad");
   });
 }
 
@@ -1116,7 +1185,6 @@ function renderAll() {
   renderWeather();
   renderSettings();
   renderControlMode();
-  renderManual();
   renderControls();
   renderPlans();
   renderTimeline();
@@ -1132,7 +1200,6 @@ function renderLivePanels() {
   renderWeather();
   renderSettings();
   renderControlMode();
-  renderManual();
   renderControls();
   renderTimeline();
   renderActivity();
@@ -1144,9 +1211,6 @@ function renderStatus() {
   var current = status.current_temp == null ? "--" : status.current_temp + unit;
   $("currentTemp").textContent = current;
   $("targetTemp").textContent = "Target " + (status.preset_temp || "--") + unit;
-  if (document.activeElement !== $("tempInput")) {
-    $("tempInput").value = status.preset_temp || "";
-  }
   $("observedAt").textContent = status.observed_at ? formatTime(status.observed_at) : "--";
   $("errorCode").textContent = status.error_code || "None";
   $("subline").textContent = status.connected ? "Connected " + formatAge(status.observed_at) : "Pool daemon";
@@ -1204,47 +1268,33 @@ function renderSettings() {
 }
 
 function renderControlMode() {
-  var manual = manualControlActive();
-  var strip = $("modeStrip");
-  strip.className = "mode-strip " + (manual ? "manual" : "automatic");
-  $("modeTitle").textContent = manual ? "Manual pool control" : "Automatic control";
-  $("modeDetail").textContent = manual && state.controlMode.expires_at ? "Schedules paused until " + formatDateTime(state.controlMode.expires_at) : (manual ? "Schedules and reconciliation paused" : "Schedules and reconciliation active");
-  $("controlModeToggle").textContent = manual ? "Automatic" : "Manual";
-}
-
-function renderManual() {
-  var plan = activeManualPlan();
-  var strip = $("manualStrip");
-  var actions = $("manualActions");
-  strip.classList.toggle("active", !!plan);
-  var timed = !!(plan && plan.expires_at);
-  actions.classList.toggle("permanent", !!plan && !timed);
-  $("manualMinus").classList.toggle("hidden", !!plan && !timed);
-  $("manualPlus").classList.toggle("hidden", !!plan && !timed);
-  $("manualPermanent").classList.toggle("hidden", !!plan && !timed);
-  $("manualPermanent").disabled = !!plan && !timed;
-  if (plan) {
-    $("manualTitle").textContent = manualTitle(plan.desired_state || {});
-    $("manualDetail").textContent = manualSummary(plan.desired_state || {}) + " · " + manualDurationLabel(plan);
-  } else {
-    $("manualTitle").textContent = "Manual control";
-    $("manualDetail").textContent = "No override active";
-  }
+  var draft = state.manualSessionDraft;
+  var observed = manualSessionObserved();
+  $("automaticControl").setAttribute("aria-pressed", draft ? "false" : "true");
+  $("manualControl").setAttribute("aria-pressed", draft ? "true" : "false");
+  $("manualControl").disabled = !draft && (!observed || !observed.connected);
+  $("cancelManualSession").disabled = !draft;
+  $("manualSessionHint").textContent = draft
+    ? "Draft saved in this tab. This read-only baseline cannot apply it yet."
+    : "Schedules and reconciliation govern the pool.";
 }
 
 function renderControls() {
-  var wrap = $("controls");
-  var status = state.status || {};
-  wrap.innerHTML = "";
-  caps.forEach(function(cap) {
-    var manualValue = manualControlActive() ? undefined : manualDesiredValue(cap);
-    var displayValue = manualValue === undefined ? !!status[cap] : manualValue;
-    var button = document.createElement("button");
-    button.className = "control" + (displayValue ? " on" : "") + (manualValue !== undefined ? " manual" : "");
-    button.innerHTML = "<span><strong>" + capLabels[cap] + "</strong></span><i class=\"dot\"></i>";
-    button.onclick = function() { toggleControl(cap, !displayValue); };
-    wrap.appendChild(button);
+  var draft = state.manualSessionDraft;
+  var observed = manualSessionObserved();
+  var displayed = draft ? draft.intended : observed ? observed.state : {};
+  qsa("[data-manual-cap]").forEach(function(button) {
+    var cap = button.dataset.manualCap;
+    var enabled = !!displayed[cap];
+    button.disabled = !draft;
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.setAttribute("aria-label", capLabels[cap] + " " + (enabled ? "on" : "off"));
   });
+  $("manualSessionTarget").disabled = !draft;
+  $("manualSessionDuration").disabled = !draft;
+  $("manualSessionTarget").value = displayed.target_temp == null ? "" : displayed.target_temp;
+  $("manualSessionDuration").value = draft ? draft.duration : "30m";
+  $("manualSessionApply").disabled = true;
 }
 
 function renderPlans() {
@@ -2442,24 +2492,32 @@ $("settingsClose").onclick = function() {
   renderSettings();
 };
 $("refresh").onclick = loadAll;
+$("manualControl").onclick = startManualSessionDraft;
+$("automaticControl").onclick = discardManualSessionDraft;
+$("cancelManualSession").onclick = discardManualSessionDraft;
+qsa("[data-manual-cap]").forEach(function(button) {
+  button.onclick = function() { stageManualSessionCapability(button.dataset.manualCap); };
+});
+$("manualSessionTarget").onchange = function() {
+  var target = Number($("manualSessionTarget").value);
+  if (!state.manualSessionDraft || !Number.isInteger(target) || target < 10 || target > 40) {
+    renderControls();
+    return;
+  }
+  state.manualSessionDraft.intended.target_temp = target;
+  state.manualSessionDraft.dirty = true;
+  saveManualSessionDraft();
+};
+$("manualSessionDuration").onchange = function() {
+  if (!state.manualSessionDraft) return;
+  state.manualSessionDraft.duration = $("manualSessionDuration").value;
+  state.manualSessionDraft.dirty = true;
+  saveManualSessionDraft();
+};
 $("reloadPlans").onclick = function() {
   loadPlans().then(renderPlans);
 };
 $("saveWeatherSettings").onclick = saveWeatherSettings;
-$("manualMinus").onclick = function() { adjustManual(-30); };
-$("manualPlus").onclick = function() { adjustManual(30); };
-$("manualPermanent").onclick = makeManualPermanent;
-$("manualClear").onclick = clearManual;
-$("controlModeToggle").onclick = function() { setControlMode(!manualControlActive()); };
-$("tempInput").oninput = function() { scheduleControlTemp($("tempInput").value); };
-$("tempDown").onclick = function() {
-  $("tempInput").value = Number($("tempInput").value || 0) - 1;
-  scheduleControlTemp($("tempInput").value);
-};
-$("tempUp").onclick = function() {
-  $("tempInput").value = Number($("tempInput").value || 0) + 1;
-  scheduleControlTemp($("tempInput").value);
-};
 qsa("[data-view]").forEach(function(button) {
   button.onclick = function() {
     state.planView = button.dataset.view;
@@ -2496,7 +2554,7 @@ updateTokenUI();
 renderAll();
 loadAll();
 setInterval(function() {
-  if (!isHistoryPage && state.token) Promise.all([loadStatus(), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
+  if (!isHistoryPage && state.token) Promise.all([loadStatus().then(loadManualControl), loadControlMode(), loadWeather(), loadActivities()]).then(renderLivePanels);
 }, 30000);
 setInterval(function() {
   if (state.token) loadTimeline().then(renderTimeline);
