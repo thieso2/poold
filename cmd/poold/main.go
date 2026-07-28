@@ -55,6 +55,9 @@ func main() {
 		PollActiveInterval:       cfg.PollActiveInterval,
 		WeatherProvider:          weather.New(),
 	})
+	if err := service.EstablishControl(ctx); err != nil {
+		log.Fatal(err)
+	}
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,

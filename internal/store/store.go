@@ -85,6 +85,12 @@ type ClearManualSessionResult struct {
 	Replayed       bool
 }
 
+// ExpireManualSessionResult describes an atomic timed ownership transition.
+type ExpireManualSessionResult struct {
+	Expired        bool
+	Representation pool.PoolControlRepresentation
+}
+
 type rowQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
@@ -757,6 +763,106 @@ func (s *Store) ClearManualSession(ctx context.Context, params ClearManualSessio
 	return ClearManualSessionResult{Status: 200, Representation: representation}, nil
 }
 
+// ExpireManualSession atomically returns an elapsed timed session to Automatic control.
+func (s *Store) ExpireManualSession(ctx context.Context, expectedRevision string, expiredAt time.Time) (ExpireManualSessionResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	defer tx.Rollback()
+
+	var currentRevision string
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM control_state WHERE id = 1`).Scan(&currentRevision); err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	var expiresAt sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT expires_at FROM manual_session WHERE id = 1 AND revision = ?
+	`, expectedRevision).Scan(&expiresAt)
+	if errors.Is(err, sql.ErrNoRows) || currentRevision != expectedRevision {
+		representation, representationErr := poolControlRepresentationTx(ctx, tx, currentRevision)
+		return ExpireManualSessionResult{Representation: representation}, representationErr
+	}
+	if err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	if !expiresAt.Valid || decodeTime(expiresAt.String).After(expiredAt) {
+		representation, representationErr := poolControlRepresentationTx(ctx, tx, currentRevision)
+		return ExpireManualSessionResult{Representation: representation}, representationErr
+	}
+
+	revision, err := newRevision()
+	if err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM manual_session_outcomes WHERE revision = ?`, expectedRevision); err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM manual_session WHERE id = 1 AND revision = ?`, expectedRevision); err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE control_state SET revision = ? WHERE id = 1`, revision); err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	eventData, err := json.Marshal(map[string]any{
+		"control_revision":  revision,
+		"previous_revision": expectedRevision,
+	})
+	if err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO events (created_at, type, message, data_json)
+		VALUES (?, 'manual_session.expired', 'Manual session expired', ?)
+	`, encodeTime(expiredAt), eventData); err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	representation, err := poolControlRepresentationTx(ctx, tx, revision)
+	if err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ExpireManualSessionResult{}, err
+	}
+	return ExpireManualSessionResult{Expired: true, Representation: representation}, nil
+}
+
+// RecoverManualSession makes every intended field eligible for restart reconciliation.
+func (s *Store) RecoverManualSession(ctx context.Context, expectedRevision string, recoveredAt time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM manual_session WHERE id = 1 AND revision = ?
+	`, expectedRevision).Scan(&exists); err != nil || exists == 0 {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE manual_session_outcomes
+		SET state = 'pending', code = NULL, message = NULL
+		WHERE revision = ? AND state = 'confirmed'
+	`, expectedRevision); err != nil {
+		return false, err
+	}
+	data, err := json.Marshal(map[string]any{"control_revision": expectedRevision})
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO events (created_at, type, message, data_json)
+		VALUES (?, 'manual_session.recovered', 'Manual session recovered', ?)
+	`, encodeTime(recoveredAt), data); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func manualSessionMutationReplay(ctx context.Context, query rowQuerier, key, fingerprint string) (int, pool.PoolControlRepresentation, bool, error) {
 	var storedFingerprint string
 	var storedStatus int
@@ -893,6 +999,20 @@ func (s *Store) ManualSessionRevisionCurrent(ctx context.Context, revision strin
 		WHERE id = 1 AND revision = ?
 	`, revision).Scan(&exists)
 	return exists == 1, err
+}
+
+// AutomaticRevisionCurrent reports whether a revision still owns Automatic control.
+func (s *Store) AutomaticRevisionCurrent(ctx context.Context, revision string) (bool, error) {
+	var current int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM control_state
+		WHERE id = 1 AND revision = ?
+		  AND NOT EXISTS (SELECT 1 FROM manual_session)
+	`, revision).Scan(&current); err != nil {
+		return false, err
+	}
+	return current == 1, nil
 }
 
 // ConfirmManualSessionStatus records every satisfied pending field in a full status snapshot.

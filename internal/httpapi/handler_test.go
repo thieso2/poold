@@ -71,6 +71,10 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `dependency-change`) {
 		t.Fatal("Manual session dependency provenance is not visibly distinguished")
 	}
+	if !strings.Contains(rec.Body.String(), `Manual session ended. Automatic control resumed.`) ||
+		!strings.Contains(rec.Body.String(), `previous.session.expires_at`) {
+		t.Fatal("Manual session expiry announcement is missing")
+	}
 	if !strings.Contains(rec.Body.String(), eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")
 	}

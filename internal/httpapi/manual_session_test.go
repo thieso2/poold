@@ -143,6 +143,210 @@ func TestPutManualSessionAcceptsOnlyDocumentedDurations(t *testing.T) {
 	}
 }
 
+func TestTimedManualSessionExpiresAtomicallyAndResumesAutomaticReconciliation(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 28, 14, 20, 3, 0, time.UTC)
+	base := pool.Status{ObservedAt: now, Connected: true, Power: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	st, err := store.Open(ctx, t.TempDir()+"/poold.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	handler := New(service, "secret")
+	response := putManualSession(t, handler, "timed-expiry", controlRevision(t, handler), observationID, "30m", controllableState(base))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	manual := waitForManualSessionState(t, handler, "active")
+	if err := st.SaveDesiredState(ctx, pool.DesiredState{Power: pool.BoolPtr(false), TargetTemp: pool.IntPtr(36)}); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(30 * time.Minute)
+	automatic := controlRepresentation(t, handler)
+	if automatic.Control != pool.AutomaticControl || automatic.Session != nil {
+		t.Fatalf("representation = %+v, want Automatic control", automatic)
+	}
+	if automatic.ControlRevision == manual.ControlRevision {
+		t.Fatal("expiry did not advance the control revision")
+	}
+	assertNoManualSession(t, st)
+	events, err := st.Events(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasEventType(events, "manual_session.expired") {
+		t.Fatalf("events = %+v, want manual_session.expired", events)
+	}
+	waitForCommands(t, spa, []string{"power"})
+}
+
+func TestManualSessionRecoveryUsesSameSQLiteDatabaseBeforeSchedulesRun(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 28, 14, 20, 3, 0, time.UTC)
+	path := t.TempDir() + "/poold.db"
+	base := pool.Status{ObservedAt: now, Connected: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	handler := New(service, "secret")
+	response := putManualSession(t, handler, "restart-session", controlRevision(t, handler), observationID, "until_off", pool.ControllableState{
+		Power: true, TargetTemp: 36,
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	manual := waitForManualSessionState(t, handler, "active")
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	spa.mu.Lock()
+	spa.status.Power = false
+	spa.commands = nil
+	spa.mu.Unlock()
+	now = now.Add(24 * time.Hour)
+	restarted, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	recoveredService := NewService(restarted, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	if err := recoveredService.EstablishControl(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered := controlRepresentation(t, New(recoveredService, "secret"))
+	if recovered.ControlRevision != manual.ControlRevision || recovered.Control != pool.ManualControl ||
+		recovered.Session == nil || recovered.Session.State != "active" {
+		t.Fatalf("recovered representation = %+v, want restored active session", recovered)
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"power"}) {
+		t.Fatalf("recovery commands = %v, want Manual intent before schedules", got)
+	}
+	events, err := restarted.Events(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasEventType(events, "manual_session.recovered") {
+		t.Fatalf("events = %+v, want manual_session.recovered", events)
+	}
+}
+
+func TestStartupExpiresElapsedManualSessionBeforeIssuingAutomaticCommand(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 28, 14, 20, 3, 0, time.UTC)
+	path := t.TempDir() + "/poold.db"
+	base := pool.Status{ObservedAt: now, Connected: true, Power: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	handler := New(service, "secret")
+	response := putManualSession(t, handler, "stopped-expiry", controlRevision(t, handler), observationID, "30m", controllableState(base))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	manual := waitForManualSessionState(t, handler, "active")
+	if err := st.SaveDesiredState(ctx, pool.DesiredState{Power: pool.BoolPtr(false), TargetTemp: pool.IntPtr(36)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(31 * time.Minute)
+	spa.mu.Lock()
+	spa.commands = nil
+	spa.mu.Unlock()
+
+	restarted, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	recoveredService := NewService(restarted, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: func() time.Time { return now }})
+	if err := recoveredService.EstablishControl(ctx); err != nil {
+		t.Fatal(err)
+	}
+	automatic := controlRepresentation(t, New(recoveredService, "secret"))
+	if automatic.Control != pool.AutomaticControl || automatic.Session != nil || automatic.ControlRevision == manual.ControlRevision {
+		t.Fatalf("representation = %+v, want expired Automatic ownership", automatic)
+	}
+	if got := spa.commandCapabilities(); !reflect.DeepEqual(got, []string{"power"}) {
+		t.Fatalf("startup commands = %v, want schedule command only after expiry", got)
+	}
+}
+
+func TestManualReconciliationDoesNotCommandAfterTimedOwnershipExpires(t *testing.T) {
+	ctx := context.Background()
+	var clockMu sync.Mutex
+	now := time.Date(2026, 7, 28, 14, 20, 3, 0, time.UTC)
+	nowFunc := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return now
+	}
+	base := pool.Status{ObservedAt: now, Connected: true, TargetTemp: 36}
+	spa := newControllableSpa(base)
+	spa.statusHook = func(call int) {
+		if call == 2 {
+			clockMu.Lock()
+			now = now.Add(31 * time.Minute)
+			clockMu.Unlock()
+		}
+	}
+	st, err := store.Open(ctx, t.TempDir()+"/poold.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	observationID, err := st.SaveObservation(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDesiredState(ctx, pool.DesiredState{Power: pool.BoolPtr(false), TargetTemp: pool.IntPtr(36)}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, spa, scheduler.New(scheduler.Config{}), ServiceConfig{Now: nowFunc})
+	handler := New(service, "secret")
+	response := putManualSession(t, handler, "expires-before-command", controlRevision(t, handler), observationID, "30m", pool.ControllableState{
+		Power: true, TargetTemp: 36,
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if controlRepresentation(t, handler).Control == pool.AutomaticControl {
+			if got := spa.commandCapabilities(); len(got) != 0 {
+				t.Fatalf("commands = %v, want none after Manual ownership expired", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Manual session did not expire")
+}
+
 func TestPutManualSessionDisablesDependentsBeforeFilterAndPower(t *testing.T) {
 	base := pool.Status{
 		ObservedAt: time.Now().UTC(),
@@ -547,6 +751,7 @@ type controllableSpa struct {
 	statusCalls   int
 	commands      []string
 	blockCommands chan struct{}
+	statusHook    func(int)
 }
 
 func newControllableSpa(status pool.Status) *controllableSpa {
@@ -557,6 +762,9 @@ func (s *controllableSpa) Status(context.Context) (pool.Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.statusCalls++
+	if s.statusHook != nil {
+		s.statusHook(s.statusCalls)
+	}
 	if s.statusErr != nil {
 		return pool.Status{}, s.statusErr
 	}
@@ -624,13 +832,27 @@ func manualSessionTestAPI(t *testing.T, spa intex.PoolClient, initial pool.Statu
 
 func controlRevision(t *testing.T, handler http.Handler) string {
 	t.Helper()
+	return controlRepresentation(t, handler).ControlRevision
+}
+
+func controlRepresentation(t *testing.T, handler http.Handler) pool.PoolControlRepresentation {
+	t.Helper()
 	response := authed(handler, http.MethodGet, "/manual-session", nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, body=%s", response.Code, response.Body.String())
 	}
 	var representation pool.PoolControlRepresentation
 	decodeJSON(t, response, &representation)
-	return representation.ControlRevision
+	return representation
+}
+
+func hasEventType(events []pool.Event, eventType string) bool {
+	for _, event := range events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 func putManualSession(t *testing.T, handler http.Handler, key, revision string, observationID int64, duration string, intended pool.ControllableState) *httptest.ResponseRecorder {
