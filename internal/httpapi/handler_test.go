@@ -118,6 +118,16 @@ func TestHistoryUIIsPublic(t *testing.T) {
 	if !strings.Contains(body, eChartsCDN) {
 		t.Fatal("ECharts CDN script missing")
 	}
+	for _, evidence := range []string{
+		`function manualSessionEventLine`,
+		`Legacy manual control`,
+		`Failed fields:`,
+		`manual_session.`,
+	} {
+		if !strings.Contains(body, evidence) {
+			t.Fatalf("history is missing Manual-session evidence rendering %q", evidence)
+		}
+	}
 }
 
 func TestFaviconIsPublic(t *testing.T) {
