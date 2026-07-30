@@ -639,24 +639,62 @@ h3 {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
-.activity {
-  grid-template-columns: 92px 1fr;
-  align-items: start;
-}
-.activity time {
+/* Activity as a ship's log: timestamp rail, LEDs, small-caps sources */
+.al-day {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
   color: var(--muted);
+  padding: 14px 0 8px 86px;
+}
+.al-entry {
+  display: grid; grid-template-columns: 58px 20px minmax(0, 1fr); gap: 0 8px;
+  padding: 7px 0; position: relative;
+  --alc: var(--muted);
+}
+.al-entry + .al-entry::before, .al-day + .al-entry::before {
+  content: ""; position: absolute; left: 67.5px; top: -14px; height: 18px; width: 1px;
+  background: var(--line);
+}
+.al-entry time {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 12px; line-height: 1.6; color: var(--muted); text-align: right;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  line-height: 1.35;
-  padding-top: 2px;
 }
-.activity strong {
-  display: block;
-  font-size: 13px;
+.al-led {
+  width: 8px; height: 8px; border-radius: 50%; margin: 6px auto 0;
+  background: var(--alc);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--alc) 60%, transparent);
 }
-.activity span {
-  color: var(--muted);
-  font-size: 13px;
+.al-led.hollow { background: transparent; border: 1.5px solid var(--alc); box-shadow: none; }
+.al-msg { font-size: 14px; color: var(--muted); min-width: 0; overflow-wrap: break-word; margin: 0; }
+.al-msg b { color: var(--text); font-weight: 600; }
+.al-msg .al-src {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--alc) 80%, var(--muted));
+  margin-right: 7px;
+}
+.al-msg .al-id { color: color-mix(in srgb, var(--muted) 55%, transparent); font-size: 12px; }
+.al-msg .al-mult {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; margin-left: 7px;
+  white-space: nowrap;
+}
+.al-filter { --alc: #00b7c4; }
+.al-heater { --alc: #f08c1a; }
+.al-jets { --alc: #4d8fe0; }
+.al-bubbles { --alc: #9d7bff; }
+.al-power { --alc: #9aa8b0; }
+.al-sanitizer { --alc: #35b878; }
+.al-plan { --alc: var(--accent); }
+.al-manual { --alc: var(--cool); }
+.al-bad { --alc: var(--bad); }
+.al-dim { --alc: #5b6d75; }
+@media (max-width: 560px) {
+  .al-entry { grid-template-columns: 46px 16px minmax(0, 1fr); }
+  .al-entry + .al-entry::before, .al-day + .al-entry::before { left: 53.5px; }
+  .al-day { padding-left: 70px; }
 }
 .activity-head {
   align-items: start;
@@ -773,7 +811,32 @@ h3 {
 }
 .activity-tabs {
   width: 100%;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+.activity-tabs button {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 12px 10px;
+  position: relative;
+}
+.activity-tabs button:hover { color: var(--text); background: none; }
+.tabs.activity-tabs button.active {
+  background: none; border: 0; color: var(--text);
+}
+.tabs.activity-tabs button.active::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px;
+  background: var(--accent); border-radius: 1px;
+  box-shadow: 0 0 8px var(--accent);
 }
 .tabs button.active {
   background: var(--accent);
@@ -2981,6 +3044,72 @@ function timelineItemTooltip(param) {
   return "<strong>" + formatDateTime(value[0]) + "</strong><br>" + escapeHTML(param.seriesName || "") + ": " + Number(value[1]).toFixed(1) + "°";
 }
 
+var CAP_LED = {filter: "filter", heater: "heater", jets: "jets", bubbles: "bubbles", power: "power", sanitizer: "sanitizer"};
+
+function schedulerLed(event) {
+  var desired = (event.data || {}).desired || {};
+  if (desired.heater) return "heater";
+  if (desired.jets) return "jets";
+  if (desired.bubbles) return "bubbles";
+  if (desired.filter) return "filter";
+  return "plan";
+}
+
+// One log entry per activity row: which LED it lights, who wrote it, what it says.
+function activityEntry(view, row, rawRows, index) {
+  if (view === "polls") {
+    return {ts: row.last_observed_at || (row.status || {}).observed_at, src: "POLL", led: "dim", hollow: true,
+      text: observationLine(row, rawRows[index + 1]), id: row.id};
+  }
+  if (view === "commands") {
+    return {ts: row.completed_at || row.issued_at, src: "CMD",
+      led: row.success ? (CAP_LED[row.capability] || "dim") : "bad",
+      text: commandLine(row), id: row.id};
+  }
+  if (view === "plan_executions") {
+    return {ts: row.created_at, src: "SCHED", led: schedulerLed(row), text: planExecutionLine(row), id: row.id};
+  }
+  if (view === "heating_sessions") {
+    return {ts: row.started_at, src: "HEAT", led: "heater", text: heatingSessionLine(row),
+      id: row.first_observation_id + "-" + row.last_observation_id};
+  }
+  var type = String(row.type || "");
+  var entry = {ts: row.created_at, src: "SYS", led: "dim",
+    text: eventLine(row, previousObservationEvent(rawRows, index)), id: row.id};
+  if (type === "scheduler") { entry.src = "SCHED"; entry.led = schedulerLed(row); }
+  else if (type === "command") { entry.src = "CMD"; entry.led = CAP_LED[(row.data || {}).capability] || "dim"; }
+  else if (type === "command_error" || type === "status_error") { entry.src = "ERR"; entry.led = "bad"; }
+  else if (type === "plans") { entry.src = "PLAN"; entry.led = "plan"; }
+  else if (type === "observation") { entry.src = "POLL"; entry.led = "dim"; entry.hollow = true; }
+  else if (type.indexOf("manual_session.") === 0) { entry.src = "MANUAL"; entry.led = "manual"; }
+  return entry;
+}
+
+function activityDayLabel(date) {
+  var today = new Date();
+  var yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  var options = date.getFullYear() === today.getFullYear()
+    ? {weekday: "short", month: "short", day: "numeric"}
+    : {year: "numeric", month: "short", day: "numeric"};
+  return date.toLocaleDateString([], options);
+}
+
+function activityEntryHTML(entry, count) {
+  var main = entry.text || "";
+  var rest = "";
+  var split = main.indexOf(" · ");
+  if (split > 0) { rest = main.slice(split); main = main.slice(0, split); }
+  return '<div class="al-entry al-' + entry.led + '">' +
+    "<time>" + escapeHTML(entry.clock) + "</time>" +
+    '<span class="al-led' + (entry.hollow ? " hollow" : "") + '"></span>' +
+    '<p class="al-msg"><span class="al-src">' + entry.src + "</span><b>" + escapeHTML(main) + "</b>" +
+    escapeHTML(rest) +
+    (count > 1 ? '<span class="al-mult">×' + count + "</span>" : " ") +
+    '<span class="al-id">#' + escapeHTML(String(entry.id)) + "</span></p></div>";
+}
+
 function renderActivity() {
   qsa("[data-activity]").forEach(function(button) {
     button.classList.toggle("active", button.dataset.activity === state.activityView);
@@ -2993,23 +3122,27 @@ function renderActivity() {
     renderActivityPager();
     return;
   }
-  list.innerHTML = "";
-  rows.forEach(function(row, index) {
-    var item = document.createElement("div");
-    item.className = "activity";
-    if (state.activityView === "polls") {
-      item.innerHTML = "<time>" + formatActivityTime(row.last_observed_at || row.status.observed_at) + "</time><div><strong>Span #" + row.id + "</strong><span>" + observationLine(row, rawRows[index + 1]) + "</span></div>";
-    } else if (state.activityView === "commands") {
-      item.innerHTML = "<time>" + formatActivityTime(row.completed_at || row.issued_at) + "</time><div><strong>Command #" + row.id + "</strong><span>" + commandLine(row) + "</span></div>";
-    } else if (state.activityView === "plan_executions") {
-      item.innerHTML = "<time>" + formatActivityTime(row.created_at) + "</time><div><strong>Plan #" + row.id + "</strong><span>" + planExecutionLine(row) + "</span></div>";
-    } else if (state.activityView === "heating_sessions") {
-      item.innerHTML = "<time>" + formatActivityTime(row.started_at) + "</time><div><strong>Heating #" + row.first_observation_id + "-" + row.last_observation_id + "</strong><span>" + heatingSessionLine(row) + "</span></div>";
-    } else {
-      item.innerHTML = "<time>" + formatActivityTime(row.created_at) + "</time><div><strong>" + title(row.type) + " #" + row.id + "</strong><span>" + eventLine(row, previousObservationEvent(rawRows, index)) + "</span></div>";
-    }
-    list.appendChild(item);
+  var entries = rows.map(function(row, index) {
+    var entry = activityEntry(state.activityView, row, rawRows, index);
+    var date = entry.ts ? new Date(entry.ts) : null;
+    entry.day = date ? activityDayLabel(date) : "";
+    entry.clock = date ? date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false}) : "--";
+    return entry;
   });
+  var html = "", lastDay = null, i = 0;
+  while (i < entries.length) {
+    var entry = entries[i];
+    if (entry.day !== lastDay) { html += '<div class="al-day">' + escapeHTML(entry.day) + "</div>"; lastDay = entry.day; }
+    // Collapse runs of identical messages from the same source into one ×N line.
+    var count = 1;
+    while (i + count < entries.length &&
+      entries[i + count].day === entry.day &&
+      entries[i + count].src === entry.src &&
+      entries[i + count].text === entry.text) count++;
+    html += activityEntryHTML(entry, count);
+    i += count;
+  }
+  list.innerHTML = html;
   renderActivityPager();
 }
 
@@ -3276,14 +3409,6 @@ function weatherLocationLabel(location) {
 function formatTime(value) {
   if (!value) return "--";
   return new Date(value).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
-}
-
-function formatActivityTime(value) {
-  if (!value) return "--";
-  var date = new Date(value);
-  var now = new Date();
-  var dateOptions = date.getFullYear() === now.getFullYear() ? {month: "short", day: "numeric"} : {year: "numeric", month: "short", day: "numeric"};
-  return date.toLocaleDateString([], dateOptions) + "<br>" + date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false});
 }
 
 function formatDateTime(value) {
