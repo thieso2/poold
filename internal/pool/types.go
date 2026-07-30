@@ -235,6 +235,13 @@ type Plan struct {
 	UpdatedAt       time.Time  `json:"updated_at,omitempty"`
 }
 
+// PlanScheduleInfo is the scheduler's computed outlook for one ready-by plan:
+// when heating is expected to begin and when the water should be ready.
+type PlanScheduleInfo struct {
+	HeatStartAt time.Time `json:"heat_start_at"`
+	ReadyAt     time.Time `json:"ready_at"`
+}
+
 // ReadyByControlMode is the persisted control state for one ready-by occurrence.
 type ReadyByControlMode string
 

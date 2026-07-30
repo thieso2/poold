@@ -353,7 +353,7 @@ func TestInactiveTimeWindowDoesNotUndoDirectFilterCommand(t *testing.T) {
 
 func TestPlansEndpoint(t *testing.T) {
 	handler, _ := testAPI(t)
-	body := []byte(`{"plans":[{"id":"filter","type":"time_window","enabled":true,"capability":"filter","start":"02:00","duration_minutes":120}]}`)
+	body := []byte(`{"plans":[{"id":"filter","type":"time_window","enabled":true,"capability":"filter","start":"02:00","duration_minutes":120},{"id":"morning","type":"ready_by","enabled":true,"cron":"30 8 * * *","target_temp":36}]}`)
 	rec := authed(handler, http.MethodPut, "/plans", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -364,13 +364,18 @@ func TestPlansEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	var response struct {
-		Plans []pool.Plan `json:"plans"`
+		Plans    []pool.Plan                      `json:"plans"`
+		Schedule map[string]pool.PlanScheduleInfo `json:"schedule"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Plans) != 1 || response.Plans[0].ID != "filter" {
+	if len(response.Plans) != 2 || response.Plans[0].ID != "filter" {
 		t.Fatalf("plans = %+v", response.Plans)
+	}
+	outlook, ok := response.Schedule["morning"]
+	if !ok || outlook.ReadyAt.IsZero() || outlook.HeatStartAt.IsZero() || !outlook.HeatStartAt.Before(outlook.ReadyAt) {
+		t.Fatalf("schedule = %+v, want computed heat start before ready time for the ready-by plan", response.Schedule)
 	}
 }
 

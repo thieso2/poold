@@ -238,6 +238,12 @@ func readyByModeReason(mode pool.ReadyByControlMode) string {
 	}
 }
 
+// ReadyByTimes exposes the computed heating start and ready instants for a
+// ready-by plan, so the UI can show when heating will actually begin.
+func (s *Scheduler) ReadyByTimes(now time.Time, status pool.Status, plan pool.Plan) (time.Time, time.Time, bool) {
+	return s.readyByTimes(now, status, plan)
+}
+
 func (s *Scheduler) readyByTimes(now time.Time, status pool.Status, plan pool.Plan) (time.Time, time.Time, bool) {
 	if plan.TargetTemp == nil {
 		return time.Time{}, time.Time{}, false

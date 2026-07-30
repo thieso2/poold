@@ -736,6 +736,26 @@ func (s *Service) Plans(ctx context.Context) ([]pool.Plan, error) {
 	return s.store.Plans(ctx)
 }
 
+// PlanSchedule computes, per enabled ready-by plan, when the scheduler expects
+// heating to start and the water to be ready, from the latest observed temperature.
+func (s *Service) PlanSchedule(ctx context.Context, plans []pool.Plan) map[string]pool.PlanScheduleInfo {
+	out := map[string]pool.PlanScheduleInfo{}
+	var status pool.Status
+	if observations, err := s.store.LatestObservations(ctx, 1); err == nil && len(observations) > 0 {
+		status = observations[0].Status
+	}
+	now := time.Now()
+	for _, plan := range plans {
+		if !plan.Enabled || plan.Type != pool.PlanReadyBy {
+			continue
+		}
+		if startAt, readyAt, ok := s.scheduler.ReadyByTimes(now, status, plan); ok {
+			out[plan.ID] = pool.PlanScheduleInfo{HeatStartAt: startAt, ReadyAt: readyAt}
+		}
+	}
+	return out
+}
+
 func (s *Service) SavePlans(ctx context.Context, plans []pool.Plan) error {
 	if err := s.store.SavePlans(ctx, plans); err != nil {
 		return err

@@ -656,7 +656,7 @@ func (a *API) handleGetPlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
+	writeJSON(w, http.StatusOK, map[string]any{"plans": plans, "schedule": a.service.PlanSchedule(r.Context(), plans)})
 }
 
 func (a *API) handlePutPlans(w http.ResponseWriter, r *http.Request) {

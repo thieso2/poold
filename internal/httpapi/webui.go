@@ -1096,7 +1096,7 @@ body[data-page="history"] .timeline-toolbar {
 .timeline-chart { display: flex; gap: 12px; align-items: flex-start; min-height: 0 !important; }
 .timeline-panel { min-height: 0; }
 .strip-main { flex: 1 1 auto; min-width: 0; }
-.timeline-chart svg { display: block; flex: 1 1 auto; min-width: 0; height: auto; }
+.timeline-chart svg { display: block; width: 100%; height: auto; }
 .timeline-chart svg text { font-family: var(--mono, ui-monospace, Menlo, monospace); }
 .strip-readout {
   flex: 0 0 128px;
@@ -1715,6 +1715,7 @@ function selectAutomaticControl() {
 function loadPlans() {
   return api("/plans").then(function(data) {
     state.plans = data.plans || [];
+    state.planSchedule = data.schedule || {};
   }).catch(function(err) {
     toast("Plans: " + err.message, "bad");
   });
@@ -2512,12 +2513,22 @@ function planNextLine(plan, heatingNow) {
     }
     return ws.at != null ? '<div class="tp-next">starts in ' + planCountdown(ws.at - now.getTime()) + "</div>" : "";
   }
-  var readyAt = planReadyAt(plan, now);
+  // Prefer the scheduler's own outlook (knows temp + heating rate); fall back to clock math.
+  var sched = (state.planSchedule || {})[plan.id];
+  var readyAt = sched ? new Date(sched.ready_at).getTime() : planReadyAt(plan, now);
+  var heatStartAt = sched ? new Date(sched.heat_start_at).getTime() : null;
   if (heatingNow) {
     return '<div class="tp-next live"><span class="tp-live"></span>heating' +
       (readyAt != null ? " · ready in " + planCountdown(readyAt - now.getTime()) : "") + "</div>";
   }
-  return readyAt != null ? '<div class="tp-next">ready in ' + planCountdown(readyAt - now.getTime()) + "</div>" : "";
+  var parts = [];
+  if (heatStartAt != null && Number.isFinite(heatStartAt)) {
+    parts.push(heatStartAt > now.getTime()
+      ? "starts heating in " + planCountdown(heatStartAt - now.getTime())
+      : "heating due");
+  }
+  if (readyAt != null && Number.isFinite(readyAt)) parts.push("ready in " + planCountdown(readyAt - now.getTime()));
+  return parts.length ? '<div class="tp-next">' + parts.join(" · ") + "</div>" : "";
 }
 
 function durShort(minutes) {
@@ -2919,7 +2930,7 @@ function renderTimelineStrip(chart, data) {
     });
     return d;
   }
-  var s = '<svg viewBox="0 0 ' + W + " " + H + '" id="stripSvg" aria-label="Pool history">';
+  var s = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '" id="stripSvg" aria-label="Pool history">';
   spans.forEach(function(span) {
     if (!span.heater) return;
     var s0 = Math.max(from, new Date(span.from).getTime());
@@ -2998,7 +3009,7 @@ function renderTimelineStrip(chart, data) {
       pen = true;
     });
     var bx0 = MX(from), bx1 = MX(to);
-    mini = '<svg viewBox="0 0 ' + W + " " + MH + '" id="stripMini" style="cursor: crosshair; margin-top: 6px">' +
+    mini = '<svg viewBox="0 0 ' + W + " " + MH + '" width="' + W + '" height="' + MH + '" id="stripMini" style="cursor: crosshair; margin-top: 6px">' +
       '<rect x="' + L + '" y="' + MT + '" width="' + (W - L - R) + '" height="' + MPH + '" rx="6" fill="#0d1317" stroke="#1e2a31"/>' +
       '<path d="' + md + '" fill="none" stroke="#00b7c4" stroke-width="1.2" opacity="0.8"/>' +
       '<rect id="stripBrush" x="' + bx0.toFixed(1) + '" y="' + (MT - 3) + '" width="' + Math.max(3, bx1 - bx0).toFixed(1) + '" height="' + (MPH + 6) + '" rx="5" fill="rgba(0,183,196,0.10)" stroke="#00b7c4"/>' +
@@ -3637,8 +3648,8 @@ setInterval(function() {
   if (state.token) loadTimeline().then(renderTimeline);
 }, 60000);
 setInterval(function() {
-  // Tick the plan countdowns; skip while a tag is in set mode.
-  if (!isHistoryPage && state.token && planEditing == null) renderPlans();
+  // Refresh the scheduler outlook and tick the countdowns; skip while a tag is in set mode.
+  if (!isHistoryPage && state.token && planEditing == null) loadPlans().then(renderPlans);
 }, 30000);
 </script>
 </body>
