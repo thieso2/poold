@@ -844,16 +844,36 @@ h3 {
   color: var(--ink-on-accent);
 }
 .pager {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 8px;
+  display: flex;
   align-items: center;
-  margin-top: 12px;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
 }
-.pager span {
+.pager button {
+  min-height: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
+  padding: 8px 8px;
+}
+.pager button:hover:not(:disabled) { color: var(--text); background: none; }
+.pager button:disabled { color: color-mix(in srgb, var(--muted) 35%, transparent); }
+.pager span {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
   text-align: center;
   text-transform: uppercase;
 }
@@ -3158,7 +3178,7 @@ function renderActivityPager() {
   var pager = $("activityPager");
   var page = state.activityPages[state.activityView] || 0;
   var hasOlder = !!state.activityHasOlder[state.activityView];
-  pager.innerHTML = "<button data-page=\"newer\">Newer</button><span>Page " + (page + 1) + "</span><button data-page=\"older\">Older</button>";
+  pager.innerHTML = "<button data-page=\"newer\">▲ Newer</button><span>Page " + (page + 1) + "</span><button data-page=\"older\">Older ▼</button>";
   var newer = pager.querySelector("[data-page=\"newer\"]");
   var older = pager.querySelector("[data-page=\"older\"]");
   newer.disabled = page <= 0;
