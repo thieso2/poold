@@ -1087,6 +1087,33 @@ body[data-page="history"] .timeline-canvas {
 @media (max-width: 560px) {
   .tp-readout { font-size: 22px; }
 }
+
+/* ---- Dashboard history strip-chart ---- */
+body[data-page="dashboard"] .timeline-chart { display: flex; gap: 12px; align-items: flex-start; }
+.timeline-chart svg { display: block; flex: 1 1 auto; min-width: 0; height: auto; }
+.timeline-chart svg text { font-family: var(--mono, ui-monospace, Menlo, monospace); }
+.strip-readout {
+  flex: 0 0 128px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  padding: 10px 12px;
+  display: grid; gap: 7px;
+  margin-top: 8px;
+}
+.sr-time { font: 700 12px/1 var(--mono, ui-monospace, Menlo, monospace); color: var(--muted); letter-spacing: .08em; }
+.sr-pool { font: 600 24px/1 var(--mono, ui-monospace, Menlo, monospace); color: #00b7c4; text-shadow: 0 0 14px rgba(0,183,196,.35); }
+.sr-out { font: 600 15px/1 var(--mono, ui-monospace, Menlo, monospace); color: #c7b9a3; }
+.sr-pool small, .sr-out small { display: block; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: var(--muted); margin-bottom: 3px; }
+.sr-leds { display: flex; flex-wrap: wrap; gap: 6px 9px; padding-top: 5px; border-top: 1px solid var(--line); max-width: 128px; }
+.sr-led { display: inline-flex; align-items: center; gap: 4px; font: 700 8px/1 var(--mono, ui-monospace, Menlo, monospace); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; opacity: .55; }
+.sr-led i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.sr-led.on { opacity: 1; }
+.sr-led.on i { background: var(--c); box-shadow: 0 0 6px var(--c); }
+@media (max-width: 560px) {
+  body[data-page="dashboard"] .timeline-chart { flex-direction: column; }
+  .strip-readout { flex: none; width: 100%; margin-top: 0; grid-template-columns: repeat(3, auto); align-items: center; justify-content: start; gap: 12px; }
+  .sr-leds { border: 0; padding: 0; max-width: none; }
+}
 </style>
 </head>
 <body data-page="__POOLD_PAGE__">
@@ -2704,17 +2731,203 @@ function renderTimeline() {
     renderTimelineMessage(chart, "No history loaded");
     return;
   }
+  $("timelineBadge").textContent = data.range || state.timelineRange;
+  if (!isHistoryPage) {
+    $("timelineMeta").textContent = timelineMeta(data);
+    renderTimelineLegend(data);
+    renderTimelineStrip(chart, data);
+    return;
+  }
   if (typeof echarts === "undefined") {
-    $("timelineBadge").textContent = data.range || state.timelineRange;
     $("timelineMeta").textContent = "Chart library unavailable";
     renderTimelineLegend(data);
     renderTimelineMessage(chart, "Chart library unavailable");
     return;
   }
-  $("timelineBadge").textContent = data.range || state.timelineRange;
   $("timelineMeta").textContent = timelineMeta(data);
   renderTimelineLegend(data);
   renderTimelineChart(chart, data);
+}
+
+/* ---- Dashboard history as a strip-chart instrument: one plot, ink lanes,
+   heater glow, event ticks, and a scrub needle driving a digital readout. ---- */
+var stripScrubT = null; // persisted scrub position so periodic re-renders don't wipe it
+
+function stripSeriesPoints(points, field) {
+  return points.map(function(point) {
+    var t = new Date(point.t).getTime();
+    var v = point[field];
+    if (!Number.isFinite(t)) return null;
+    return [t, v == null || !Number.isFinite(Number(v)) ? null : Number(v)];
+  }).filter(Boolean).sort(function(a, b) { return a[0] - b[0]; });
+}
+
+function stripLaneActiveAt(spans, lane, t) {
+  return spans.some(function(span) {
+    var s = new Date(span.from).getTime(), e = new Date(span.to).getTime();
+    if (!(t >= s && t < e)) return false;
+    return lane === "connected" ? span.connected === false : !!span[lane];
+  });
+}
+
+function renderTimelineStrip(chart, data) {
+  disposeTimelineChart();
+  var measured = data.measured || [];
+  var pool = stripSeriesPoints(measured, "pool_temp");
+  var outside = stripSeriesPoints(measured, "outside_temp_c");
+  var target = (data.target || []).map(function(p) {
+    var t = new Date(p.t).getTime();
+    return Number.isFinite(t) && p.target_temp != null ? [t, Number(p.target_temp)] : null;
+  }).filter(Boolean).sort(function(a, b) { return a[0] - b[0]; });
+  var from = new Date(data.from).getTime();
+  var to = new Date(data.to).getTime();
+  var values = timelineValues(measured, measured, data.target || []);
+  if (!values.length || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+    renderTimelineMessage(chart, "No timeline data");
+    return;
+  }
+  var yMin = Math.floor(Math.min.apply(null, values)) - 1;
+  var yMax = Math.ceil(Math.max.apply(null, values)) + 1;
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  var spans = data.feature_spans || [];
+  var lanes = timelineLanes(spans);
+  var colors = timelineFeatureColors();
+  var annotations = (data.annotations || []).map(function(a) {
+    var t = new Date(a.t).getTime();
+    return Number.isFinite(t) ? {t: t, label: a.label || "Event", detail: a.detail || ""} : null;
+  }).filter(Boolean);
+
+  var W = 680, L = 46, R = 26, T = 22, plotH = 236;
+  var laneTop = T + plotH + 30;
+  var H = laneTop + lanes.length * 12 + 8;
+  function X(t) { return L + (W - L - R) * (t - from) / (to - from); }
+  function Y(v) { return T + plotH * (1 - (v - yMin) / (yMax - yMin)); }
+  function linePath(pts) {
+    var d = "", pen = false;
+    pts.forEach(function(p) {
+      if (p[1] == null) { pen = false; return; }
+      d += (pen ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1);
+      pen = true;
+    });
+    return d;
+  }
+  var s = '<svg viewBox="0 0 ' + W + " " + H + '" id="stripSvg" aria-label="Pool history">';
+  // heater glow behind the curve
+  spans.forEach(function(span) {
+    if (!span.heater) return;
+    var s0 = Math.max(from, new Date(span.from).getTime());
+    var s1 = Math.min(to, new Date(span.to).getTime());
+    if (!(s1 > s0)) return;
+    s += '<rect x="' + X(s0).toFixed(1) + '" y="' + T + '" width="' + Math.max(1.5, X(s1) - X(s0)).toFixed(1) + '" height="' + plotH + '" fill="rgba(240,140,26,0.07)"/>';
+  });
+  // y grid
+  var step = (yMax - yMin) > 12 ? 5 : 2;
+  for (var g = Math.ceil(yMin / step) * step; g <= yMax; g += step) {
+    s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(g).toFixed(1) + '" y2="' + Y(g).toFixed(1) + '" stroke="#1e2a31"/>' +
+      '<text x="' + (L - 7) + '" y="' + (Y(g) + 3).toFixed(1) + '" text-anchor="end" font-size="9.5" fill="#5b6d75">' + g + "°</text>";
+  }
+  // x labels
+  var spanMs = to - from;
+  var showDate = spanMs > 36 * 3600 * 1000;
+  for (var k = 0; k <= 6; k++) {
+    var tx = from + spanMs * k / 6;
+    var dt = new Date(tx);
+    var label = showDate
+      ? dt.toLocaleDateString([], {month: "short", day: "numeric"})
+      : String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
+    s += '<text x="' + X(tx).toFixed(1) + '" y="' + (T + plotH + 18) + '" text-anchor="middle" font-size="9.5" fill="#5b6d75">' + label + "</text>";
+  }
+  // event ticks on top rule
+  s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + (T - 8) + '" y2="' + (T - 8) + '" stroke="#1e2a31"/>';
+  annotations.forEach(function(a) {
+    s += '<g><line x1="' + X(a.t).toFixed(1) + '" x2="' + X(a.t).toFixed(1) + '" y1="' + (T - 12) + '" y2="' + (T - 4) +
+      '" stroke="#8ba0a8" stroke-width="1.5"/><rect x="' + (X(a.t) - 4).toFixed(1) + '" y="' + (T - 16) + '" width="8" height="14" fill="transparent"><title>' +
+      escapeHTML(a.label + (a.detail ? " · " + a.detail : "")) + "</title></rect></g>";
+  });
+  // target step line
+  if (target.length) {
+    var td = "";
+    for (var i = 0; i < target.length; i++) {
+      var t0 = Math.max(from, target[i][0]);
+      var t1 = i + 1 < target.length ? target[i + 1][0] : to;
+      td += "M" + X(t0).toFixed(1) + " " + Y(target[i][1]).toFixed(1) + "L" + X(t1).toFixed(1) + " " + Y(target[i][1]).toFixed(1);
+    }
+    s += '<path d="' + td + '" fill="none" stroke="#d9a13f" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"/>';
+    s += '<text x="' + (W - R) + '" y="' + (Y(target[target.length - 1][1]) - 5).toFixed(1) + '" text-anchor="end" font-size="9.5" fill="#d9a13f">target ' + target[target.length - 1][1] + "°</text>";
+  }
+  // series
+  s += '<path d="' + linePath(outside) + '" fill="none" stroke="#c7b9a3" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.9"/>';
+  s += '<path d="' + linePath(pool) + '" fill="none" stroke="#00b7c4" stroke-width="2.2" style="filter: drop-shadow(0 0 5px rgba(0,183,196,.45))"/>';
+  // direct labels at last values
+  function lastVal(pts) { for (var i = pts.length - 1; i >= 0; i--) if (pts[i][1] != null) return pts[i]; return null; }
+  var lp = lastVal(pool), lo = lastVal(outside);
+  if (lp) s += '<text x="' + (W - R) + '" y="' + (Y(lp[1]) - 6).toFixed(1) + '" text-anchor="end" font-size="10" font-weight="700" fill="#00b7c4">pool</text>';
+  if (lo) s += '<text x="' + (W - R) + '" y="' + (Y(lo[1]) + 13).toFixed(1) + '" text-anchor="end" font-size="10" font-weight="700" fill="#c7b9a3">outside</text>';
+  // ink lanes
+  lanes.forEach(function(lane, r) {
+    var yb = laneTop + r * 12;
+    s += '<text x="' + (L - 7) + '" y="' + (yb + 7) + '" text-anchor="end" font-size="8" fill="#5b6d75" letter-spacing="1">' + timelineLaneLabel(lane).toUpperCase() + "</text>";
+    spans.forEach(function(span) {
+      var active = lane === "connected" ? span.connected === false : !!span[lane];
+      if (!active) return;
+      var s0 = Math.max(from, new Date(span.from).getTime());
+      var s1 = Math.min(to, new Date(span.to).getTime());
+      if (!(s1 > s0)) return;
+      s += '<rect x="' + X(s0).toFixed(1) + '" y="' + yb + '" width="' + Math.max(2, X(s1) - X(s0)).toFixed(1) + '" height="8" rx="2" fill="' + colors[lane] + '" opacity="0.85"/>';
+    });
+  });
+  // needle
+  s += '<line id="stripNeedle" x1="0" x2="0" y1="' + (T - 12) + '" y2="' + (H - 4) + '" stroke="#dbe4e8" stroke-width="1" opacity="0"/>';
+  s += "</svg>";
+
+  chart.innerHTML = s + '<div class="strip-readout" id="stripReadout"></div>';
+
+  var readout = $("stripReadout");
+  function nearestIndex(pts, t) {
+    if (!pts.length) return -1;
+    var best = 0, bd = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var d = Math.abs(pts[i][0] - t);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+  function valueAt(pts, t) {
+    var i = nearestIndex(pts, t);
+    return i < 0 ? null : pts[i][1];
+  }
+  function renderReadout(t) {
+    var pv = valueAt(pool, t), ov = valueAt(outside, t);
+    var dt = new Date(t);
+    readout.innerHTML = '<div class="sr-time">' + String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0") + "</div>" +
+      '<div class="sr-pool"><small>POOL</small>' + (pv == null ? "--" : pv.toFixed(1) + "°") + "</div>" +
+      '<div class="sr-out"><small>OUT</small>' + (ov == null ? "--" : ov.toFixed(1) + "°") + "</div>" +
+      '<div class="sr-leds">' + lanes.map(function(lane) {
+        var on = stripLaneActiveAt(spans, lane, t);
+        return '<span class="sr-led' + (on ? " on" : "") + '" style="--c:' + colors[lane] + '"><i></i>' + escapeHTML(timelineLaneLabel(lane)) + "</span>";
+      }).join("") + "</div>";
+  }
+  var svg = $("stripSvg");
+  var needle = $("stripNeedle");
+  function scrubTo(t) {
+    needle.setAttribute("x1", X(t).toFixed(1));
+    needle.setAttribute("x2", X(t).toFixed(1));
+    needle.setAttribute("opacity", "0.5");
+    renderReadout(t);
+  }
+  if (stripScrubT != null && stripScrubT >= from && stripScrubT <= to) scrubTo(stripScrubT);
+  else renderReadout(to);
+  svg.addEventListener("pointermove", function(e) {
+    var rect = svg.getBoundingClientRect();
+    var px = (e.clientX - rect.left) / rect.width * W;
+    stripScrubT = from + Math.max(0, Math.min(1, (px - L) / (W - L - R))) * (to - from);
+    scrubTo(stripScrubT);
+  });
+  svg.addEventListener("pointerleave", function() {
+    stripScrubT = null;
+    needle.setAttribute("opacity", "0");
+    renderReadout(to);
+  });
 }
 
 function timelineMeta(data) {
@@ -2736,8 +2949,8 @@ function renderTimelineLegend(data) {
     return;
   }
   var items = [
-    {label: state.timelineMode === "predicted" ? "Pool predicted" : "Pool measured", color: state.timelineMode === "predicted" ? "#235ea8" : "#007c89"},
-    {label: "Outside", color: "#8aa1a8"},
+    {label: state.timelineMode === "predicted" ? "Pool predicted" : "Pool measured", color: state.timelineMode === "predicted" ? "#235ea8" : "#00b7c4"},
+    {label: "Outside", color: "#c7b9a3"},
     {label: "Target", kind: "dash"}
   ];
   if (state.timelineMode === "predicted") {
@@ -2855,8 +3068,8 @@ function timelineSeries(data, lanes, min, max) {
       data: timelineLineData(measured, "outside_temp_c"),
       showSymbol: false,
       connectNulls: false,
-      lineStyle: {color: "#8aa1a8", width: 2, opacity: .75},
-      itemStyle: {color: "#8aa1a8"},
+      lineStyle: {color: "#c7b9a3", width: 2, opacity: .8, type: "dashed"},
+      itemStyle: {color: "#c7b9a3"},
       emphasis: {focus: "series"}
     },
     {
@@ -2875,8 +3088,8 @@ function timelineSeries(data, lanes, min, max) {
       data: timelineLineData(linePoints, "pool_temp"),
       showSymbol: false,
       connectNulls: false,
-      lineStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#007c89", width: 3},
-      itemStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#007c89"},
+      lineStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#00b7c4", width: 3},
+      itemStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#00b7c4"},
       emphasis: {focus: "series"}
     }
   ];
