@@ -47,6 +47,34 @@ func TestEquipmentOnConstrainsPowerOn(t *testing.T) {
 	}
 }
 
+func TestTimeWindowPlanValidation(t *testing.T) {
+	valid := Plan{
+		ID:              "morning-filter",
+		Type:            PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "06:00",
+		DurationMinutes: 120,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	cases := map[string]func(Plan) Plan{
+		"heater capability": func(p Plan) Plan { p.Capability = "heater"; return p },
+		"heating alias":     func(p Plan) Plan { p.Capability = "Heating"; return p },
+		"missing start":     func(p Plan) Plan { p.Start = ""; return p },
+		"bad start":         func(p Plan) Plan { p.Start = "25:00"; return p },
+		"zero duration":     func(p Plan) Plan { p.DurationMinutes = 0; return p },
+		"over one day":      func(p Plan) Plan { p.DurationMinutes = 1441; return p },
+	}
+	for name, mutate := range cases {
+		if err := mutate(valid).Validate(); err == nil {
+			t.Fatalf("Validate() error = nil, want rejection for %s", name)
+		}
+	}
+}
+
 func TestReadyByPlanValidationAllowsCron(t *testing.T) {
 	plan := Plan{
 		ID:         "weekend-ready",

@@ -2226,10 +2226,95 @@ func (s *Store) migrate(ctx context.Context) error {
 	`); err != nil {
 		return err
 	}
+	if err := s.migratePlanWindows(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateObservationSpans(ctx); err != nil {
 		return err
 	}
 	return s.compactObservationSpans(ctx)
+}
+
+// migratePlanWindows rewrites legacy time_window plans from from/to clocks to
+// start/duration_minutes, and deletes heater window plans — heating is
+// expressed exclusively as ready_by plans.
+func (s *Store) migratePlanWindows(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, plan_json FROM plans
+		WHERE json_extract(plan_json, '$.type') = 'time_window'
+	`)
+	if err != nil {
+		return err
+	}
+	type planRow struct {
+		id   string
+		body []byte
+	}
+	var planRows []planRow
+	for rows.Next() {
+		var row planRow
+		if err := rows.Scan(&row.id, &row.body); err != nil {
+			rows.Close()
+			return err
+		}
+		planRows = append(planRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	var deleted []map[string]any
+	for _, row := range planRows {
+		var raw map[string]any
+		if err := json.Unmarshal(row.body, &raw); err != nil {
+			return fmt.Errorf("plan %s: %w", row.id, err)
+		}
+		capability, _ := raw["capability"].(string)
+		switch strings.ToLower(strings.TrimSpace(capability)) {
+		case "heater", "heating":
+			if _, err := s.db.ExecContext(ctx, `DELETE FROM plans WHERE id = ?`, row.id); err != nil {
+				return err
+			}
+			deleted = append(deleted, raw)
+			continue
+		}
+		from, _ := raw["from"].(string)
+		to, _ := raw["to"].(string)
+		if from == "" && to == "" {
+			continue // already start/duration shaped
+		}
+		fromClock, err := pool.ParseClock(from)
+		if err != nil {
+			return fmt.Errorf("plan %s: invalid from time %q: %w", row.id, from, err)
+		}
+		toClock, err := pool.ParseClock(to)
+		if err != nil {
+			return fmt.Errorf("plan %s: invalid to time %q: %w", row.id, to, err)
+		}
+		duration := (toClock.Minutes() - fromClock.Minutes() + 24*60) % (24 * 60)
+		if duration == 0 {
+			duration = 24 * 60
+		}
+		raw["start"] = from
+		raw["duration_minutes"] = duration
+		delete(raw, "from")
+		delete(raw, "to")
+		body, err := json.Marshal(raw)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE plans SET plan_json = ? WHERE id = ?`, body, row.id); err != nil {
+			return err
+		}
+	}
+	if len(deleted) > 0 {
+		if _, err := s.AddEvent(ctx, "migration", fmt.Sprintf("removed %d heater time-window plan(s); heating is now scheduled via ready-by plans only", len(deleted)), map[string]any{"plans": deleted}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) initializeControlRevision(ctx context.Context) error {

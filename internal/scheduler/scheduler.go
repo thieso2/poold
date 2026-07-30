@@ -276,7 +276,6 @@ func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, p
 	type activePlan struct {
 		id         string
 		capability string
-		features   int
 	}
 
 	var active []activePlan
@@ -284,12 +283,10 @@ func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, p
 		if !plan.Enabled || plan.Type != pool.PlanTimeWindow || plan.Capability == "" {
 			continue
 		}
-		capability := normalizeCapability(plan.Capability)
 		if timeWindowActive(now, plan, s.config.Location) {
 			active = append(active, activePlan{
 				id:         plan.ID,
-				capability: capability,
-				features:   capabilityFeatureCount(capability),
+				capability: normalizeCapability(plan.Capability),
 			})
 		}
 	}
@@ -298,96 +295,60 @@ func (s *Scheduler) evaluateTimeWindows(now time.Time, base pool.DesiredState, p
 		return base, false, "", ""
 	}
 
-	// The plan with the most features wins — if heater is active it subsumes filter.
-	winner := active[0]
-	for _, ap := range active[1:] {
-		if ap.features > winner.features {
-			winner = ap
-		}
-	}
-
 	desired := base
 	for _, ap := range active {
-		if !capabilitySubsumedBy(ap.capability, winner.capability) {
-			setCapability(&desired, ap.capability, true)
-		}
+		setCapability(&desired, ap.capability, true)
 	}
-	setCapability(&desired, winner.capability, true)
 
-	return desired, true, winner.id, "time window plan active"
+	return desired, true, active[0].id, "time window plan active"
 }
 
-func capabilityFeatureCount(capability string) int {
-	if capability == "heater" {
-		return 2 // heater forces filter on via hardware constraints
-	}
-	return 1
-}
-
-// capabilitySubsumedBy reports whether cap's effect is already covered by winner.
-// Heater subsumes filter because heater forces filter on.
-func capabilitySubsumedBy(cap, winner string) bool {
-	return winner == "heater" && cap == "filter"
-}
-
+// A window occurrence belongs to the day it starts on: Days gates the start
+// day, and the occurrence stays active for its full duration even past midnight.
 func timeWindowActive(now time.Time, plan pool.Plan, loc *time.Location) bool {
 	now = now.In(loc)
-	from, err := pool.ParseClock(plan.From)
+	start, err := pool.ParseClock(plan.Start)
 	if err != nil {
 		return false
 	}
-	to, err := pool.ParseClock(plan.To)
-	if err != nil {
+	if plan.DurationMinutes <= 0 {
 		return false
 	}
-	current := now.Hour()*60 + now.Minute()
-	start := from.Minutes()
-	end := to.Minutes()
-	if start == end {
-		return dayAllowed(now, plan.Days)
+	duration := time.Duration(plan.DurationMinutes) * time.Minute
+	today := midnight(now, loc)
+	for offset := -1; offset <= 0; offset++ {
+		day := today.AddDate(0, 0, offset)
+		if !dayAllowed(day, plan.Days) {
+			continue
+		}
+		begin := clockTime(day, start, loc)
+		if !now.Before(begin) && now.Before(begin.Add(duration)) {
+			return true
+		}
 	}
-	if start < end {
-		return dayAllowed(now, plan.Days) && current >= start && current < end
-	}
-	if current >= start {
-		return dayAllowed(now, plan.Days)
-	}
-	return current < end && dayAllowed(now.AddDate(0, 0, -1), plan.Days)
+	return false
 }
 
 func (s *Scheduler) addTimeWindowWakeTimes(now time.Time, plan pool.Plan, add func(time.Time)) {
-	from, err := pool.ParseClock(plan.From)
+	start, err := pool.ParseClock(plan.Start)
 	if err != nil {
 		return
 	}
-	to, err := pool.ParseClock(plan.To)
-	if err != nil {
+	if plan.DurationMinutes <= 0 {
 		return
 	}
-	if from.Minutes() == to.Minutes() {
-		return
-	}
+	duration := time.Duration(plan.DurationMinutes) * time.Minute
 
 	loc := s.config.Location
 	today := midnight(now.In(loc), loc)
-	for offset := 0; offset <= 8; offset++ {
+	for offset := -1; offset <= 8; offset++ {
 		day := today.AddDate(0, 0, offset)
-		if dayAllowed(day, plan.Days) {
-			start := clockTime(day, from, loc)
-			endDay := day
-			if to.Minutes() <= from.Minutes() {
-				endDay = endDay.AddDate(0, 0, 1)
-			}
-			add(start)
-			add(clockTime(endDay, to, loc))
+		if !dayAllowed(day, plan.Days) {
+			continue
 		}
-	}
-
-	if to.Minutes() < from.Minutes() {
-		previousDay := today.AddDate(0, 0, -1)
-		if dayAllowed(previousDay, plan.Days) {
-			add(clockTime(today, to, loc))
-		}
+		begin := clockTime(day, start, loc)
+		add(begin)
+		add(begin.Add(duration))
 	}
 }
 
@@ -447,11 +408,6 @@ func setCapability(desired *pool.DesiredState, capability string, state bool) {
 		desired.Power = pool.BoolPtr(state)
 	case "filter":
 		desired.Filter = pool.BoolPtr(state)
-		if state {
-			desired.Power = pool.BoolPtr(true)
-		}
-	case "heater":
-		desired.Heater = pool.BoolPtr(state)
 		if state {
 			desired.Power = pool.BoolPtr(true)
 		}

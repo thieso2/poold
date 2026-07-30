@@ -11,12 +11,12 @@ func TestDailyFilterWindow(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	plan := pool.Plan{
-		ID:         "filter",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "02:00",
-		To:         "04:00",
+		ID:              "filter",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "02:00",
+		DurationMinutes: 120,
 	}
 
 	on := s.Evaluate(at(loc, 2026, 5, 4, 2, 30), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
@@ -34,13 +34,13 @@ func TestEveningFilterWindowOverridesOffBaseDesiredState(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	plan := pool.Plan{
-		ID:         "evening",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "18:00",
-		To:         "21:00",
-		Days:       []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"},
+		ID:              "evening",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "18:00",
+		DurationMinutes: 180,
+		Days:            []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"},
 	}
 	base := pool.DesiredState{
 		Power:      pool.BoolPtr(false),
@@ -62,12 +62,12 @@ func TestDesiredHeaterWinsOverInactiveFilterWindow(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	plan := pool.Plan{
-		ID:         "filter",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "02:00",
-		To:         "04:00",
+		ID:              "filter",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "02:00",
+		DurationMinutes: 120,
 	}
 
 	eval := s.Evaluate(
@@ -85,13 +85,13 @@ func TestOvernightWindowUsesStartDay(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	plan := pool.Plan{
-		ID:         "filter",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "23:00",
-		To:         "01:00",
-		Days:       []string{"mon"},
+		ID:              "filter",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "23:00",
+		DurationMinutes: 120,
+		Days:            []string{"mon"},
 	}
 
 	on := s.Evaluate(at(loc, 2026, 5, 5, 0, 30), pool.Status{}, pool.DesiredState{}, []pool.Plan{plan})
@@ -253,12 +253,12 @@ func TestReadyBySatisfiedIdleOverridesTimeWindowDemand(t *testing.T) {
 		At:         &readyAt,
 	}
 	window := pool.Plan{
-		ID:         "filter-window",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "07:00",
-		To:         "08:00",
+		ID:              "filter-window",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "07:00",
+		DurationMinutes: 60,
 	}
 	key := ReadyByOccurrenceKey("ready", readyAt, 36)
 	states := map[string]pool.ReadyByControlState{
@@ -398,12 +398,12 @@ func TestNextWakeTimeWindow(t *testing.T) {
 	loc := fixedZone()
 	s := New(Config{Location: loc})
 	plan := pool.Plan{
-		ID:         "filter",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "02:00",
-		To:         "04:00",
+		ID:              "filter",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "02:00",
+		DurationMinutes: 120,
 	}
 
 	wake, ok := s.NextWake(at(loc, 2026, 5, 4, 1, 0), pool.Status{}, []pool.Plan{plan})

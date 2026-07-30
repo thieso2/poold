@@ -960,7 +960,7 @@ body[data-page="history"] .timeline-canvas {
       <div id="plansView"></div>
       <div class="plans-add">
         <span class="settings-label">Add another</span>
-        <button data-add-plan="window">Run <b>filter</b> from <b>06:00</b> until <b>08:00</b>, every day.</button>
+        <button data-add-plan="window">Run <b>filter</b> from <b>06:00</b> for <b>2 hours</b>, every day.</button>
         <button data-add-plan="ready">Have the water at <b>36°</b> by <b>18:30</b>, every day.</button>
       </div>
     </section>
@@ -2026,7 +2026,7 @@ function planForecast(limit) {
   var now = new Date();
   var horizon = 3 * 24 * 60;
   plans.forEach(function(plan) {
-    if (plan.type === "time_window" && plan.from && plan.to) {
+    if (plan.type === "time_window" && plan.start && plan.duration_minutes) {
       addWindowEvents(plan, now, horizon, events);
     } else if (plan.type === "ready_by") {
       addReadyEvents(plan, now, horizon, events);
@@ -2065,15 +2065,16 @@ function addWindowEvents(plan, now, horizon, events) {
   for (var dayOffset = 0; dayOffset <= 3; dayOffset++) {
     var day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset);
     if (!planDayAllowed(plan, day)) continue;
-    [[plan.from, true], [plan.to, false]].forEach(function(pair) {
-      var at = clockOnDay(day, pair[0]);
-      if (!at) return;
+    var begin = clockOnDay(day, plan.start);
+    if (!begin) continue;
+    var end = new Date(begin.getTime() + plan.duration_minutes * 60000);
+    [[begin, true], [end, false]].forEach(function(pair) {
+      var at = pair[0];
       var minutes = (at.getTime() - now.getTime()) / 60000;
       if (minutes <= 0 || minutes > horizon) return;
       var to = {};
       to[plan.capability] = pair[1];
       if (pair[1]) to.power = true;
-      if (pair[1] && plan.capability === "heater") to.filter = true;
       events.push({
         at: at,
         name: (plan.name || title(plan.capability)) + (pair[1] ? " starts" : " ends"),
@@ -2185,7 +2186,7 @@ function manualSessionRemaining(expiresAt) {
 }
 
 /* ---- Plans read as sentences; every value is a slot you tap ---- */
-var CAP_PHRASE = {filter: "filter", heater: "the heater", jets: "the jets", bubbles: "the air"};
+var CAP_PHRASE = {filter: "filter", jets: "the jets", bubbles: "the air"};
 var DAY_FULL = {mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday",
   fri: "Friday", sat: "Saturday", sun: "Sunday"};
 var DAY_SHORT = {mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun"};
@@ -2202,7 +2203,7 @@ function planDays(plan) {
 }
 
 function planTime(plan) {
-  if (plan.type === "time_window") return plan.from || "00:00";
+  if (plan.type === "time_window") return plan.start || "00:00";
   var fields = String(plan.cron || "").trim().split(/\s+/);
   if (fields.length >= 2 && /^\d+$/.test(fields[0]) && /^\d+$/.test(fields[1])) {
     return pad2(Number(fields[1])) + ":" + pad2(Number(fields[0]));
@@ -2234,12 +2235,22 @@ function planSlot(plan, field, text, cls) {
     '" data-field="' + field + '">' + escapeHTML(text) + "</button>";
 }
 
+function windowDurationPhrase(minutes) {
+  minutes = Number(minutes) || 0;
+  if (minutes < 60) return minutes + (minutes === 1 ? " minute" : " minutes");
+  if (minutes % 60 === 0) {
+    var hours = minutes / 60;
+    return hours + (hours === 1 ? " hour" : " hours");
+  }
+  return Math.floor(minutes / 60) + "h " + (minutes % 60) + "m";
+}
+
 function planSentence(plan) {
   if (plan.type === "time_window") {
     var cap = normalizePlanCap(plan.capability);
     return "Run " + planSlot(plan, "capability", CAP_PHRASE[cap] || cap, "slot-" + cap) +
-      " from " + planSlot(plan, "from", plan.from || "00:00") +
-      " until " + planSlot(plan, "to", plan.to || "00:00") + ", " +
+      " from " + planSlot(plan, "start", plan.start || "00:00") +
+      " for " + planSlot(plan, "duration_minutes", windowDurationPhrase(plan.duration_minutes || 120)) + ", " +
       planSlot(plan, "days", daysPhrase(planDays(plan))) + ".";
   }
   if (plan.type === "ready_by") {
@@ -2351,9 +2362,15 @@ function openPlanPop(anchor) {
   } else if (field === "at") {
     box.innerHTML = '<span class="pop-label">By when</span>' +
       '<input type="datetime-local" value="' + escapeHTML(localDateTime(new Date(plan.at))) + '">';
+  } else if (field === "duration_minutes") {
+    box.innerHTML = '<span class="pop-label">For how long</span><div class="pop-grid wide">' +
+      [30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1440].map(function(minutes) {
+        return '<button data-duration="' + minutes + '" aria-pressed="' +
+          ((plan.duration_minutes || 120) === minutes) + '">' + windowDurationPhrase(minutes) + "</button>";
+      }).join("") + "</div>";
   } else {
     box.innerHTML = '<span class="pop-label">' +
-      (field === "from" ? "Starting" : field === "to" ? "Ending" : "By when") + "</span>" +
+      (field === "start" ? "Starting" : "By when") + "</span>" +
       '<input type="time" value="' + escapeHTML(field === "time" ? planTime(plan) : (plan[field] || "00:00")) + '">';
   }
 
@@ -2370,6 +2387,9 @@ function openPlanPop(anchor) {
   });
   qsa(".plan-pop [data-temp]").forEach(function(button) {
     button.onclick = function() { closePlanPop(); savePlan(plan.id, {target_temp: Number(button.dataset.temp)}); };
+  });
+  qsa(".plan-pop [data-duration]").forEach(function(button) {
+    button.onclick = function() { closePlanPop(); savePlan(plan.id, {duration_minutes: Number(button.dataset.duration)}); };
   });
   qsa(".plan-pop [data-preset]").forEach(function(button) {
     button.onclick = function() {
@@ -2431,7 +2451,7 @@ function addPlan(kind) {
   closePlanPop();
   var plan = kind === "window"
     ? {id: "window-" + Date.now(), type: "time_window", name: "Filter window", enabled: true,
-       capability: "filter", from: "06:00", to: "08:00", days: days.slice()}
+       capability: "filter", start: "06:00", duration_minutes: 120, days: days.slice()}
     : {id: "ready-" + Date.now(), type: "ready_by", name: "Ready by", enabled: true,
        target_temp: 36, cron: cronFor("18:30", days.slice())};
   updatePlans(state.plans.concat([plan]));
@@ -3073,7 +3093,7 @@ function formatTempValue(value, unit) {
 
 function describePlan(plan) {
   if (plan.type === "ready_by") return (plan.target_temp || "--") + "° by " + readyScheduleLabel(plan);
-  if (plan.type === "time_window") return title(plan.capability) + " " + plan.from + "-" + plan.to + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
+  if (plan.type === "time_window") return title(plan.capability) + " " + plan.start + " for " + windowDurationPhrase(plan.duration_minutes) + (plan.days && plan.days.length ? " · " + plan.days.join(", ") : "");
   return title(plan.type);
 }
 

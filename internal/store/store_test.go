@@ -56,6 +56,16 @@ func TestLegacyControlFixtureMigration(t *testing.T) {
 	if len(plans) != 1 || plans[0].ID != "daily-filter" {
 		t.Fatalf("plans = %+v, want only ordinary schedule", plans)
 	}
+	if plans[0].Start != "02:00" || plans[0].DurationMinutes != 120 {
+		t.Fatalf("plan = %+v, want from/to migrated to start 02:00 for 120 minutes", plans[0])
+	}
+	var heaterWindowEvents int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE type = 'migration'`).Scan(&heaterWindowEvents); err != nil {
+		t.Fatal(err)
+	}
+	if heaterWindowEvents != 1 {
+		t.Fatalf("migration events = %d, want the removed heater window logged", heaterWindowEvents)
+	}
 	observations, err := st.Observations(ctx, 0, 10)
 	if err != nil || len(observations) != 1 {
 		t.Fatalf("observations = %+v, err = %v", observations, err)
@@ -65,8 +75,8 @@ func TestLegacyControlFixtureMigration(t *testing.T) {
 		t.Fatalf("commands = %+v, err = %v", commands, err)
 	}
 	events, err := st.Events(ctx, 0, 10)
-	if err != nil || len(events) != 1 {
-		t.Fatalf("events = %+v, err = %v", events, err)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events = %+v, err = %v; want fixture event plus migration event", events, err)
 	}
 	desired, err := st.DesiredState(ctx)
 	if err != nil || desired.TargetTemp == nil || *desired.TargetTemp != 36 {
@@ -193,12 +203,12 @@ func TestStoreObservationDesiredPlansAndEvents(t *testing.T) {
 	}
 
 	plan := pool.Plan{
-		ID:         "daily-filter",
-		Type:       pool.PlanTimeWindow,
-		Enabled:    true,
-		Capability: "filter",
-		From:       "02:00",
-		To:         "04:00",
+		ID:              "daily-filter",
+		Type:            pool.PlanTimeWindow,
+		Enabled:         true,
+		Capability:      "filter",
+		Start:           "02:00",
+		DurationMinutes: 120,
 	}
 	if err := st.SavePlans(ctx, []pool.Plan{plan}); err != nil {
 		t.Fatal(err)

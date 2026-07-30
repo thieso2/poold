@@ -220,19 +220,19 @@ const (
 )
 
 type Plan struct {
-	ID         string     `json:"id"`
-	Type       PlanType   `json:"type"`
-	Name       string     `json:"name,omitempty"`
-	Enabled    bool       `json:"enabled"`
-	Capability string     `json:"capability,omitempty"`
-	From       string     `json:"from,omitempty"`
-	To         string     `json:"to,omitempty"`
-	Days       []string   `json:"days,omitempty"`
-	Cron       string     `json:"cron,omitempty"`
-	TargetTemp *int       `json:"target_temp,omitempty"`
-	At         *time.Time `json:"at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at,omitempty"`
-	UpdatedAt  time.Time  `json:"updated_at,omitempty"`
+	ID              string     `json:"id"`
+	Type            PlanType   `json:"type"`
+	Name            string     `json:"name,omitempty"`
+	Enabled         bool       `json:"enabled"`
+	Capability      string     `json:"capability,omitempty"`
+	Start           string     `json:"start,omitempty"`
+	DurationMinutes int        `json:"duration_minutes,omitempty"`
+	Days            []string   `json:"days,omitempty"`
+	Cron            string     `json:"cron,omitempty"`
+	TargetTemp      *int       `json:"target_temp,omitempty"`
+	At              *time.Time `json:"at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at,omitempty"`
 }
 
 // ReadyByControlMode is the persisted control state for one ready-by occurrence.
@@ -266,14 +266,18 @@ func (p Plan) Validate() error {
 		if p.Capability == "" {
 			return fmt.Errorf("time_window plan requires capability")
 		}
-		if p.From == "" || p.To == "" {
-			return fmt.Errorf("time_window plan requires from and to")
+		switch strings.ToLower(strings.TrimSpace(p.Capability)) {
+		case "heater", "heating":
+			return fmt.Errorf("heater cannot be scheduled as a time window; use a ready_by plan")
 		}
-		if _, err := ParseClock(p.From); err != nil {
-			return fmt.Errorf("invalid from time: %w", err)
+		if p.Start == "" {
+			return fmt.Errorf("time_window plan requires start")
 		}
-		if _, err := ParseClock(p.To); err != nil {
-			return fmt.Errorf("invalid to time: %w", err)
+		if _, err := ParseClock(p.Start); err != nil {
+			return fmt.Errorf("invalid start time: %w", err)
+		}
+		if p.DurationMinutes < 1 || p.DurationMinutes > 24*60 {
+			return fmt.Errorf("time_window plan duration must be between 1 and 1440 minutes")
 		}
 	case PlanReadyBy:
 		if p.TargetTemp == nil {

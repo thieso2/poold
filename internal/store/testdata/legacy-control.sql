@@ -47,6 +47,7 @@ CREATE TABLE plans (
 );
 INSERT INTO plans (id, updated_at, plan_json) VALUES
   ('daily-filter', '2026-07-27T10:00:00Z', '{"id":"daily-filter","type":"time_window","enabled":true,"capability":"filter","from":"02:00","to":"04:00"}'),
+  ('night-heat', '2026-07-27T10:00:00Z', '{"id":"night-heat","type":"time_window","enabled":true,"capability":"heater","from":"22:00","to":"01:00"}'),
   ('legacy-kind', '2026-07-27T10:00:00Z', '{"id":"legacy-kind","kind":"manual_override","enabled":true}'),
   ('legacy-source', '2026-07-27T10:00:00Z', '{"id":"legacy-source","type":"time_window","source":"webui-pause","enabled":true,"capability":"filter","from":"00:00","to":"01:00"}'),
   ('webui-manual', '2026-07-27T10:00:00Z', '{"id":"webui-manual","type":"manual_override","enabled":true}');

@@ -336,12 +336,12 @@ func TestInactiveTimeWindowDoesNotUndoDirectFilterCommand(t *testing.T) {
 		status,
 		pool.DesiredState{TargetTemp: pool.IntPtr(36)},
 		[]pool.Plan{{
-			ID:         "evening-filter",
-			Type:       pool.PlanTimeWindow,
-			Enabled:    true,
-			Capability: "filter",
-			From:       "18:00",
-			To:         "21:00",
+			ID:              "evening-filter",
+			Type:            pool.PlanTimeWindow,
+			Enabled:         true,
+			Capability:      "filter",
+			Start:           "18:00",
+			DurationMinutes: 180,
 		}},
 	)
 	for _, command := range diffCommands(status, eval.Desired) {
@@ -353,7 +353,7 @@ func TestInactiveTimeWindowDoesNotUndoDirectFilterCommand(t *testing.T) {
 
 func TestPlansEndpoint(t *testing.T) {
 	handler, _ := testAPI(t)
-	body := []byte(`{"plans":[{"id":"filter","type":"time_window","enabled":true,"capability":"filter","from":"02:00","to":"04:00"}]}`)
+	body := []byte(`{"plans":[{"id":"filter","type":"time_window","enabled":true,"capability":"filter","start":"02:00","duration_minutes":120}]}`)
 	rec := authed(handler, http.MethodPut, "/plans", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
