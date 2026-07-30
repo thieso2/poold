@@ -26,6 +26,7 @@ var timelineRanges = map[string]time.Duration{
 	"3d":  3 * 24 * time.Hour,
 	"7d":  7 * 24 * time.Hour,
 	"14d": 14 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
 }
 
 type TimelineQuery struct {
@@ -50,6 +51,11 @@ type rateSamples struct {
 
 func (s *Service) DashboardTimeline(ctx context.Context, query TimelineQuery) (pool.TimelineResponse, error) {
 	generatedAt := time.Now().UTC()
+	if strings.TrimSpace(query.Range) == "all" && query.From.IsZero() {
+		if earliest, ok, err := s.store.FirstObservationAt(ctx); err == nil && ok {
+			query.From = earliest
+		}
+	}
 	rangeLabel, from, to := resolveTimelineRange(query, generatedAt)
 	bucket := timelineBucket(rangeLabel, to.Sub(from))
 
@@ -103,6 +109,9 @@ func resolveTimelineRange(query TimelineQuery, now time.Time) (string, time.Time
 		to = now
 	}
 	to = to.UTC()
+	if strings.TrimSpace(query.Range) == "all" && !query.From.IsZero() && query.From.Before(to) {
+		return "all", query.From.UTC(), to
+	}
 	if !query.From.IsZero() && query.From.Before(to) {
 		return "custom", query.From.UTC(), to
 	}
@@ -130,6 +139,8 @@ func timelineBucket(label string, duration time.Duration) time.Duration {
 		return 30 * time.Minute
 	case "14d":
 		return time.Hour
+	case "30d":
+		return 2 * time.Hour
 	default:
 		if duration <= 6*time.Hour {
 			return time.Minute
@@ -143,7 +154,13 @@ func timelineBucket(label string, duration time.Duration) time.Duration {
 		if duration <= 7*24*time.Hour {
 			return 30 * time.Minute
 		}
-		return time.Hour
+		if duration <= 14*24*time.Hour {
+			return time.Hour
+		}
+		if duration <= 45*24*time.Hour {
+			return 2 * time.Hour
+		}
+		return 6 * time.Hour
 	}
 }
 

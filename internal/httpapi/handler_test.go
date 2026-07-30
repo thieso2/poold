@@ -98,8 +98,8 @@ func TestWebUIIsPublic(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `err.detail.code === "observed_state_changed"`) {
 		t.Fatal("Manual session conflict rebase and review behavior missing")
 	}
-	if !strings.Contains(rec.Body.String(), eChartsCDN) {
-		t.Fatal("ECharts CDN script missing")
+	if !strings.Contains(rec.Body.String(), "renderTimelineStrip") {
+		t.Fatal("strip-chart renderer missing")
 	}
 	if strings.Contains(rec.Body.String(), "Desired State") || strings.Contains(rec.Body.String(), "Set Temperature") {
 		t.Fatal("legacy desired/direct controls should not be visible")
@@ -124,8 +124,8 @@ func TestHistoryUIIsPublic(t *testing.T) {
 	if !strings.Contains(body, `href="/"`) || !strings.Contains(body, "Back to the pool") {
 		t.Fatal("history back link missing")
 	}
-	if !strings.Contains(body, eChartsCDN) {
-		t.Fatal("ECharts CDN script missing")
+	if !strings.Contains(body, "stripMini") {
+		t.Fatal("history minimap brush missing")
 	}
 	for _, evidence := range []string{
 		`function manualSessionEventLine`,

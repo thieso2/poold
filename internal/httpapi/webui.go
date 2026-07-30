@@ -62,8 +62,6 @@ func webUIHTML(page string) string {
 	return strings.Replace(webUIHTMLTemplate, "__POOLD_PAGE__", page, 1)
 }
 
-const eChartsCDN = "https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"
-
 const webUIHTMLTemplate = `<!doctype html>
 <html lang="en">
 <head>
@@ -73,7 +71,6 @@ const webUIHTMLTemplate = `<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <title>Pooly Control</title>
 <style>
 :root {
@@ -728,7 +725,7 @@ h3 {
   gap: 4px;
 }
 .timeline-controls .tabs:first-child {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 .timeline-controls .tabs:last-child {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -791,10 +788,6 @@ h3 {
   border-radius: 8px;
   padding: 8px;
   background: linear-gradient(180deg, var(--panel-hi), var(--field));
-}
-.timeline-canvas {
-  width: 100%;
-  height: 330px;
 }
 .timeline-meta {
   color: var(--muted);
@@ -941,16 +934,6 @@ body[data-page="history"] .timeline-panel {
 body[data-page="history"] .timeline-toolbar {
   margin-bottom: 8px;
 }
-body[data-page="history"] .timeline-chart {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: min(760px, calc(100dvh - 220px));
-  padding-top: 8px;
-}
-body[data-page="history"] .timeline-canvas {
-  height: 100%;
-  min-height: 460px;
-}
 .hidden {
   display: none !important;
 }
@@ -1028,6 +1011,27 @@ body[data-page="history"] .timeline-canvas {
 .tagplan.paused .tp-readout { color: var(--muted); text-shadow: none; }
 .tp-readout small { font-size: 14px; font-weight: 500; color: var(--muted); letter-spacing: .03em; }
 .tp-say { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.tp-next {
+  margin-top: 7px;
+  font: 600 11px/1 var(--mono, ui-monospace, Menlo, monospace);
+  letter-spacing: .06em;
+  color: var(--muted);
+  display: flex; align-items: center; gap: 7px;
+}
+.tp-next.live { color: color-mix(in srgb, var(--pc) 75%, var(--text)); }
+.tp-live {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--pc);
+  box-shadow: 0 0 8px var(--pc);
+  animation: tpPulse 1.8s ease-in-out infinite;
+}
+@keyframes tpPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--pc); }
+  50% { opacity: .35; box-shadow: 0 0 2px var(--pc); }
+}
+@media (prefers-reduced-motion: reduce) { .tp-live { animation: none; } }
+.plans-add { display: flex; gap: 8px; margin-top: 12px; }
+.plans-add button { flex: 0 0 auto; padding: 0 18px; }
 .tagplan.editing .tp-say { display: none; }
 .tp-keys { display: flex; gap: 7px; align-self: start; }
 .tp-key {
@@ -1089,7 +1093,9 @@ body[data-page="history"] .timeline-canvas {
 }
 
 /* ---- Dashboard history strip-chart ---- */
-body[data-page="dashboard"] .timeline-chart { display: flex; gap: 12px; align-items: flex-start; }
+.timeline-chart { display: flex; gap: 12px; align-items: flex-start; min-height: 0 !important; }
+.timeline-panel { min-height: 0; }
+.strip-main { flex: 1 1 auto; min-width: 0; }
 .timeline-chart svg { display: block; flex: 1 1 auto; min-width: 0; height: auto; }
 .timeline-chart svg text { font-family: var(--mono, ui-monospace, Menlo, monospace); }
 .strip-readout {
@@ -1110,7 +1116,7 @@ body[data-page="dashboard"] .timeline-chart { display: flex; gap: 12px; align-it
 .sr-led.on { opacity: 1; }
 .sr-led.on i { background: var(--c); box-shadow: 0 0 6px var(--c); }
 @media (max-width: 560px) {
-  body[data-page="dashboard"] .timeline-chart { flex-direction: column; }
+  .timeline-chart { flex-direction: column; }
   .strip-readout { flex: none; width: 100%; margin-top: 0; grid-template-columns: repeat(3, auto); align-items: center; justify-content: start; gap: 12px; }
   .sr-leds { border: 0; padding: 0; max-width: none; }
 }
@@ -1174,9 +1180,8 @@ body[data-page="dashboard"] .timeline-chart { display: flex; gap: 12px; align-it
       </div>
       <div id="plansView"></div>
       <div class="plans-add">
-        <span class="settings-label">Add another</span>
-        <button data-add-plan="window">Run <b>filter</b> from <b>06:00</b> for <b>2 hours</b>, every day.</button>
-        <button data-add-plan="ready">Have the water at <b>36°</b> by <b>18:30</b>, every day.</button>
+        <button data-add-plan="window">＋ Filter</button>
+        <button data-add-plan="ready">＋ Heating</button>
       </div>
     </section>
 
@@ -1196,6 +1201,8 @@ body[data-page="dashboard"] .timeline-chart { display: flex; gap: 12px; align-it
             <button data-timeline-range="3d">3d</button>
             <button data-timeline-range="7d">7d</button>
             <button data-timeline-range="14d">14d</button>
+            <button data-timeline-range="30d">30d</button>
+            <button data-timeline-range="all">All</button>
           </div>
           <div class="tabs">
             <button class="active" data-timeline-mode="measured">Measured</button>
@@ -2451,6 +2458,68 @@ function planKind(plan) {
   return plan.type === "ready_by" ? "heater" : normalizePlanCap(plan.capability);
 }
 
+function planDayKey(date) {
+  return days[(date.getDay() + 6) % 7];
+}
+
+function planCountdown(ms) {
+  var minutes = Math.max(0, Math.round(ms / 60000));
+  return Math.floor(minutes / 60) + ":" + pad2(minutes % 60);
+}
+
+// Where a window plan stands right now: running (until when) or next start.
+function planWindowState(plan, now) {
+  var parts = String(plan.start || "00:00").split(":");
+  var durationMs = (plan.duration_minutes || 0) * 60000;
+  var allowed = planDays(plan);
+  var next = null;
+  for (var offset = -1; offset <= 7; offset++) {
+    var day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+    if (allowed.indexOf(planDayKey(day)) < 0) continue;
+    var begin = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Number(parts[0]), Number(parts[1]));
+    var end = begin.getTime() + durationMs;
+    if (now >= begin && now.getTime() < end) return {active: true, at: end};
+    if (begin > now && (next == null || begin.getTime() < next)) next = begin.getTime();
+  }
+  return {active: false, at: next};
+}
+
+// Next moment a ready-by plan wants the water ready.
+function planReadyAt(plan, now) {
+  if (!plan.cron && plan.at) {
+    var at = new Date(plan.at).getTime();
+    return at > now.getTime() ? at : null;
+  }
+  var parts = planTime(plan).split(":");
+  var allowed = planDays(plan);
+  for (var offset = 0; offset <= 7; offset++) {
+    var day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+    if (allowed.indexOf(planDayKey(day)) < 0) continue;
+    var at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Number(parts[0]), Number(parts[1]));
+    if (at > now) return at.getTime();
+  }
+  return null;
+}
+
+// One status line per plan: live dot + "finishes in 4:32" / "starts in 3:35" / "ready in 11:39".
+function planNextLine(plan, heatingNow) {
+  if (!plan.enabled) return "";
+  var now = new Date();
+  if (plan.type === "time_window") {
+    var ws = planWindowState(plan, now);
+    if (ws.active) {
+      return '<div class="tp-next live"><span class="tp-live"></span>running · finishes in ' + planCountdown(ws.at - now.getTime()) + "</div>";
+    }
+    return ws.at != null ? '<div class="tp-next">starts in ' + planCountdown(ws.at - now.getTime()) + "</div>" : "";
+  }
+  var readyAt = planReadyAt(plan, now);
+  if (heatingNow) {
+    return '<div class="tp-next live"><span class="tp-live"></span>heating' +
+      (readyAt != null ? " · ready in " + planCountdown(readyAt - now.getTime()) : "") + "</div>";
+  }
+  return readyAt != null ? '<div class="tp-next">ready in ' + planCountdown(readyAt - now.getTime()) + "</div>" : "";
+}
+
 function durShort(minutes) {
   minutes = Number(minutes) || 0;
   if (minutes < 60) return minutes + "m";
@@ -2560,6 +2629,20 @@ function renderPlans() {
     view.innerHTML = '<p class="plans-empty">No plans yet, so the pool only does what you tell it by hand. ' +
       "Add one below and it will look after itself.</p>";
   } else {
+    // Attribute live heating to the enabled ready-by plan with the soonest target.
+    var heatingPlanId = null;
+    if (state.status && state.status.heater) {
+      var hnow = new Date(), soonest = Infinity;
+      state.plans.forEach(function(p) {
+        if (p.type !== "ready_by" || !p.enabled) return;
+        var at = planReadyAt(p, hnow);
+        if (at != null && at < soonest) { soonest = at; heatingPlanId = p.id; }
+      });
+      if (heatingPlanId == null) {
+        var readies = state.plans.filter(function(p) { return p.type === "ready_by" && p.enabled; });
+        if (readies.length === 1) heatingPlanId = readies[0].id;
+      }
+    }
     view.innerHTML = state.plans.map(function(plan) {
       var editing = planEditing === plan.id;
       var id = escapeHTML(plan.id);
@@ -2574,6 +2657,7 @@ function renderPlans() {
         "<div>" +
         '<div class="tp-caption">' + escapeHTML(planCaption(plan)) + (plan.enabled ? "" : " · paused") + "</div>" +
         '<button class="tp-readout" data-plan-edit="' + id + '" aria-label="Set ' + name + '">' + planReadout(plan) + "</button>" +
+        planNextLine(plan, heatingPlanId === plan.id) +
         "</div>" +
         '<div class="tp-keys">' + keys + "</div>" +
         '<p class="tp-say">' + escapeHTML(planSentence(plan)) + "</p>" +
@@ -2706,8 +2790,6 @@ function addPlan(kind) {
   updatePlans(state.plans.concat([plan]));
 }
 
-var timelineChartInstance = null;
-
 function renderTimeline() {
   qsa("[data-timeline-range]").forEach(function(button) {
     button.classList.toggle("active", button.dataset.timelineRange === state.timelineRange);
@@ -2732,26 +2814,17 @@ function renderTimeline() {
     return;
   }
   $("timelineBadge").textContent = data.range || state.timelineRange;
-  if (!isHistoryPage) {
-    $("timelineMeta").textContent = timelineMeta(data);
-    renderTimelineLegend(data);
-    renderTimelineStrip(chart, data);
-    return;
-  }
-  if (typeof echarts === "undefined") {
-    $("timelineMeta").textContent = "Chart library unavailable";
-    renderTimelineLegend(data);
-    renderTimelineMessage(chart, "Chart library unavailable");
-    return;
-  }
   $("timelineMeta").textContent = timelineMeta(data);
   renderTimelineLegend(data);
-  renderTimelineChart(chart, data);
+  renderTimelineStrip(chart, data);
 }
 
-/* ---- Dashboard history as a strip-chart instrument: one plot, ink lanes,
-   heater glow, event ticks, and a scrub needle driving a digital readout. ---- */
-var stripScrubT = null; // persisted scrub position so periodic re-renders don't wipe it
+/* ---- History as a strip-chart instrument: one plot, ink lanes, heater glow,
+   event ticks, a scrub needle driving a digital readout — and on the history
+   page a minimap brush for zooming plus predicted-mode overlays. ---- */
+var stripScrubT = null;   // persisted scrub position so periodic re-renders don't wipe it
+var stripWin = null;      // history-page zoom window {from,to} in ms
+var stripDataKey = "";    // resets the window when the loaded range changes
 
 function stripSeriesPoints(points, field) {
   return points.map(function(point) {
@@ -2770,34 +2843,68 @@ function stripLaneActiveAt(spans, lane, t) {
   });
 }
 
+function stripClampPoints(pts, from, to) {
+  var out = [];
+  for (var i = 0; i < pts.length; i++) {
+    if (pts[i][0] < from) { if (i + 1 < pts.length && pts[i + 1][0] >= from) out.push(pts[i]); continue; }
+    if (pts[i][0] > to) { out.push(pts[i]); break; }
+    out.push(pts[i]);
+  }
+  return out;
+}
+
+function stripTimeLabel(t, spanMs) {
+  var dt = new Date(t);
+  if (spanMs > 6 * 86400000) return dt.toLocaleDateString([], {month: "short", day: "numeric"});
+  var hm = String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
+  if (spanMs > 36 * 3600 * 1000) return dt.toLocaleDateString([], {weekday: "short"}) + " " + hm;
+  return hm;
+}
+
 function renderTimelineStrip(chart, data) {
-  disposeTimelineChart();
+  var dataFrom = new Date(data.from).getTime();
+  var dataTo = new Date(data.to).getTime();
+  var key = data.from + "|" + data.to + "|" + (data.range || "");
+  if (key !== stripDataKey) { stripDataKey = key; stripWin = null; }
+  var from = stripWin ? stripWin.from : dataFrom;
+  var to = stripWin ? stripWin.to : dataTo;
+
   var measured = data.measured || [];
-  var pool = stripSeriesPoints(measured, "pool_temp");
-  var outside = stripSeriesPoints(measured, "outside_temp_c");
+  var predictedMode = isHistoryPage && state.timelineMode === "predicted";
+  var modePoints = predictedMode ? (data.predicted || []).filter(function(p) { return p.kind !== "correction"; }) : measured;
+  var pool = stripClampPoints(stripSeriesPoints(modePoints, "pool_temp"), from, to);
+  var outside = stripClampPoints(stripSeriesPoints(measured, "outside_temp_c"), from, to);
+  var anchors = predictedMode ? stripSeriesPoints(measured, "pool_temp").filter(function(p) { return p[1] != null && p[0] >= from && p[0] <= to; }) : [];
+  var corrections = predictedMode ? stripSeriesPoints((data.predicted || []).filter(function(p) { return p.kind === "correction"; }), "pool_temp").filter(function(p) { return p[1] != null && p[0] >= from && p[0] <= to; }) : [];
   var target = (data.target || []).map(function(p) {
     var t = new Date(p.t).getTime();
     return Number.isFinite(t) && p.target_temp != null ? [t, Number(p.target_temp)] : null;
   }).filter(Boolean).sort(function(a, b) { return a[0] - b[0]; });
-  var from = new Date(data.from).getTime();
-  var to = new Date(data.to).getTime();
-  var values = timelineValues(measured, measured, data.target || []);
-  if (!values.length || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-    renderTimelineMessage(chart, "No timeline data");
+
+  if ((!pool.length && !outside.length) || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+    chart.innerHTML = "<div class=\"timeline-empty\">No timeline data</div>";
     return;
   }
+  var values = [];
+  [pool, outside, anchors, corrections].forEach(function(set) {
+    set.forEach(function(p) { if (p[1] != null) values.push(p[1]); });
+  });
+  target.forEach(function(p) { if (p[0] <= to && values.length) values.push(p[1]); });
+  if (!values.length) { chart.innerHTML = "<div class=\"timeline-empty\">No timeline data</div>"; return; }
   var yMin = Math.floor(Math.min.apply(null, values)) - 1;
   var yMax = Math.ceil(Math.max.apply(null, values)) + 1;
   if (yMin === yMax) { yMin -= 1; yMax += 1; }
+
   var spans = data.feature_spans || [];
   var lanes = timelineLanes(spans);
   var colors = timelineFeatureColors();
   var annotations = (data.annotations || []).map(function(a) {
     var t = new Date(a.t).getTime();
-    return Number.isFinite(t) ? {t: t, label: a.label || "Event", detail: a.detail || ""} : null;
+    return Number.isFinite(t) && t >= from && t <= to ? {t: t, label: a.label || "Event", detail: a.detail || ""} : null;
   }).filter(Boolean);
 
-  var W = 680, L = 46, R = 26, T = 22, plotH = 236;
+  var W = isHistoryPage ? 760 : 680, L = 46, R = 26, T = 22;
+  var plotH = isHistoryPage ? 300 : 236;
   var laneTop = T + plotH + 30;
   var H = laneTop + lanes.length * 12 + 8;
   function X(t) { return L + (W - L - R) * (t - from) / (to - from); }
@@ -2806,13 +2913,13 @@ function renderTimelineStrip(chart, data) {
     var d = "", pen = false;
     pts.forEach(function(p) {
       if (p[1] == null) { pen = false; return; }
-      d += (pen ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1);
+      var x = Math.max(L, Math.min(W - R, X(p[0])));
+      d += (pen ? "L" : "M") + x.toFixed(1) + " " + Y(p[1]).toFixed(1);
       pen = true;
     });
     return d;
   }
   var s = '<svg viewBox="0 0 ' + W + " " + H + '" id="stripSvg" aria-label="Pool history">';
-  // heater glow behind the curve
   spans.forEach(function(span) {
     if (!span.heater) return;
     var s0 = Math.max(from, new Date(span.from).getTime());
@@ -2820,50 +2927,48 @@ function renderTimelineStrip(chart, data) {
     if (!(s1 > s0)) return;
     s += '<rect x="' + X(s0).toFixed(1) + '" y="' + T + '" width="' + Math.max(1.5, X(s1) - X(s0)).toFixed(1) + '" height="' + plotH + '" fill="rgba(240,140,26,0.07)"/>';
   });
-  // y grid
   var step = (yMax - yMin) > 12 ? 5 : 2;
   for (var g = Math.ceil(yMin / step) * step; g <= yMax; g += step) {
     s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(g).toFixed(1) + '" y2="' + Y(g).toFixed(1) + '" stroke="#1e2a31"/>' +
       '<text x="' + (L - 7) + '" y="' + (Y(g) + 3).toFixed(1) + '" text-anchor="end" font-size="9.5" fill="#5b6d75">' + g + "°</text>";
   }
-  // x labels
   var spanMs = to - from;
-  var showDate = spanMs > 36 * 3600 * 1000;
   for (var k = 0; k <= 6; k++) {
     var tx = from + spanMs * k / 6;
-    var dt = new Date(tx);
-    var label = showDate
-      ? dt.toLocaleDateString([], {month: "short", day: "numeric"})
-      : String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
-    s += '<text x="' + X(tx).toFixed(1) + '" y="' + (T + plotH + 18) + '" text-anchor="middle" font-size="9.5" fill="#5b6d75">' + label + "</text>";
+    s += '<text x="' + X(tx).toFixed(1) + '" y="' + (T + plotH + 18) + '" text-anchor="middle" font-size="9.5" fill="#5b6d75">' + escapeHTML(stripTimeLabel(tx, spanMs)) + "</text>";
   }
-  // event ticks on top rule
   s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + (T - 8) + '" y2="' + (T - 8) + '" stroke="#1e2a31"/>';
   annotations.forEach(function(a) {
     s += '<g><line x1="' + X(a.t).toFixed(1) + '" x2="' + X(a.t).toFixed(1) + '" y1="' + (T - 12) + '" y2="' + (T - 4) +
       '" stroke="#8ba0a8" stroke-width="1.5"/><rect x="' + (X(a.t) - 4).toFixed(1) + '" y="' + (T - 16) + '" width="8" height="14" fill="transparent"><title>' +
       escapeHTML(a.label + (a.detail ? " · " + a.detail : "")) + "</title></rect></g>";
   });
-  // target step line
   if (target.length) {
     var td = "";
     for (var i = 0; i < target.length; i++) {
       var t0 = Math.max(from, target[i][0]);
-      var t1 = i + 1 < target.length ? target[i + 1][0] : to;
+      var t1 = i + 1 < target.length ? Math.min(to, target[i + 1][0]) : to;
+      if (t1 <= t0) continue;
       td += "M" + X(t0).toFixed(1) + " " + Y(target[i][1]).toFixed(1) + "L" + X(t1).toFixed(1) + " " + Y(target[i][1]).toFixed(1);
     }
-    s += '<path d="' + td + '" fill="none" stroke="#d9a13f" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"/>';
-    s += '<text x="' + (W - R) + '" y="' + (Y(target[target.length - 1][1]) - 5).toFixed(1) + '" text-anchor="end" font-size="9.5" fill="#d9a13f">target ' + target[target.length - 1][1] + "°</text>";
+    if (td) {
+      s += '<path d="' + td + '" fill="none" stroke="#d9a13f" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"/>';
+      s += '<text x="' + (W - R) + '" y="' + (Y(target[target.length - 1][1]) - 5).toFixed(1) + '" text-anchor="end" font-size="9.5" fill="#d9a13f">target ' + target[target.length - 1][1] + "°</text>";
+    }
   }
-  // series
   s += '<path d="' + linePath(outside) + '" fill="none" stroke="#c7b9a3" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.9"/>';
-  s += '<path d="' + linePath(pool) + '" fill="none" stroke="#00b7c4" stroke-width="2.2" style="filter: drop-shadow(0 0 5px rgba(0,183,196,.45))"/>';
-  // direct labels at last values
+  var poolColor = predictedMode ? "#4d8fe0" : "#00b7c4";
+  s += '<path d="' + linePath(pool) + '" fill="none" stroke="' + poolColor + '" stroke-width="2.2" style="filter: drop-shadow(0 0 5px ' + (predictedMode ? "rgba(77,143,224,.45)" : "rgba(0,183,196,.45)") + ')"/>';
+  anchors.forEach(function(p) {
+    s += '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="2.4" fill="#dce8eb"/>';
+  });
+  corrections.forEach(function(p) {
+    s += '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="4" fill="#ff9a3c"/>';
+  });
   function lastVal(pts) { for (var i = pts.length - 1; i >= 0; i--) if (pts[i][1] != null) return pts[i]; return null; }
   var lp = lastVal(pool), lo = lastVal(outside);
-  if (lp) s += '<text x="' + (W - R) + '" y="' + (Y(lp[1]) - 6).toFixed(1) + '" text-anchor="end" font-size="10" font-weight="700" fill="#00b7c4">pool</text>';
+  if (lp) s += '<text x="' + (W - R) + '" y="' + (Y(lp[1]) - 6).toFixed(1) + '" text-anchor="end" font-size="10" font-weight="700" fill="' + poolColor + '">pool</text>';
   if (lo) s += '<text x="' + (W - R) + '" y="' + (Y(lo[1]) + 13).toFixed(1) + '" text-anchor="end" font-size="10" font-weight="700" fill="#c7b9a3">outside</text>';
-  // ink lanes
   lanes.forEach(function(lane, r) {
     var yb = laneTop + r * 12;
     s += '<text x="' + (L - 7) + '" y="' + (yb + 7) + '" text-anchor="end" font-size="8" fill="#5b6d75" letter-spacing="1">' + timelineLaneLabel(lane).toUpperCase() + "</text>";
@@ -2876,31 +2981,51 @@ function renderTimelineStrip(chart, data) {
       s += '<rect x="' + X(s0).toFixed(1) + '" y="' + yb + '" width="' + Math.max(2, X(s1) - X(s0)).toFixed(1) + '" height="8" rx="2" fill="' + colors[lane] + '" opacity="0.85"/>';
     });
   });
-  // needle
   s += '<line id="stripNeedle" x1="0" x2="0" y1="' + (T - 12) + '" y2="' + (H - 4) + '" stroke="#dbe4e8" stroke-width="1" opacity="0"/>';
   s += "</svg>";
 
-  chart.innerHTML = s + '<div class="strip-readout" id="stripReadout"></div>';
+  // history page: minimap brush over the full loaded range
+  var mini = "";
+  if (isHistoryPage) {
+    var MH = 56, MT = 6, MPH = 34;
+    function MX(t) { return L + (W - L - R) * (t - dataFrom) / (dataTo - dataFrom); }
+    function MY(v) { return MT + MPH * (1 - (v - yMin) / (yMax - yMin)); }
+    var fullPool = stripSeriesPoints(measured, "pool_temp");
+    var md = "", pen = false;
+    fullPool.forEach(function(p) {
+      if (p[1] == null) { pen = false; return; }
+      md += (pen ? "L" : "M") + MX(p[0]).toFixed(1) + " " + MY(Math.max(yMin, Math.min(yMax, p[1]))).toFixed(1);
+      pen = true;
+    });
+    var bx0 = MX(from), bx1 = MX(to);
+    mini = '<svg viewBox="0 0 ' + W + " " + MH + '" id="stripMini" style="cursor: crosshair; margin-top: 6px">' +
+      '<rect x="' + L + '" y="' + MT + '" width="' + (W - L - R) + '" height="' + MPH + '" rx="6" fill="#0d1317" stroke="#1e2a31"/>' +
+      '<path d="' + md + '" fill="none" stroke="#00b7c4" stroke-width="1.2" opacity="0.8"/>' +
+      '<rect id="stripBrush" x="' + bx0.toFixed(1) + '" y="' + (MT - 3) + '" width="' + Math.max(3, bx1 - bx0).toFixed(1) + '" height="' + (MPH + 6) + '" rx="5" fill="rgba(0,183,196,0.10)" stroke="#00b7c4"/>' +
+      '<text x="' + L + '" y="' + (MH - 2) + '" font-size="8.5" fill="#5b6d75">' + escapeHTML(stripTimeLabel(dataFrom, dataTo - dataFrom)) + "</text>" +
+      '<text x="' + (W - R) + '" y="' + (MH - 2) + '" text-anchor="end" font-size="8.5" fill="#5b6d75">' + escapeHTML(stripTimeLabel(dataTo, dataTo - dataFrom)) + "</text>" +
+      "</svg>";
+  }
+
+  chart.innerHTML = '<div class="strip-main">' + s + mini + "</div>" + '<div class="strip-readout" id="stripReadout"></div>';
 
   var readout = $("stripReadout");
-  function nearestIndex(pts, t) {
-    if (!pts.length) return -1;
+  function valueAt(pts, t) {
+    if (!pts.length) return null;
     var best = 0, bd = Infinity;
     for (var i = 0; i < pts.length; i++) {
       var d = Math.abs(pts[i][0] - t);
       if (d < bd) { bd = d; best = i; }
     }
-    return best;
-  }
-  function valueAt(pts, t) {
-    var i = nearestIndex(pts, t);
-    return i < 0 ? null : pts[i][1];
+    return pts[best][1];
   }
   function renderReadout(t) {
     var pv = valueAt(pool, t), ov = valueAt(outside, t);
     var dt = new Date(t);
-    readout.innerHTML = '<div class="sr-time">' + String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0") + "</div>" +
-      '<div class="sr-pool"><small>POOL</small>' + (pv == null ? "--" : pv.toFixed(1) + "°") + "</div>" +
+    var timeText = (spanMs > 36 * 3600 * 1000 ? dt.toLocaleDateString([], {weekday: "short"}) + " " : "") +
+      String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
+    readout.innerHTML = '<div class="sr-time">' + escapeHTML(timeText) + "</div>" +
+      '<div class="sr-pool"' + (predictedMode ? ' style="color:#4d8fe0; text-shadow: 0 0 14px rgba(77,143,224,.35)"' : "") + '><small>' + (predictedMode ? "PREDICTED" : "POOL") + "</small>" + (pv == null ? "--" : pv.toFixed(1) + "°") + "</div>" +
       '<div class="sr-out"><small>OUT</small>' + (ov == null ? "--" : ov.toFixed(1) + "°") + "</div>" +
       '<div class="sr-leds">' + lanes.map(function(lane) {
         var on = stripLaneActiveAt(spans, lane, t);
@@ -2928,6 +3053,35 @@ function renderTimelineStrip(chart, data) {
     needle.setAttribute("opacity", "0");
     renderReadout(to);
   });
+
+  if (isHistoryPage) {
+    var miniSvg = $("stripMini");
+    function miniT(e) {
+      var rect = miniSvg.getBoundingClientRect();
+      var px = (e.clientX - rect.left) / rect.width * W;
+      return dataFrom + Math.max(0, Math.min(1, (px - L) / (W - L - R))) * (dataTo - dataFrom);
+    }
+    miniSvg.addEventListener("pointerdown", function(e) {
+      e.preventDefault();
+      var t0 = miniT(e), moved = false;
+      function move(ev) {
+        var t1 = miniT(ev);
+        if (Math.abs(t1 - t0) > (dataTo - dataFrom) / 100) {
+          moved = true;
+          stripWin = {from: Math.min(t0, t1), to: Math.max(t0, t1)};
+          stripScrubT = null;
+          renderTimelineStrip(chart, data);
+        }
+      }
+      function up() {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        if (!moved && stripWin) { stripWin = null; stripScrubT = null; renderTimelineStrip(chart, data); }
+      }
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
+  }
 }
 
 function timelineMeta(data) {
@@ -2981,160 +3135,7 @@ function timelineFeatureLegendItems(spans) {
 }
 
 function renderTimelineMessage(chart, message) {
-  disposeTimelineChart();
   chart.innerHTML = "<div class=\"timeline-empty\">" + escapeHTML(message) + "</div>";
-}
-
-function renderTimelineChart(chart, data) {
-  disposeTimelineChart();
-  chart.innerHTML = "";
-  var canvas = document.createElement("div");
-  canvas.className = "timeline-canvas";
-  chart.appendChild(canvas);
-  timelineChartInstance = echarts.init(canvas, null, {renderer: "canvas"});
-  timelineChartInstance.setOption(timelineOption(data), true);
-  setTimeout(function() {
-    if (timelineChartInstance) timelineChartInstance.resize();
-  }, 0);
-}
-
-function disposeTimelineChart() {
-  if (timelineChartInstance) {
-    timelineChartInstance.dispose();
-    timelineChartInstance = null;
-  }
-}
-
-function timelineOption(data) {
-  var from = new Date(data.from).getTime();
-  var to = new Date(data.to).getTime();
-  var modePoints = state.timelineMode === "predicted" ? (data.predicted || []) : (data.measured || []);
-  var measured = data.measured || [];
-  var target = data.target || [];
-  var values = timelineValues(modePoints, measured, target);
-  if (!values.length || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-    return {title: {text: "No timeline data", left: "center", top: "middle", textStyle: {fontSize: 14, color: "#8ba0a8", fontWeight: 600}}};
-  }
-  var min = Math.floor(Math.min.apply(null, values)) - 1;
-  var max = Math.ceil(Math.max.apply(null, values)) + 1;
-  if (min === max) {
-    min -= 1;
-    max += 1;
-  }
-  var lanes = timelineLanes(data.feature_spans || []);
-  var laneGridHeight = Math.max(58, lanes.length * 24 + 14);
-  var gridBottom = laneGridHeight + (isHistoryPage ? 58 : 34);
-  var option = {
-    animation: false,
-    grid: [
-      {left: 48, right: isHistoryPage ? 28 : 12, top: isHistoryPage ? 42 : 16, bottom: gridBottom},
-      {left: 48, right: isHistoryPage ? 28 : 12, height: laneGridHeight, bottom: isHistoryPage ? 42 : 12}
-    ],
-    legend: {show: false},
-    tooltip: {
-      trigger: "axis",
-      confine: true,
-      axisPointer: {type: "cross"},
-      formatter: timelineTooltip
-    },
-    axisPointer: {link: [{xAxisIndex: [0, 1]}]},
-    xAxis: [
-      {type: "time", min: from, max: to, axisLabel: {color: "#8ba0a8"}, axisLine: {lineStyle: {color: "#2b3840"}}, splitLine: {show: true, lineStyle: {color: "#1e2a31"}}},
-      {type: "time", min: from, max: to, gridIndex: 1, axisLabel: {show: isHistoryPage, color: "#8ba0a8"}, axisLine: {lineStyle: {color: "#2b3840"}}, splitLine: {show: false}}
-    ],
-    yAxis: [
-      {type: "value", min: min, max: max, axisLabel: {formatter: "{value}°", color: "#8ba0a8"}, axisLine: {show: false}, splitLine: {lineStyle: {color: "#1e2a31"}}},
-      {type: "category", gridIndex: 1, data: lanes.map(timelineLaneLabel), inverse: true, axisTick: {show: false}, axisLine: {show: false}, axisLabel: {color: "#8ba0a8", fontSize: 12}, splitLine: {show: true, lineStyle: {color: "#1e2a31"}}}
-    ],
-    series: timelineSeries(data, lanes, min, max)
-  };
-  if (isHistoryPage) {
-    option.dataZoom = [
-      {type: "inside", xAxisIndex: [0, 1], filterMode: "none"},
-      {type: "slider", xAxisIndex: [0, 1], filterMode: "none", bottom: 6, height: 24, borderColor: "#2b3840"}
-    ];
-  }
-  return option;
-}
-
-function timelineSeries(data, lanes, min, max) {
-  var measured = data.measured || [];
-  var modePoints = state.timelineMode === "predicted" ? (data.predicted || []) : measured;
-  var linePoints = modePoints.filter(function(point) { return point.kind !== "correction"; });
-  var series = [
-    {
-      name: "Outside",
-      type: "line",
-      data: timelineLineData(measured, "outside_temp_c"),
-      showSymbol: false,
-      connectNulls: false,
-      lineStyle: {color: "#c7b9a3", width: 2, opacity: .8, type: "dashed"},
-      itemStyle: {color: "#c7b9a3"},
-      emphasis: {focus: "series"}
-    },
-    {
-      name: "Target",
-      type: "line",
-      data: timelineTargetData(data.target || []),
-      showSymbol: false,
-      step: "end",
-      lineStyle: {color: "#b5852f", width: 2, type: "dashed"},
-      itemStyle: {color: "#b5852f"},
-      emphasis: {focus: "series"}
-    },
-    {
-      name: state.timelineMode === "predicted" ? "Pool predicted" : "Pool measured",
-      type: "line",
-      data: timelineLineData(linePoints, "pool_temp"),
-      showSymbol: false,
-      connectNulls: false,
-      lineStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#00b7c4", width: 3},
-      itemStyle: {color: state.timelineMode === "predicted" ? "#235ea8" : "#00b7c4"},
-      emphasis: {focus: "series"}
-    }
-  ];
-  if (state.timelineMode === "predicted") {
-    series.push({
-      name: "Measured anchors",
-      type: "scatter",
-      data: timelineLineData(measured, "pool_temp"),
-      symbolSize: isHistoryPage ? 6 : 4,
-      itemStyle: {color: "#dce8eb"}
-    });
-    series.push({
-      name: "Corrections",
-      type: "scatter",
-      data: timelineLineData((data.predicted || []).filter(function(point) { return point.kind === "correction"; }), "pool_temp"),
-      symbolSize: isHistoryPage ? 10 : 7,
-      itemStyle: {color: "#ff9a3c"}
-    });
-  }
-  var annotations = timelineAnnotationData(data.annotations || [], max);
-  if (annotations.length) {
-    series.push({
-      name: "Annotations",
-      type: "scatter",
-      data: annotations,
-      symbol: "pin",
-      symbolSize: isHistoryPage ? 18 : 13,
-      itemStyle: {color: "#dce8eb"},
-      tooltip: {trigger: "item", formatter: timelineItemTooltip}
-    });
-  }
-  var featureData = timelineFeatureData(data.feature_spans || [], lanes);
-  if (featureData.length) {
-    series.push({
-      name: "Features",
-      type: "custom",
-      xAxisIndex: 1,
-      yAxisIndex: 1,
-      clip: true,
-      data: featureData,
-      renderItem: renderTimelineFeature,
-      tooltip: {trigger: "item", formatter: timelineItemTooltip}
-    });
-  }
-  return series;
 }
 
 function timelineValues(points, measured, target) {
@@ -3151,25 +3152,6 @@ function timelineValues(points, measured, target) {
   return values.filter(Number.isFinite);
 }
 
-function timelineLineData(points, field) {
-  return points.map(function(point) {
-    var value = point[field];
-    if (value == null || !Number.isFinite(Number(value))) {
-      return null;
-    }
-    return [new Date(point.t).getTime(), Number(value), point.confidence == null ? null : Number(point.confidence), point.model || "", point.kind || ""];
-  }).filter(function(point) { return point && Number.isFinite(point[0]); });
-}
-
-function timelineTargetData(points) {
-  return points.map(function(point) {
-    if (point.target_temp == null) {
-      return null;
-    }
-    return [new Date(point.t).getTime(), Number(point.target_temp)];
-  }).filter(function(point) { return point && Number.isFinite(point[0]) && Number.isFinite(point[1]); });
-}
-
 function timelineLanes(spans) {
   var lanes = ["power", "filter", "heater"];
   ["jets", "bubbles", "sanitizer"].forEach(function(cap) {
@@ -3183,98 +3165,8 @@ function timelineLaneLabel(lane) {
   return title(lane === "connected" ? "offline" : lane);
 }
 
-function timelineFeatureData(spans, lanes) {
-  var colors = timelineFeatureColors();
-  var data = [];
-  lanes.forEach(function(lane, index) {
-    spans.forEach(function(span) {
-      var active = lane === "connected" ? span.connected === false : !!span[lane];
-      if (!active) return;
-      var start = new Date(span.from).getTime();
-      var end = new Date(span.to).getTime();
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
-      var label = timelineLaneLabel(lane);
-      data.push({
-        name: label + " · " + formatDateTime(span.from) + " to " + formatDateTime(span.to),
-        value: [start, end, index],
-        itemStyle: {color: colors[lane], opacity: .82}
-      });
-    });
-  });
-  return data;
-}
-
 function timelineFeatureColors() {
   return {power:"#7a8790", filter:"#00a6b2", heater:"#d97904", jets:"#235ea8", bubbles:"#7c4dff", sanitizer:"#1d7f45", connected:"#b42318"};
-}
-
-function timelineAnnotationData(annotations, y) {
-  return annotations.map(function(annotation) {
-    var t = new Date(annotation.t).getTime();
-    if (!Number.isFinite(t)) return null;
-    return {
-      name: annotation.label || "Annotation",
-      value: [t, y, annotation.detail || "", annotation.source || ""]
-    };
-  }).filter(Boolean);
-}
-
-function renderTimelineFeature(params, api) {
-  var start = api.coord([api.value(0), api.value(2)]);
-  var end = api.coord([api.value(1), api.value(2)]);
-  var laneSize = api.size([0, 1]);
-  var height = Math.max(8, laneSize[1] * .58);
-  var shape = echarts.graphic.clipRectByRect({
-    x: start[0],
-    y: start[1] - height / 2,
-    width: Math.max(1, end[0] - start[0]),
-    height: height
-  }, {
-    x: params.coordSys.x,
-    y: params.coordSys.y,
-    width: params.coordSys.width,
-    height: params.coordSys.height
-  });
-  if (!shape) return;
-  return {type: "rect", shape: shape, style: api.style()};
-}
-
-function timelineTooltip(params) {
-  if (!Array.isArray(params)) return timelineItemTooltip(params);
-  var time = null;
-  var rows = [];
-  params.forEach(function(param) {
-    if (!param || !param.value) return;
-    if (param.seriesType === "custom") {
-      rows.push(param.marker + escapeHTML(param.name || "Feature"));
-      return;
-    }
-    var value = param.value;
-    if (time == null && value[0] != null) time = value[0];
-    if (param.seriesName === "Annotations") {
-      rows.push(param.marker + escapeHTML(param.name || "Annotation") + (value[2] ? " · " + escapeHTML(value[2]) : ""));
-      return;
-    }
-    if (value[1] == null || !Number.isFinite(Number(value[1]))) return;
-    var suffix = param.seriesName === "Outside" || param.seriesName.indexOf("Pool") === 0 || param.seriesName === "Target" || param.seriesName === "Measured anchors" || param.seriesName === "Corrections" ? "°" : "";
-    var detail = "";
-    if (value[2] != null && Number.isFinite(Number(value[2]))) detail = " · confidence " + Math.round(Number(value[2]) * 100) + "%";
-    if (value[3]) detail += " · " + escapeHTML(value[3]);
-    rows.push(param.marker + escapeHTML(param.seriesName) + ": " + Number(value[1]).toFixed(1) + suffix + detail);
-  });
-  if (time == null) return rows.join("<br>");
-  return "<strong>" + formatDateTime(time) + "</strong><br>" + rows.join("<br>");
-}
-
-function timelineItemTooltip(param) {
-  if (!param) return "";
-  if (param.seriesType === "custom") return escapeHTML(param.name || "Feature");
-  var value = param.value || [];
-  if (param.seriesName === "Annotations") {
-    return "<strong>" + formatDateTime(value[0]) + "</strong><br>" + escapeHTML(param.name || "Annotation") + (value[2] ? "<br>" + escapeHTML(value[2]) : "");
-  }
-  if (value[1] == null) return escapeHTML(param.name || "");
-  return "<strong>" + formatDateTime(value[0]) + "</strong><br>" + escapeHTML(param.seriesName || "") + ": " + Number(value[1]).toFixed(1) + "°";
 }
 
 var CAP_LED = {filter: "filter", heater: "heater", jets: "jets", bubbles: "bubbles", power: "power", sanitizer: "sanitizer"};
@@ -3744,6 +3636,10 @@ setInterval(function() {
 setInterval(function() {
   if (state.token) loadTimeline().then(renderTimeline);
 }, 60000);
+setInterval(function() {
+  // Tick the plan countdowns; skip while a tag is in set mode.
+  if (!isHistoryPage && state.token && planEditing == null) renderPlans();
+}, 30000);
 </script>
 </body>
 </html>

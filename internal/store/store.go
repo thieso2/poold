@@ -397,6 +397,18 @@ func (s *Store) LatestStatus(ctx context.Context) (pool.Status, bool, error) {
 	return status, true, nil
 }
 
+// FirstObservationAt returns the oldest observation time, for the "all" timeline range.
+func (s *Store) FirstObservationAt(ctx context.Context) (time.Time, bool, error) {
+	var value sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT MIN(observed_at) FROM observations`).Scan(&value); err != nil {
+		return time.Time{}, false, err
+	}
+	if !value.Valid || value.String == "" {
+		return time.Time{}, false, nil
+	}
+	return decodeTime(value.String), true, nil
+}
+
 func (s *Store) Observations(ctx context.Context, afterID int64, limit int) ([]pool.Observation, error) {
 	limit = normalizedListLimit(limit)
 	rows, err := s.db.QueryContext(ctx, `
