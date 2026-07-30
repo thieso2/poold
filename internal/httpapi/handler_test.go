@@ -351,6 +351,36 @@ func TestInactiveTimeWindowDoesNotUndoDirectFilterCommand(t *testing.T) {
 	}
 }
 
+func TestEventStreamQueryTokenAuth(t *testing.T) {
+	handler, _ := testAPI(t)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/events/stream", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token: status = %d, want 401", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/events/stream?token=wrong", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec.Code)
+	}
+
+	// A valid query token must open the stream; cancel immediately so the
+	// handler's context-done path returns instead of streaming forever.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/events/stream?token=secret", nil).WithContext(ctx)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid token: status = %d, want 200", rec.Code)
+	}
+	if contentType := rec.Header().Get("Content-Type"); contentType != "text/event-stream" {
+		t.Fatalf("content type = %q, want text/event-stream", contentType)
+	}
+}
+
 func TestPlansEndpoint(t *testing.T) {
 	handler, _ := testAPI(t)
 	body := []byte(`{"plans":[{"id":"filter","type":"time_window","enabled":true,"capability":"filter","start":"02:00","duration_minutes":120},{"id":"morning","type":"ready_by","enabled":true,"cron":"30 8 * * *","target_temp":36}]}`)

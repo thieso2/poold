@@ -1514,7 +1514,62 @@ function loadAll() {
   ]).finally(function() {
     setBusy(false);
     renderAll();
+    connectLiveStream();
   });
+}
+
+/* ---- Live updates: the event stream nudges the dashboard to refetch.
+   Notify + refetch: each pushed event names its type; a map decides which
+   loaders re-run, coalesced so bursts trigger one round-trip. The polling
+   intervals stay untouched as the fallback when the stream is down. ---- */
+var liveStream = null;
+var liveReloadTimer = null;
+var livePending = {};
+
+function latestEventID() {
+  var rows = state.activityRaw.events || [];
+  var max = 0;
+  rows.forEach(function(row) { if (row && row.id > max) max = row.id; });
+  return max;
+}
+
+function liveLoadersFor(type) {
+  type = String(type || "");
+  if (type === "observation" || type === "status_error") return ["status", "activity"];
+  if (type === "command" || type === "command_error" || type === "scheduler") return ["status", "plans", "activity"];
+  if (type === "plans") return ["plans", "activity"];
+  if (type.indexOf("manual_session.") === 0) return ["control", "activity"];
+  return ["activity"];
+}
+
+function scheduleLiveReload(keys) {
+  keys.forEach(function(key) { livePending[key] = true; });
+  clearTimeout(liveReloadTimer);
+  liveReloadTimer = setTimeout(function() {
+    var pending = livePending;
+    livePending = {};
+    var loads = [];
+    if (pending.status) loads.push(loadStatus().then(loadPoolControl));
+    else if (pending.control) loads.push(loadPoolControl());
+    if (pending.plans) loads.push(loadPlans());
+    if (pending.activity) loads.push(loadActivities());
+    Promise.all(loads).then(function() {
+      renderLivePanels();
+      if (pending.plans && planEditing == null) renderPlans();
+    });
+  }, 300);
+}
+
+function connectLiveStream() {
+  if (isHistoryPage || !state.token || typeof EventSource === "undefined") return;
+  if (liveStream) { liveStream.close(); liveStream = null; }
+  var source = new EventSource("/events/stream?token=" + encodeURIComponent(state.token) + "&after=" + latestEventID());
+  liveStream = source;
+  source.onmessage = function(message) {
+    var event = null;
+    try { event = JSON.parse(message.data); } catch (err) { return; }
+    if (event && event.type) scheduleLiveReload(liveLoadersFor(event.type));
+  };
 }
 
 function loadStatus() {

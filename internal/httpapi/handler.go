@@ -64,6 +64,12 @@ func (a *API) auth(next http.Handler) http.Handler {
 		}
 		value := r.Header.Get("Authorization")
 		const prefix = "Bearer "
+		// EventSource cannot set headers, so the SSE stream may carry the token as a query param.
+		if value == "" && r.URL.Path == "/events/stream" {
+			if token := r.URL.Query().Get("token"); token != "" {
+				value = prefix + token
+			}
+		}
 		if !strings.HasPrefix(value, prefix) ||
 			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(value, prefix)), []byte(a.token)) != 1 {
 			if strings.HasPrefix(r.URL.Path, "/manual-session") {
@@ -173,11 +179,20 @@ func (a *API) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	if header := r.Header.Get("Last-Event-ID"); header != "" {
+		if id, err := strconv.ParseInt(header, 10, 64); err == nil && id > after {
+			after = id
+		}
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	// Idle SSE connections write nothing, so proxies (the Cloudflare tunnel)
+	// may reap them; a comment line every 25s keeps the pipe warm.
+	keepalive := time.NewTicker(25 * time.Second)
+	defer keepalive.Stop()
 
 	for {
 		events, err := a.service.Events(r.Context(), after, 100)
@@ -186,15 +201,22 @@ func (a *API) handleEventStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			return
 		}
-		for _, event := range events {
-			body, _ := json.Marshal(event)
-			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", event.ID, event.Type, body)
-			after = event.ID
+		if len(events) > 0 {
+			for _, event := range events {
+				body, _ := json.Marshal(event)
+				// No event: field — the type rides in the JSON so EventSource
+				// clients receive everything through onmessage.
+				fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.ID, body)
+				after = event.ID
+			}
+			flusher.Flush()
 		}
-		flusher.Flush()
 		select {
 		case <-r.Context().Done():
 			return
+		case <-keepalive.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
 		case <-ticker.C:
 		}
 	}
