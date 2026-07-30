@@ -899,6 +899,111 @@ body[data-page="history"] .timeline-canvas {
   .row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .activity-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); width: min(560px, 100%); }
 }
+
+/* ---- Plans as backlit instrument tags ---- */
+#plansView { display: grid; gap: 12px; }
+.tagplan {
+  --pc: #00b7c4;
+  position: relative;
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--pc);
+  border-radius: 12px;
+  padding: 14px 16px 12px 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  overflow: hidden;
+}
+.tagplan::before {
+  content: "";
+  position: absolute; inset: 0 auto 0 0; width: 120px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pc) 9%, transparent), transparent);
+  pointer-events: none;
+}
+.tagplan.kind-heater { --pc: #f08c1a; }
+.tagplan.kind-jets { --pc: #4d8fe0; }
+.tagplan.kind-bubbles { --pc: #9d7bff; }
+.tagplan.paused { border-left-color: var(--line); }
+.tagplan.paused::before { display: none; }
+.tp-caption {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--pc) 75%, var(--muted));
+  margin-bottom: 5px;
+}
+.tagplan.paused .tp-caption { color: var(--muted); }
+.tp-readout {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 27px; font-weight: 600; line-height: 1.15; letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--pc) 35%, transparent);
+  background: none; border: 0; min-height: 0; padding: 0; text-align: left;
+  cursor: pointer;
+}
+.tagplan.paused .tp-readout { color: var(--muted); text-shadow: none; }
+.tp-readout small { font-size: 14px; font-weight: 500; color: var(--muted); letter-spacing: .03em; }
+.tp-say { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.tagplan.editing .tp-say { display: none; }
+.tp-keys { display: flex; gap: 7px; align-self: start; }
+.tp-key {
+  min-width: 34px; min-height: 34px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: linear-gradient(180deg, var(--panel-hi), var(--bg));
+  color: var(--muted); font-size: 13px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .4);
+}
+.tp-key:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0, 0, 0, .4); }
+.tp-key:hover { color: var(--text); border-color: var(--muted); background: linear-gradient(180deg, var(--panel-hi), var(--bg)); }
+.tp-key.tp-del:hover { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
+.tp-key.tp-done {
+  color: var(--pc);
+  border-color: color-mix(in srgb, var(--pc) 45%, var(--line));
+  font-weight: 700;
+}
+.tp-set {
+  grid-column: 1 / -1;
+  display: flex; flex-wrap: wrap; gap: 12px 18px;
+  margin-top: 10px; padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.tp-group { display: grid; gap: 6px; align-content: start; }
+.tp-label {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted);
+}
+.tp-stepper { display: flex; align-items: center; gap: 6px; }
+.tp-val {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 19px; font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 72px; text-align: center;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--pc) 40%, transparent);
+}
+.tp-daykeys { display: flex; flex-wrap: wrap; gap: 4px; }
+.tp-daykey {
+  min-width: 32px; min-height: 32px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: linear-gradient(180deg, var(--panel-hi), var(--bg));
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .35);
+}
+.tp-daykey[aria-pressed="true"] {
+  color: var(--pc);
+  border-color: color-mix(in srgb, var(--pc) 55%, var(--line));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--pc) 25%, transparent), 0 2px 0 rgba(0, 0, 0, .35);
+}
+.tp-daykey.tp-cap { font-family: inherit; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.plans-empty { color: var(--muted); font-size: 14px; }
+@media (max-width: 560px) {
+  .tp-readout { font-size: 22px; }
+}
 </style>
 </head>
 <body data-page="__POOLD_PAGE__">
@@ -2192,7 +2297,9 @@ var DAY_FULL = {mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday"
 var DAY_SHORT = {mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun"};
 var WEEKDAYS = ["mon", "tue", "wed", "thu", "fri"];
 var WEEKEND = ["sat", "sun"];
-var planPop = null;
+var planEditing = null;
+var planSaveTimer = null;
+var planDirty = false;
 
 function planDays(plan) {
   if (plan.type === "time_window") return plan.days && plan.days.length ? plan.days : days.slice();
@@ -2230,9 +2337,40 @@ function daysPhrase(list) {
   return "on " + ordered.slice(0, -1).join(", ") + " and " + ordered[ordered.length - 1];
 }
 
-function planSlot(plan, field, text, cls) {
-  return '<button class="slot ' + (cls || "") + '" data-plan-slot="' + escapeHTML(plan.id) +
-    '" data-field="' + field + '">' + escapeHTML(text) + "</button>";
+function planKind(plan) {
+  return plan.type === "ready_by" ? "heater" : normalizePlanCap(plan.capability);
+}
+
+function durShort(minutes) {
+  minutes = Number(minutes) || 0;
+  if (minutes < 60) return minutes + "m";
+  if (minutes % 60 === 0) return (minutes / 60) + " h";
+  return Math.floor(minutes / 60) + ":" + pad2(minutes % 60) + " h";
+}
+
+function onceDay(date) {
+  var names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return names[date.getDay()] + " " + date.getDate() + "." + (date.getMonth() + 1) + ".";
+}
+
+function planCaption(plan) {
+  var d = daysPhrase(planDays(plan)).replace("every day", "daily");
+  if (plan.type === "ready_by") {
+    return "heater · ready by · " + (!plan.cron && plan.at ? "once" : d);
+  }
+  return planKind(plan) + " · window · " + d;
+}
+
+function planReadout(plan) {
+  if (plan.type === "time_window") {
+    return escapeHTML(plan.start || "00:00") + " <small>for</small> " + durShort(plan.duration_minutes || 120);
+  }
+  var temp = (plan.target_temp || 36) + "°";
+  if (!plan.cron && plan.at) {
+    var at = new Date(plan.at);
+    return temp + " <small>by</small> " + onceDay(at) + " " + pad2(at.getHours()) + ":" + pad2(at.getMinutes());
+  }
+  return temp + " <small>by</small> " + planTime(plan);
 }
 
 function windowDurationPhrase(minutes) {
@@ -2248,27 +2386,62 @@ function windowDurationPhrase(minutes) {
 function planSentence(plan) {
   if (plan.type === "time_window") {
     var cap = normalizePlanCap(plan.capability);
-    return "Run " + planSlot(plan, "capability", CAP_PHRASE[cap] || cap, "slot-" + cap) +
-      " from " + planSlot(plan, "start", plan.start || "00:00") +
-      " for " + planSlot(plan, "duration_minutes", windowDurationPhrase(plan.duration_minutes || 120)) + ", " +
-      planSlot(plan, "days", daysPhrase(planDays(plan))) + ".";
+    return "Run " + (CAP_PHRASE[cap] || cap) + " from " + (plan.start || "00:00") +
+      " for " + windowDurationPhrase(plan.duration_minutes || 120) + ", " +
+      daysPhrase(planDays(plan)) + ".";
   }
   if (plan.type === "ready_by") {
-    var once = !plan.cron && plan.at;
-    if (once) {
-      return "Have the water at " + planSlot(plan, "target_temp", (plan.target_temp || 36) + "°", "slot-heater") +
-        " by " + planSlot(plan, "at", formatDateTime(plan.at)) + ", once.";
+    if (!plan.cron && plan.at) {
+      return "Have the water at " + (plan.target_temp || 36) + "° by " + formatDateTime(plan.at) + ", once.";
     }
-    return "Have the water at " + planSlot(plan, "target_temp", (plan.target_temp || 36) + "°", "slot-heater") +
-      " by " + planSlot(plan, "time", planTime(plan)) + ", " +
-      planSlot(plan, "days", daysPhrase(planDays(plan))) + ".";
+    return "Have the water at " + (plan.target_temp || 36) + "° by " + planTime(plan) + ", " +
+      daysPhrase(planDays(plan)) + ".";
   }
-  return escapeHTML(describePlan(plan));
+  return describePlan(plan);
 }
 
 function normalizePlanCap(capability) {
   var cap = String(capability || "filter").toLowerCase();
   return CAP_PHRASE[cap] ? cap : "filter";
+}
+
+function planStepper(plan, label, value, field) {
+  return '<div class="tp-group"><span class="tp-label">' + label + "</span>" +
+    '<div class="tp-stepper">' +
+    '<button class="tp-key" data-plan-step="-1" data-field="' + field + '" data-plan="' + escapeHTML(plan.id) + '" aria-label="' + label + ' down">−</button>' +
+    '<span class="tp-val">' + value + "</span>" +
+    '<button class="tp-key" data-plan-step="1" data-field="' + field + '" data-plan="' + escapeHTML(plan.id) + '" aria-label="' + label + ' up">＋</button>' +
+    "</div></div>";
+}
+
+function planSetMode(plan) {
+  var h = "";
+  if (plan.type === "time_window") {
+    h += '<div class="tp-group"><span class="tp-label">Run what</span><div class="tp-daykeys">' +
+      Object.keys(CAP_PHRASE).map(function(cap) {
+        return '<button class="tp-daykey tp-cap" data-plan-cap="' + cap + '" data-plan="' + escapeHTML(plan.id) +
+          '" aria-pressed="' + (normalizePlanCap(plan.capability) === cap) + '">' + CAP_PHRASE[cap].replace("the ", "") + "</button>";
+      }).join("") + "</div></div>";
+    h += planStepper(plan, "Start", escapeHTML(plan.start || "00:00"), "start");
+    h += planStepper(plan, "Run for", durShort(plan.duration_minutes || 120), "duration");
+  } else if (!plan.cron && plan.at) {
+    var at = new Date(plan.at);
+    h += planStepper(plan, "Water at", (plan.target_temp || 36) + "°", "temp");
+    h += planStepper(plan, "Day", onceDay(at), "at-day");
+    h += planStepper(plan, "Ready by", pad2(at.getHours()) + ":" + pad2(at.getMinutes()), "at-time");
+  } else {
+    h += planStepper(plan, "Water at", (plan.target_temp || 36) + "°", "temp");
+    h += planStepper(plan, "Ready by", planTime(plan), "time");
+  }
+  if (plan.type === "time_window" || plan.cron || !plan.at) {
+    var current = planDays(plan);
+    h += '<div class="tp-group"><span class="tp-label">Days</span><div class="tp-daykeys">' +
+      days.map(function(day) {
+        return '<button class="tp-daykey" data-plan-day="' + day + '" data-plan="' + escapeHTML(plan.id) +
+          '" aria-pressed="' + (current.indexOf(day) >= 0) + '">' + DAY_SHORT[day].slice(0, 2) + "</button>";
+      }).join("") + "</div></div>";
+  }
+  return '<div class="tp-set">' + h + "</div>";
 }
 
 function renderPlans() {
@@ -2278,15 +2451,24 @@ function renderPlans() {
       "Add one below and it will look after itself.</p>";
   } else {
     view.innerHTML = state.plans.map(function(plan) {
-      var kind = plan.type === "ready_by" ? "heater" : normalizePlanCap(plan.capability);
-      return '<div class="line ' + (plan.enabled ? "on " : "") + "kind-" + kind +
-        '" data-plan-line="' + escapeHTML(plan.id) + '">' +
-        '<button class="lamp" data-plan-toggle="' + escapeHTML(plan.id) + '" aria-label="' +
-        (plan.enabled ? "Pause" : "Turn on") + " " + escapeHTML(plan.name || plan.id) + '"></button>' +
-        '<p class="say">' + planSentence(plan) + "</p>" +
-        '<div class="line-foot"><button data-plan-toggle="' + escapeHTML(plan.id) + '">' +
-        (plan.enabled ? "Pause" : "Turn on") + "</button>" +
-        '<button class="danger" data-plan-delete="' + escapeHTML(plan.id) + '">Delete</button></div></div>';
+      var editing = planEditing === plan.id;
+      var id = escapeHTML(plan.id);
+      var name = escapeHTML(plan.name || plan.id);
+      var keys = editing
+        ? '<button class="tp-key tp-done" data-plan-done="' + id + '" aria-label="Done setting ' + name + '">✓</button>'
+        : '<button class="tp-key" data-plan-edit="' + id + '" aria-label="Set ' + name + '">⚙</button>' +
+          '<button class="tp-key" data-plan-toggle="' + id + '" aria-pressed="' + !plan.enabled + '" aria-label="' +
+          (plan.enabled ? "Pause" : "Resume") + " " + name + '">' + (plan.enabled ? "❙❙" : "▶") + "</button>" +
+          '<button class="tp-key tp-del" data-plan-delete="' + id + '" aria-label="Delete ' + name + '">✕</button>';
+      return '<div class="tagplan kind-' + planKind(plan) + (plan.enabled ? "" : " paused") + (editing ? " editing" : "") + '">' +
+        "<div>" +
+        '<div class="tp-caption">' + escapeHTML(planCaption(plan)) + (plan.enabled ? "" : " · paused") + "</div>" +
+        '<button class="tp-readout" data-plan-edit="' + id + '" aria-label="Set ' + name + '">' + planReadout(plan) + "</button>" +
+        "</div>" +
+        '<div class="tp-keys">' + keys + "</div>" +
+        '<p class="tp-say">' + escapeHTML(planSentence(plan)) + "</p>" +
+        (editing ? planSetMode(plan) : "") +
+        "</div>";
     }).join("");
   }
   var running = state.plans.filter(function(p) { return p.enabled; }).length;
@@ -2294,161 +2476,118 @@ function renderPlans() {
   bindPlans();
 }
 
+function planById(id) {
+  return state.plans.filter(function(plan) { return plan.id === id; })[0];
+}
+
+function patchPlan(id, changes) {
+  state.plans = state.plans.map(function(plan) {
+    return plan.id === id ? Object.assign({}, plan, changes) : plan;
+  });
+  planDirty = true;
+  clearTimeout(planSaveTimer);
+  planSaveTimer = setTimeout(flushPlanSave, 900);
+  renderPlans();
+}
+
+function flushPlanSave() {
+  clearTimeout(planSaveTimer);
+  if (!planDirty) return;
+  planDirty = false;
+  updatePlans(state.plans, "Plan updated");
+}
+
+function closePlanSetMode() {
+  if (planEditing == null) return;
+  planEditing = null;
+  flushPlanSave();
+  renderPlans();
+}
+
+function shiftClock(value, deltaMinutes) {
+  var parts = String(value || "00:00").split(":");
+  var minutes = ((Number(parts[0]) * 60 + Number(parts[1]) + deltaMinutes) % 1440 + 1440) % 1440;
+  return pad2(Math.floor(minutes / 60)) + ":" + pad2(minutes % 60);
+}
+
+function stepPlan(plan, field, direction) {
+  if (field === "temp") {
+    var temp = Math.max(20, Math.min(40, (plan.target_temp || 36) + direction));
+    patchPlan(plan.id, {target_temp: temp});
+  } else if (field === "start") {
+    patchPlan(plan.id, {start: shiftClock(plan.start, direction * 15)});
+  } else if (field === "duration") {
+    var duration = Math.max(30, Math.min(1440, (plan.duration_minutes || 120) + direction * 30));
+    patchPlan(plan.id, {duration_minutes: duration});
+  } else if (field === "time") {
+    patchPlan(plan.id, {cron: cronFor(shiftClock(planTime(plan), direction * 15), planDays(plan)), at: null});
+  } else if (field === "at-time" || field === "at-day") {
+    var at = new Date(plan.at);
+    at.setTime(at.getTime() + direction * (field === "at-day" ? 24 * 60 : 15) * 60000);
+    patchPlan(plan.id, {at: at.toISOString()});
+  }
+}
+
 function bindPlans() {
+  qsa("[data-plan-edit]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      if (planEditing && planEditing !== button.dataset.planEdit) flushPlanSave();
+      planEditing = button.dataset.planEdit;
+      renderPlans();
+    };
+  });
+  qsa("[data-plan-done]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      closePlanSetMode();
+    };
+  });
   qsa("[data-plan-toggle]").forEach(function(button) {
     button.onclick = function(event) {
       event.stopPropagation();
-      closePlanPop();
-      updatePlans(state.plans.map(function(plan) {
-        return plan.id === button.dataset.planToggle ? Object.assign({}, plan, {enabled: !plan.enabled}) : plan;
-      }));
+      var plan = planById(button.dataset.planToggle);
+      updatePlans(state.plans.map(function(p) {
+        return p.id === button.dataset.planToggle ? Object.assign({}, p, {enabled: !p.enabled}) : p;
+      }), plan && plan.enabled ? "Plan paused" : "Plan resumed");
     };
   });
   qsa("[data-plan-delete]").forEach(function(button) {
     button.onclick = function(event) {
       event.stopPropagation();
-      closePlanPop();
-      updatePlans(state.plans.filter(function(plan) { return plan.id !== button.dataset.planDelete; }));
+      if (planEditing === button.dataset.planDelete) planEditing = null;
+      updatePlans(state.plans.filter(function(plan) { return plan.id !== button.dataset.planDelete; }), "Plan deleted");
     };
   });
-  qsa("[data-plan-slot]").forEach(function(slot) {
-    slot.onclick = function(event) { event.stopPropagation(); openPlanPop(slot); };
-  });
-}
-
-function planById(id) {
-  return state.plans.filter(function(plan) { return plan.id === id; })[0];
-}
-
-function savePlan(id, changes) {
-  updatePlans(state.plans.map(function(plan) {
-    return plan.id === id ? Object.assign({}, plan, changes) : plan;
-  }));
-}
-
-function closePlanPop() {
-  if (planPop) { planPop.remove(); planPop = null; }
-}
-
-function openPlanPop(anchor) {
-  closePlanPop();
-  var plan = planById(anchor.dataset.planSlot);
-  if (!plan) return;
-  var field = anchor.dataset.field;
-  var box = document.createElement("div");
-  box.className = "plan-pop";
-
-  if (field === "capability") {
-    box.innerHTML = '<span class="pop-label">Run what</span><div class="pop-grid">' +
-      Object.keys(CAP_PHRASE).map(function(cap) {
-        return '<button data-pick="' + cap + '" aria-pressed="' +
-          (normalizePlanCap(plan.capability) === cap) + '">' + CAP_PHRASE[cap] + "</button>";
-      }).join("") + "</div>";
-  } else if (field === "days") {
-    var current = planDays(plan);
-    box.innerHTML = '<span class="pop-label">Which days</span><div class="pop-grid">' +
-      '<button data-preset="all">every day</button><button data-preset="wd">weekdays</button>' +
-      '<button data-preset="we">weekend</button><button data-preset="none">clear</button></div>' +
-      '<div class="pop-grid wide">' + days.map(function(day) {
-        return '<button data-day="' + day + '" aria-pressed="' + (current.indexOf(day) >= 0) + '">' +
-          DAY_SHORT[day].slice(0, 2) + "</button>";
-      }).join("") + "</div>";
-  } else if (field === "target_temp") {
-    box.innerHTML = '<span class="pop-label">How warm</span><div class="pop-grid wide">' +
-      [30, 32, 34, 35, 36, 37, 38, 39, 40].map(function(temp) {
-        return '<button data-temp="' + temp + '" aria-pressed="' +
-          ((plan.target_temp || 36) === temp) + '">' + temp + "°</button>";
-      }).join("") + "</div>";
-  } else if (field === "at") {
-    box.innerHTML = '<span class="pop-label">By when</span>' +
-      '<input type="datetime-local" value="' + escapeHTML(localDateTime(new Date(plan.at))) + '">';
-  } else if (field === "duration_minutes") {
-    box.innerHTML = '<span class="pop-label">For how long</span><div class="pop-grid wide">' +
-      [30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1440].map(function(minutes) {
-        return '<button data-duration="' + minutes + '" aria-pressed="' +
-          ((plan.duration_minutes || 120) === minutes) + '">' + windowDurationPhrase(minutes) + "</button>";
-      }).join("") + "</div>";
-  } else {
-    box.innerHTML = '<span class="pop-label">' +
-      (field === "start" ? "Starting" : "By when") + "</span>" +
-      '<input type="time" value="' + escapeHTML(field === "time" ? planTime(plan) : (plan[field] || "00:00")) + '">';
-  }
-
-  document.body.appendChild(box);
-  var rect = anchor.getBoundingClientRect();
-  box.style.left = Math.min(Math.max(8, rect.left + window.scrollX),
-    window.innerWidth - box.offsetWidth - 8) + "px";
-  box.style.top = (rect.bottom + window.scrollY + 6) + "px";
-  planPop = box;
-  box.onclick = function(event) { event.stopPropagation(); };
-
-  qsa(".plan-pop [data-pick]").forEach(function(button) {
-    button.onclick = function() { closePlanPop(); savePlan(plan.id, {capability: button.dataset.pick}); };
-  });
-  qsa(".plan-pop [data-temp]").forEach(function(button) {
-    button.onclick = function() { closePlanPop(); savePlan(plan.id, {target_temp: Number(button.dataset.temp)}); };
-  });
-  qsa(".plan-pop [data-duration]").forEach(function(button) {
-    button.onclick = function() { closePlanPop(); savePlan(plan.id, {duration_minutes: Number(button.dataset.duration)}); };
-  });
-  qsa(".plan-pop [data-preset]").forEach(function(button) {
-    button.onclick = function() {
-      var key = button.dataset.preset;
-      var next = key === "all" ? days.slice() : key === "wd" ? WEEKDAYS.slice() :
-        key === "we" ? WEEKEND.slice() : [];
-      closePlanPop();
-      applyPlanDays(plan, next);
+  qsa("[data-plan-step]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      var plan = planById(button.dataset.plan);
+      if (plan) stepPlan(plan, button.dataset.field, Number(button.dataset.planStep));
     };
   });
-  qsa(".plan-pop [data-day]").forEach(function(button) {
-    button.onclick = function() {
+  qsa("[data-plan-cap]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      patchPlan(button.dataset.plan, {capability: button.dataset.planCap});
+    };
+  });
+  qsa("[data-plan-day]").forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation();
+      var plan = planById(button.dataset.plan);
+      if (!plan) return;
       var current = planDays(plan);
-      var day = button.dataset.day;
-      var index = current.indexOf(day);
-      if (index >= 0) current.splice(index, 1); else current.push(day);
-      button.setAttribute("aria-pressed", String(current.indexOf(day) >= 0));
-      applyPlanDays(plan, current, true);
+      var index = current.indexOf(button.dataset.planDay);
+      if (index >= 0) current.splice(index, 1); else current.push(button.dataset.planDay);
+      current = days.filter(function(d) { return current.indexOf(d) >= 0; });
+      if (plan.type === "time_window") patchPlan(plan.id, {days: current});
+      else patchPlan(plan.id, {cron: cronFor(planTime(plan), current), at: null});
     };
   });
-  var input = box.querySelector("input");
-  if (input) {
-    input.onchange = function() {
-      closePlanPop();
-      if (field === "at") savePlan(plan.id, {at: new Date(input.value).toISOString()});
-      else if (field === "time") savePlan(plan.id, {cron: cronFor(input.value, planDays(plan)), at: null});
-      else savePlan(plan.id, planFieldPatch(field, input.value));
-    };
-    input.focus();
-  }
-}
-
-function planFieldPatch(field, value) {
-  var patch = {};
-  patch[field] = value;
-  return patch;
-}
-
-function applyPlanDays(plan, dayList, keepOpen) {
-  var changes = plan.type === "time_window"
-    ? {days: dayList}
-    : {cron: cronFor(planTime(plan), dayList), at: null};
-  if (keepOpen) {
-    // Keep the picker open while several days are tapped; the list still saves.
-    state.plans = state.plans.map(function(p) {
-      return p.id === plan.id ? Object.assign({}, p, changes) : p;
-    });
-    var line = document.querySelector('[data-plan-line="' + plan.id + '"] .say');
-    if (line) line.innerHTML = planSentence(planById(plan.id));
-    bindPlans();
-    clearTimeout(applyPlanDays.timer);
-    applyPlanDays.timer = setTimeout(function() { updatePlans(state.plans); }, 700);
-    return;
-  }
-  savePlan(plan.id, changes);
 }
 
 function addPlan(kind) {
-  closePlanPop();
   var plan = kind === "window"
     ? {id: "window-" + Date.now(), type: "time_window", name: "Filter window", enabled: true,
        capability: "filter", start: "06:00", duration_minutes: 120, days: days.slice()}
@@ -3180,11 +3319,6 @@ function formatDurationSeconds(seconds) {
   return dayHours ? days + "d " + dayHours + "h" : days + "d";
 }
 
-function localDateTime(date) {
-  var pad = function(n) { return String(n).padStart(2, "0"); };
-  return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
-}
-
 function escapeHTML(value) {
   return String(value || "").replace(/[&<>"']/g, function(ch) {
     return {"&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;"}[ch];
@@ -3211,9 +3345,8 @@ $("settingsClose").onclick = function() {
 };
 $("refresh").onclick = loadAll;
 document.addEventListener("click", function(event) {
-  if (planPop && !event.target.closest(".plan-pop")) closePlanPop();
+  if (planEditing != null && !event.target.closest(".tagplan")) closePlanSetMode();
 });
-window.addEventListener("resize", closePlanPop);
 $("saveWeatherSettings").onclick = saveWeatherSettings;
 qsa("[data-add-plan]").forEach(function(button) {
   button.onclick = function() { addPlan(button.dataset.addPlan); };
